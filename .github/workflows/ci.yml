@@ -20,5 +20,9 @@ jobs:
         run: ./ci/verify-no-assets.ps1
       - name: Restore adapter
         run: dotnet restore src/Bindery.Ra2.Adapter/Bindery.Ra2.Adapter.csproj
+      - name: Restore tests
+        run: dotnet restore tests/Bindery.Ra2.Adapter.Tests/Bindery.Ra2.Adapter.Tests.csproj
       - name: Build adapter
         run: dotnet build src/Bindery.Ra2.Adapter/Bindery.Ra2.Adapter.csproj --configuration Release --no-restore
+      - name: Test adapter
+        run: dotnet test tests/Bindery.Ra2.Adapter.Tests/Bindery.Ra2.Adapter.Tests.csproj --configuration Release --no-restore

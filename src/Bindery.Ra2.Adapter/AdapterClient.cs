@@ -46,7 +46,27 @@ public sealed class BinderyAdapterClient(HttpClient httpClient)
         using HttpResponseMessage response = await httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
         SessionCreateDto dto = await response.Content.ReadFromJsonAsync<SessionCreateDto>(json, cancellationToken).ConfigureAwait(false) ?? throw new InvalidOperationException("session response was empty");
-        return new SessionCredentials(dto.PublicSession.SessionId, dto.SessionJoinCredential);
+        RelayPlacement? placement = dto.PublicSession.Placement is null
+            ? null
+            : new RelayPlacement(
+                dto.PublicSession.Placement.Region,
+                dto.PublicSession.Placement.RelayProviderId,
+                dto.PublicSession.Placement.RelayAllocationId,
+                dto.PublicSession.Placement.RelayEndpoint,
+                dto.PublicSession.Placement.PolicyVersion,
+                dto.PublicSession.Placement.DecisionSummary);
+        return new SessionCredentials(dto.PublicSession.SessionId, dto.SessionJoinCredential, placement);
+    }
+
+    public Task<BinderyRelayClient> ConnectRelayAsync(AdapterConfiguration configuration, SessionCredentials session, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentNullException.ThrowIfNull(session);
+        RelaySelection.Validate(configuration);
+        if (configuration.RelayProvider != RelayProvider.BinderyNative) throw new InvalidOperationException("the CnCNet baseline does not use the Bindery relay client");
+        if (session.Placement is null) throw new InvalidOperationException("session response did not contain a relay placement");
+        if (!string.Equals(session.Placement.RelayProviderId, RelaySelection.ProviderName(RelayProvider.BinderyNative), StringComparison.Ordinal)) throw new InvalidOperationException("session placement selected a different relay provider");
+        return BinderyRelayClient.ConnectAsync(session.Placement, configuration.ClientId, configuration.RelayCredential!, cancellationToken);
     }
 
     public async Task<EnrollmentCredentials> EnrollAsync(AdapterConfiguration configuration, string idempotencyKey, CancellationToken cancellationToken)
@@ -74,11 +94,18 @@ public sealed class BinderyAdapterClient(HttpClient httpClient)
 
 internal sealed record PublicIdentityDto([property: JsonPropertyName("account_id")] string AccountId);
 public sealed record IdentityCredentials(string AccountId, string AccountToken);
-public sealed record SessionCredentials(string SessionId, string SessionJoinCredential);
+public sealed record SessionCredentials(string SessionId, string SessionJoinCredential, RelayPlacement? Placement = null);
 public sealed record EnrollmentCredentials(string ClientId, string ClientLeaseToken, string TransportCredential);
 
 internal sealed record IdentityCreateDto([property: JsonPropertyName("public_identity")] PublicIdentityDto PublicIdentity, [property: JsonPropertyName("account_token")] string AccountToken);
 internal sealed record SessionCreateDto([property: JsonPropertyName("public_session")] SessionPublicDto PublicSession, [property: JsonPropertyName("session_join_credential")] string SessionJoinCredential);
-internal sealed record SessionPublicDto([property: JsonPropertyName("session_id")] string SessionId);
+internal sealed record SessionPublicDto([property: JsonPropertyName("session_id")] string SessionId, [property: JsonPropertyName("placement")] PublicPlacementDto? Placement);
+internal sealed record PublicPlacementDto(
+    [property: JsonPropertyName("region")] string Region,
+    [property: JsonPropertyName("relay_provider_id")] string RelayProviderId,
+    [property: JsonPropertyName("relay_allocation_id")] string RelayAllocationId,
+    [property: JsonPropertyName("relay_endpoint")] string RelayEndpoint,
+    [property: JsonPropertyName("policy_version")] string PolicyVersion,
+    [property: JsonPropertyName("decision_summary")] string? DecisionSummary);
 internal sealed record EnrollmentCreateDto([property: JsonPropertyName("public_enrollment")] EnrollmentPublicDto PublicEnrollment, [property: JsonPropertyName("client_lease_token")] string ClientLeaseToken, [property: JsonPropertyName("transport_credential")] string TransportCredential);
 internal sealed record EnrollmentPublicDto([property: JsonPropertyName("client_id")] string ClientId);

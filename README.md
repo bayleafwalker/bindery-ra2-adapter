@@ -21,6 +21,5 @@ and revisions are reviewed.
 
 ```powershell
 dotnet build src/Bindery.Ra2.Adapter/Bindery.Ra2.Adapter.csproj --configuration Release
-dotnet test
+dotnet test tests/Bindery.Ra2.Adapter.Tests/Bindery.Ra2.Adapter.Tests.csproj --configuration Release
 ```
-

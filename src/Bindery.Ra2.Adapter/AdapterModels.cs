@@ -26,6 +26,14 @@ public sealed record AdapterIdentity(string Id, string Version);
 
 public sealed record CompatibilityHashes(string GameHash, string ModHash, string MapHash);
 
+public sealed record RelayPlacement(
+    string Region,
+    string RelayProviderId,
+    string RelayAllocationId,
+    string RelayEndpoint,
+    string PolicyVersion,
+    string? DecisionSummary = null);
+
 public sealed record AdapterConfiguration(
     Uri ServiceUri,
     string AccountToken,
