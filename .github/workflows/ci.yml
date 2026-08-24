@@ -18,6 +18,7 @@ jobs:
       - name: Check proprietary-asset boundary
         shell: pwsh
         run: ./ci/verify-no-assets.ps1
+      - name: Restore adapter
+        run: dotnet restore src/Bindery.Ra2.Adapter/Bindery.Ra2.Adapter.csproj
       - name: Build adapter
         run: dotnet build src/Bindery.Ra2.Adapter/Bindery.Ra2.Adapter.csproj --configuration Release --no-restore
-
