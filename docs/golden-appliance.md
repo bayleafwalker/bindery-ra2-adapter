@@ -34,7 +34,7 @@ Prepare the golden VM in this order:
 
    Do not widen this to `0.0.0.0` unless the network isolation design is
    separately reviewed.
-4. Capture a clean snapshot such as `bindery-ra2-v0.1`.
+4. Capture a clean snapshot such as `bindery-ra2-v0.2`.
 5. Clone that snapshot for `client-a` and `client-b`.
 
 The clones must diverge in hostname, NIC/MAC identity, Bindery account token,
@@ -47,8 +47,8 @@ that owns the staged appliance):
 
 ```bash
 dotnet run --project tools/Bindery.Ra2.Adapter.ApplianceManifest/Bindery.Ra2.Adapter.ApplianceManifest.csproj -- \
-  'C:/Bindery/appliances/ra2-yr-cncnet-v0.1' \
-  'C:/private/ra2-yr-cncnet-v0.1.manifest.json'
+  'C:/Bindery/appliances/ra2-yr-cncnet-v0.2' \
+  'C:/private/ra2-yr-cncnet-v0.2.manifest.json'
 ```
 
 The PowerShell script in `ci/inspect-ra2-appliance.ps1` is retained for

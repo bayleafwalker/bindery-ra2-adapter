@@ -123,7 +123,7 @@ internal sealed class LiveAcceptanceSettings
     public string GameVersion { get; init; } = Ra2LabProfile.GameVersion;
     public string ModId { get; init; } = Ra2LabProfile.ModId;
     public string TransportProvider { get; init; } = Ra2LabProfile.TransportProviderId;
-    public string GoldenApplianceId { get; init; } = "ra2-yr-cncnet-v0.1";
+    public string GoldenApplianceId { get; init; } = "ra2-yr-cncnet-v0.2";
     public string GoldenManifestPath { get; init; } = string.Empty;
     public string TelemetryEndpoint { get; init; } = $"127.0.0.1:{Ra2LabProfile.DefaultTelemetryPort}";
     public string TelemetryProtocol { get; init; } = Ra2LabProfile.TelemetryProtocol;

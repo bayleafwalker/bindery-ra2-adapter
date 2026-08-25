@@ -4,7 +4,7 @@ param(
     [string]$InstallPath,
     [Parameter(Mandatory = $true)]
     [string]$OutputPath,
-    [string]$ApplianceId = 'ra2-yr-cncnet-v0.1',
+    [string]$ApplianceId = 'ra2-yr-cncnet-v0.2',
     [string]$SpawnerPath = 'Syringe.exe',
     [string]$InstrumentationPath = 'libra2yrcpp.dll'
 )

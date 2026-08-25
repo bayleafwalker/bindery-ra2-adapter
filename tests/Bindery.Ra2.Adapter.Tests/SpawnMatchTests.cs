@@ -174,4 +174,26 @@ public sealed class SpawnMatchTests
         Assert.DoesNotContain("crash", desync.Kind, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void AnySynchronizationDumpIsNotableAndEmptyFilesStillCount()
+    {
+        IReadOnlyList<RunObservation> observations = DesyncObservations.Read(new Dictionary<string, string?>
+        {
+            ["SYNC0.TXT"] = null,
+            ["SYNC1.TXT"] = string.Empty,
+            ["SYNC2.TXT"] = null,
+        });
+
+        RunObservation observation = Assert.Single(observations);
+        Assert.Equal(RunObservation.Desync, observation.Kind);
+        Assert.Equal("the game wrote SYNC1.TXT", observation.Detail);
+        Assert.True(observation.Notable);
+    }
+
+    [Fact]
+    public void DesyncScanCoversAllKnownGameDumpNames()
+    {
+        Assert.Equal(["SYNC0.TXT", "SYNC1.TXT", "SYNC2.TXT"], DesyncObservations.LogNames);
+    }
+
 }

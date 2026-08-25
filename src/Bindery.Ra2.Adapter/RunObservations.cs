@@ -80,3 +80,34 @@ public static class SpawnerLogObservations
         return trimmed.Length > 240 ? trimmed[..240] : trimmed;
     }
 }
+
+/// <summary>
+/// Reads every synchronisation dump Yuri's Revenge may leave for a match.
+/// </summary>
+/// <remarks>
+/// The game uses three files rather than one stable filename. A run must clear
+/// all three before launch and treat the presence of any one of them as an
+/// observed desync, including an empty file. The caller supplies null for a
+/// file that did not exist.
+/// </remarks>
+public static class DesyncObservations
+{
+    public static IReadOnlyList<string> LogNames { get; } = ["SYNC0.TXT", "SYNC1.TXT", "SYNC2.TXT"];
+
+    public static IReadOnlyList<RunObservation> Read(IReadOnlyDictionary<string, string?> files)
+    {
+        ArgumentNullException.ThrowIfNull(files);
+        List<RunObservation> observations = [];
+        foreach (string name in LogNames)
+        {
+            if (files.TryGetValue(name, out string? content) && content is not null)
+            {
+                observations.Add(new RunObservation(
+                    RunObservation.Desync,
+                    $"the game wrote {name}",
+                    Notable: true));
+            }
+        }
+        return observations;
+    }
+}

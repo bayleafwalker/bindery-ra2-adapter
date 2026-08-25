@@ -12,7 +12,7 @@ try
 {
     string installPath = Path.GetFullPath(args[0]);
     string outputPath = Path.GetFullPath(args[1]);
-    string applianceId = args.Length == 3 ? args[2] : "ra2-yr-cncnet-v0.1";
+    string applianceId = args.Length == 3 ? args[2] : "ra2-yr-cncnet-v0.2";
     if (!Directory.Exists(installPath)) throw new DirectoryNotFoundException(installPath);
     ArgumentException.ThrowIfNullOrWhiteSpace(applianceId);
 

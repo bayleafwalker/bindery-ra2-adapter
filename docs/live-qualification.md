@@ -145,8 +145,10 @@ different readings of it were wrong before this was settled:
 The harness therefore records what it saw as observations
 (`spawner_exception`, `hosted_exit_code`, `desync`) rather than deciding from
 log strings. Only a **notable** observation bears on qualification, and the
-one that qualifies is a desync: the game writes `SYNC0.TXT` when the two
-simulations diverge. A desync is not a crash -- both clients still exit
+one that qualifies is a desync: the game writes one of `SYNC0.TXT`,
+`SYNC1.TXT`, or `SYNC2.TXT` when the two simulations diverge. The harness
+clears all three before launch and treats the presence of any one as evidence.
+A desync is not a crash -- both clients still exit
 normally -- but a diverged match is not an acceptable one.
 
 ## Run the qualification preflight

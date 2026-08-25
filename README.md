@@ -58,7 +58,7 @@ match:
 
 ```bash
 dotnet run --project tools/Bindery.Ra2.Adapter.ControlPlaneGate/Bindery.Ra2.Adapter.ControlPlaneGate.csproj -- \
-  /private/ra2-yr-cncnet-v0.1.manifest.json http://127.0.0.1:18080
+  /private/ra2-yr-cncnet-v0.2.manifest.json http://127.0.0.1:18080
 ```
 
 The live Windows handoff is documented in

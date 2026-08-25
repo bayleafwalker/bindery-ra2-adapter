@@ -18,7 +18,7 @@ try
         ?? throw new InvalidOperationException("golden appliance manifest was empty");
     if (manifest.SchemaVersion != Ra2LabProfile.GoldenApplianceSchemaVersion)
         throw new InvalidOperationException("golden appliance manifest schema is unsupported");
-    if (manifest.ApplianceId != "ra2-yr-cncnet-v0.1")
+    if (manifest.ApplianceId != "ra2-yr-cncnet-v0.2")
         throw new InvalidOperationException("unexpected golden appliance id");
     GoldenApplianceArtifact game = manifest.Artifacts.FirstOrDefault(static artifact =>
         string.Equals(artifact.RelativePath, "gamemd.exe", StringComparison.OrdinalIgnoreCase))

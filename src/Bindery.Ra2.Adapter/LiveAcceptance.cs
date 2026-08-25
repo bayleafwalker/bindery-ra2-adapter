@@ -248,6 +248,8 @@ public sealed class LiveAcceptanceRunner
             // Clear the spawner's log first: a crash marker left by an earlier
             // run would otherwise be read as this run's outcome.
             await host.ResetSpawnerLogAsync(launch.WorkingDirectory, launch.SpawnerLogName, cancellationToken).ConfigureAwait(false);
+            foreach (string desyncLogName in DesyncObservations.LogNames)
+                await host.ResetSpawnerLogAsync(launch.WorkingDirectory, desyncLogName, cancellationToken).ConfigureAwait(false);
             SpawnConfiguration spawn = new(
                 launch.GameExecutable,
                 launch.MapId,
@@ -287,9 +289,10 @@ public sealed class LiveAcceptanceRunner
             // A desync is not a crash, and the match still ends with both
             // clients exiting normally -- but the two simulations diverged, so
             // it is the one log-adjacent event that must be notable.
-            string? syncDump = await host.ReadSpawnerLogAsync(launch.WorkingDirectory, "SYNC0.TXT", cancellationToken).ConfigureAwait(false);
-            if (!string.IsNullOrEmpty(syncDump))
-                observations.Add(new RunObservation(RunObservation.Desync, "the game wrote SYNC0.TXT", Notable: true));
+            Dictionary<string, string?> syncDumps = [];
+            foreach (string desyncLogName in DesyncObservations.LogNames)
+                syncDumps[desyncLogName] = await host.ReadSpawnerLogAsync(launch.WorkingDirectory, desyncLogName, cancellationToken).ConfigureAwait(false);
+            observations.AddRange(DesyncObservations.Read(syncDumps));
             // Only a notable observation changes the run's standing, and even
             // then it is reported as what it is rather than as a "failure".
             RunObservation? notable = observations.FirstOrDefault(static observation => observation.Notable);
