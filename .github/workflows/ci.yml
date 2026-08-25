@@ -18,11 +18,28 @@ jobs:
       - name: Check proprietary-asset boundary
         shell: pwsh
         run: ./ci/verify-no-assets.ps1
+      - name: Parse lab PowerShell scripts
+        shell: pwsh
+        run: |
+          [scriptblock]::Create((Get-Content ./ci/inspect-ra2-appliance.ps1 -Raw)) | Out-Null
+          [scriptblock]::Create((Get-Content ./ci/verify-live-qualification.ps1 -Raw)) | Out-Null
       - name: Restore adapter
         run: dotnet restore src/Bindery.Ra2.Adapter/Bindery.Ra2.Adapter.csproj
       - name: Restore tests
         run: dotnet restore tests/Bindery.Ra2.Adapter.Tests/Bindery.Ra2.Adapter.Tests.csproj
+      - name: Restore live acceptance harness
+        run: dotnet restore tools/Bindery.Ra2.Adapter.LiveAcceptance/Bindery.Ra2.Adapter.LiveAcceptance.csproj
+      - name: Restore appliance manifest tool
+        run: dotnet restore tools/Bindery.Ra2.Adapter.ApplianceManifest/Bindery.Ra2.Adapter.ApplianceManifest.csproj
+      - name: Restore control-plane gate
+        run: dotnet restore tools/Bindery.Ra2.Adapter.ControlPlaneGate/Bindery.Ra2.Adapter.ControlPlaneGate.csproj
       - name: Build adapter
         run: dotnet build src/Bindery.Ra2.Adapter/Bindery.Ra2.Adapter.csproj --configuration Release --no-restore
+      - name: Build live acceptance harness
+        run: dotnet build tools/Bindery.Ra2.Adapter.LiveAcceptance/Bindery.Ra2.Adapter.LiveAcceptance.csproj --configuration Release --no-restore
+      - name: Build appliance manifest tool
+        run: dotnet build tools/Bindery.Ra2.Adapter.ApplianceManifest/Bindery.Ra2.Adapter.ApplianceManifest.csproj --configuration Release --no-restore
+      - name: Build control-plane gate
+        run: dotnet build tools/Bindery.Ra2.Adapter.ControlPlaneGate/Bindery.Ra2.Adapter.ControlPlaneGate.csproj --configuration Release --no-restore
       - name: Test adapter
         run: dotnet test tests/Bindery.Ra2.Adapter.Tests/Bindery.Ra2.Adapter.Tests.csproj --configuration Release --no-restore

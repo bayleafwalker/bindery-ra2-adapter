@@ -11,6 +11,7 @@ public enum RelayProvider
 {
     BinderyNative,
     CncNetBaseline,
+    CncNetPrivate,
 }
 
 public enum LifecycleKind
@@ -20,6 +21,29 @@ public enum LifecycleKind
     Exited,
     Failed,
     CaptureDegraded,
+}
+
+public enum SessionPhase
+{
+    Created,
+    Admitting,
+    Ready,
+    Running,
+    Ended,
+    Failed,
+    Expired,
+    Published,
+}
+
+public enum EnrollmentPhase
+{
+    Issued,
+    Registered,
+    Ready,
+    Active,
+    Departed,
+    Lost,
+    Expired,
 }
 
 public sealed record AdapterIdentity(string Id, string Version);
@@ -56,8 +80,26 @@ public sealed record SpawnConfiguration(
     string PlayerName,
     string? RelayHost,
     int? RelayPort,
-    string SpawnMode = "multiplayer");
+    string SpawnMode = "multiplayer",
+    string? SpawnerExecutable = null,
+    IReadOnlyList<string>? SpawnerArguments = null);
 
 public sealed record LifecycleReport(string ReportId, LifecycleKind Kind, string? Reason = null);
+
+public sealed record SessionStatus(
+    string SessionId,
+    SessionPhase Phase,
+    RelayPlacement? Placement,
+    IReadOnlyList<EnrollmentStatus> Enrollments);
+
+public sealed record EnrollmentStatus(
+    string ClientId,
+    string AccountId,
+    ClientClass ClientClass,
+    EnrollmentPhase Phase,
+    string AdapterId,
+    string AdapterVersion);
+
+public sealed record LifecycleReportResult(SessionStatus Session, EnrollmentStatus Enrollment);
 
 public sealed record DiscoveredArtifact(string Path, string Sha256, long Bytes);

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <AssemblyName>Bindery.Ra2.Adapter.LaunchAgent</AssemblyName>
+    <RootNamespace>Bindery.Ra2.Adapter.LaunchAgent</RootNamespace>
+    <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Bindery.Ra2.Adapter/Bindery.Ra2.Adapter.csproj" />
+  </ItemGroup>
+</Project>

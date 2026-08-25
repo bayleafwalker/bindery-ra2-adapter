@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cncnet-private-tunnel.fullname" . }}
+  labels:
+    {{- include "cncnet-private-tunnel.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "cncnet-private-tunnel.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "cncnet-private-tunnel.labels" . | nindent 8 }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}
+      affinity:
+        {{- toYaml .Values.affinity | nindent 8 }}
+      containers:
+        - name: cncnet-tunnel
+          image: {{ required "image.digest is required; do not deploy :latest" .Values.image.digest | printf "%s@%s" .Values.image.repository | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /app/cncnet-server
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          args:
+            - --name
+            - {{ .Values.serverName | quote }}
+            - --no-master-announce
+            - --max-clients
+            - {{ .Values.maxClients | quote }}
+            # Without the two -enabled flags cncnet-server starts, stays
+            # healthy, and binds nothing at all.
+            - --tunnel-v2-enabled
+            - --tunnel-v2-port
+            - {{ .Values.ports.tunnelV2 | quote }}
+            - --tunnel-v3-enabled
+            - --tunnel-port
+            - {{ .Values.ports.tunnelV3 | quote }}
+            - --server-log-level
+            - {{ .Values.serverLogLevel | quote }}
+          ports:
+            - name: tunnel-v2-tcp
+              containerPort: {{ .Values.ports.tunnelV2 }}
+              protocol: TCP
+            - name: tunnel-v2-udp
+              containerPort: {{ .Values.ports.tunnelV2 }}
+              protocol: UDP
+            - name: tunnel-v3-udp
+              containerPort: {{ .Values.ports.tunnelV3 }}
+              protocol: UDP
+            - name: stun-udp
+              containerPort: {{ .Values.ports.stun }}
+              protocol: UDP
+            - name: stun-control
+              containerPort: {{ .Values.ports.stunControl }}
+              protocol: UDP
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

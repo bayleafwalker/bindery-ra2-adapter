@@ -7,6 +7,7 @@ public static class RelaySelection
     {
         RelayProvider.BinderyNative => "bindery-native",
         RelayProvider.CncNetBaseline => "cncnet-baseline",
+        RelayProvider.CncNetPrivate => "cncnet-private",
         _ => throw new ArgumentOutOfRangeException(nameof(provider)),
     };
 
@@ -14,6 +15,6 @@ public static class RelaySelection
     {
         if (configuration.RelayProvider == RelayProvider.BinderyNative && string.IsNullOrWhiteSpace(configuration.RelayCredential)) throw new InvalidOperationException("native relay requires a scoped transport credential");
         if (configuration.RelayProvider == RelayProvider.CncNetBaseline && !string.IsNullOrWhiteSpace(configuration.RelayCredential)) throw new InvalidOperationException("CnCNet baseline must not receive a Bindery transport credential");
+        if (configuration.RelayProvider == RelayProvider.CncNetPrivate && !string.IsNullOrWhiteSpace(configuration.RelayCredential)) throw new InvalidOperationException("private CnCNet transport must not receive a Bindery transport credential");
     }
 }
-

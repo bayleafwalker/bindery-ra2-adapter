@@ -1,0 +1,62 @@
+{
+  "serviceUri": "https://control-plane.example.invalid",
+  "firstIdentity": {
+    "accountId": "<uuid-a>",
+    "accountToken": "<local-secret-a>"
+  },
+  "secondIdentity": {
+    "accountId": "<uuid-b>",
+    "accountToken": "<local-secret-b>"
+  },
+  "adapterId": "bindery.ra2.yr-cncnet",
+  "adapterVersion": "0.2.0",
+  "gameFamily": "yuris-revenge",
+  "gameVersion": "cncnet-ra2-mode",
+  "modId": "cncnet-ra2-mode",
+  "transportProvider": "cncnet-private",
+  "goldenApplianceId": "ra2-yr-cncnet-v0.1",
+  "goldenManifestPath": "C:/private/ra2-yr-cncnet-v0.1.manifest.json",
+  "telemetryEndpoint": "127.0.0.1:14521",
+  "telemetryProtocol": "ra2yrcpp-protobuf-tcp",
+  "mapId": "<map-id>",
+  "gameHash": "sha256:<64-lowercase-hex>",
+  "modHash": "sha256:<64-lowercase-hex>",
+  "mapHash": "sha256:<64-lowercase-hex>",
+  "firstClientInstanceId": "<stable-machine-a-instance>",
+  "secondClientInstanceId": "<stable-machine-b-instance>",
+  "secondHost": {
+    "uri": "http://192.168.122.10:14620/",
+    "tokenFile": "C:/private/agent-token.txt"
+  },
+  "firstLaunch": {
+    "gameExecutable": "C:/Bindery/appliances/client-a/gamemd.exe",
+    "workingDirectory": "C:/Bindery/appliances/client-a",
+    "mapId": "<map-id>",
+    "playerName": "player-a",
+    "spawnerExecutable": "C:/Bindery/appliances/client-a/Syringe.exe",
+    "spawnerArguments": [
+      "-SPAWN",
+      "-CD",
+      "-LOG"
+    ]
+  },
+  "secondLaunch": {
+    "gameExecutable": "C:/Bindery/appliances/client-b/gamemd.exe",
+    "workingDirectory": "C:/Bindery/appliances/client-b",
+    "mapId": "<map-id>",
+    "playerName": "player-b",
+    "spawnerExecutable": "C:/Bindery/appliances/client-b/Syringe.exe",
+    "spawnerArguments": [
+      "-SPAWN",
+      "-CD",
+      "-LOG"
+    ]
+  },
+  "evidenceDirectory": "C:/Temp/bindery-ra2-live-acceptance",
+  "sessionIdempotencyKey": "<unique-session-key>",
+  "firstEnrollmentIdempotencyKey": "<unique-enrollment-a-key>",
+  "secondEnrollmentIdempotencyKey": "<unique-enrollment-b-key>",
+  "region": "eu-north",
+  "regionRttMilliseconds": 40,
+  "latencyP95Milliseconds": 100
+}

@@ -1,6 +1,16 @@
 schema: bindery.ra2-adapter-upstream/v1
-reviewed_at: 2026-08-23
+reviewed_at: 2026-08-24
 sources:
+  - project: cncnet-yr-client-package
+    repository: https://github.com/CnCNet/cncnet-yr-client-package
+    ref: yr-9.3.2
+    commit: 8ac409fc4e9f820b404d4ee7adf5f13d7a41b857
+    license: GPL-3.0
+    selected_runtime_artifact:
+      path: package/CnCNet-Spawner.dll
+      sha256: sha256:9a49a621b67dc50eb3e809b34d57b69265b696444e9f12d7add7a7cfc0aafca4
+      bytes: 401920
+    use: pinned official Yuri's Revenge package and its package-embedded CnCNetYR spawner for the golden Windows appliance; no proprietary assets copied
   - project: cncnet-client
     repository: https://github.com/CnCNet/xna-cncnet-client
     ref: develop
@@ -9,25 +19,38 @@ sources:
     use: protocol and launch behavior reference; no source copied in this slice
   - project: yrpp-spawner
     repository: https://github.com/CnCNet/yrpp-spawner
-    ref: main
-    commit: 265-commit-head-not-pinned-by-local-clone
+    ref: v0.0.0.16
+    commit: b4d919dff27ca9aa0ef2fa16475474b2a84a2e70
     yrpp_submodule_commit: ef1c565ade4a9233177a7949034ed7bd245259f3
     license: GPL-3.0
-    use: spawner boundary and statistics-hook reference; Windows provenance gate remains open
+    selected_runtime: false
+    reference_artifact:
+      path: CnCNet-Spawner.dll
+      sha256: sha256:fc0c92055062cab07b58905bcb9897a9303800129bbf6abbcfd85fa09ba45d6a
+      bytes: 212992
+    use: standalone spawner provenance and source reference only; the live appliance uses the official package-embedded CnCNetYR artifact above
+  - project: ra2yrcpp
+    repository: https://github.com/shmocz/ra2yrcpp
+    ref: develop
+    commit: ee215f5a01f709c52b1fe4dd333d16cbe5d5f146
+    license: GPL-3.0
+    use: native protobuf/TCP telemetry boundary reference; fork and generated protocol remain outside this repository
   - project: cncnet-docker-tunnel
     repository: https://github.com/CnCNet/cncnet-docker-tunnel
     ref: main
-    commit: not-resolved-local-network-blocked
+    commit: 099efa45d59b2f8241b750d4eea16044f92bd62e
     license: GPL-3.0
     status: archived
     use: unchanged legacy baseline only if operator explicitly accepts archived runtime
   - project: cncnet-docker-dotnetcore-tunnel
     repository: https://github.com/CnCNet/cncnet-docker-dotnetcore-tunnel
     ref: main
-    commit: 577847f6a1caff1ef78549cacbf766fd12a06eb1
+    commit: be9d9a8d962565a54f6f024bf4c2dc9c107ae243
     license: GPL-3.0
-    use: maintained tunnel candidate; requires explicit baseline decision before deployment
+    image: ghcr.io/cncnet/cncnet-docker-dotnetcore-tunnel-dotnet10@sha256:35c8eb8c44b51914b891ff5a44fc860d0efe5fef2d294b69ba07b92c12660447
+    use: maintained private CnCNet-compatible tunnel candidate for the hermetic lab; deployment pin and configuration remain operator-owned
 proprietary_assets:
   distributed: false
-  accepted_inputs: local operator installation paths and hashes only
-
+  accepted_inputs: local operator installation paths, golden appliance manifest, and hashes only
+  reference_install_path: "/games/SteamLibrary/steamapps/common/Command & Conquer Red Alert II/"
+  reference_install_path_scope: local operator machine only; never copied into this repository

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: cncnet-private-tunnel
+description: Hermetic CnCNet-compatible tunnel for the Bindery RA2/YR lab
+type: application
+version: 0.1.0
+appVersion: "dotnet10"

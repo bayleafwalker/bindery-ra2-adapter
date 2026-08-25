@@ -44,9 +44,20 @@ public sealed class Ra2Normalizer(string version = "0.1.0")
         {
             string normalizedType = observation.EventType switch
             {
-                "ra2.game.started" => "game.lifecycle.started",
-                "ra2.game.ended" => "game.lifecycle.ended",
-                "ra2.player.joined" => "game.participant.joined",
+                Ra2TelemetryEventTypes.MatchStarted => "game.lifecycle.started",
+                Ra2TelemetryEventTypes.MatchEnded => "game.lifecycle.ended",
+                Ra2TelemetryEventTypes.PlayerJoined => "game.participant.joined",
+                Ra2TelemetryEventTypes.UnitQueued => "game.unit.queued",
+                Ra2TelemetryEventTypes.UnitCreated => "game.unit.created",
+                Ra2TelemetryEventTypes.UnitDestroyed => "game.unit.destroyed",
+                Ra2TelemetryEventTypes.UnitKilled => "game.unit.killed",
+                Ra2TelemetryEventTypes.BuildingPlaced => "game.building.placed",
+                Ra2TelemetryEventTypes.BuildingDestroyed => "game.building.destroyed",
+                Ra2TelemetryEventTypes.CreditsSampled => "game.economy.credits",
+                Ra2TelemetryEventTypes.PowerSampled => "game.economy.power",
+                Ra2TelemetryEventTypes.OrderIssued => "game.order.issued",
+                Ra2TelemetryEventTypes.SelectionChanged => "game.selection.changed",
+                Ra2TelemetryEventTypes.PlayerDefeated => "game.participant.defeated",
                 _ => "game.observation.unknown",
             };
             string derivedID = StableID(observation.EventId, normalizedType, Version);
@@ -70,4 +81,3 @@ public sealed class Ra2Normalizer(string version = "0.1.0")
         return Convert.ToHexString(SHA256.HashData(input)).ToLowerInvariant();
     }
 }
-

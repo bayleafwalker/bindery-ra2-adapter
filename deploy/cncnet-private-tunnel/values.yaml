@@ -1,0 +1,37 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/cncnet/cncnet-docker-dotnetcore-tunnel-dotnet10
+  digest: "sha256:35c8eb8c44b51914b891ff5a44fc860d0efe5fef2d294b69ba07b92c12660447"
+  pullPolicy: IfNotPresent
+
+serverName: bindery-private
+maxClients: 200
+serverLogLevel: Information
+ports:
+  tunnelV2: 50000
+  tunnelV3: 50001
+  stun: 8054
+  stunControl: 3478
+
+service:
+  type: LoadBalancer
+  annotations: {}
+
+resources: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    add: [NET_RAW, NET_ADMIN]
+    drop: [ALL]
+  readOnlyRootFilesystem: true
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
