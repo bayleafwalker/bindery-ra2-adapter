@@ -10,8 +10,8 @@ public sealed class SpawnMatchTests
     private static readonly SpawnParticipant PlayerB = new("player-b", 4600, Side: 3, Color: 4, SpawnLocation: 1);
 
     private static SpawnMatchPlan Plan(bool isHost = true) => isHost
-        ? new SpawnMatchPlan("spawnmap.ini", "2022510934", 4242, true, PlayerA, [PlayerB], [PlayerA, PlayerB], "192.168.122.1", 50000)
-        : new SpawnMatchPlan("spawnmap.ini", "2022510934", 4242, false, PlayerB, [PlayerA], [PlayerA, PlayerB], "192.168.122.1", 50000);
+        ? new SpawnMatchPlan("spawnmap.ini", "2022510934", 4242, true, PlayerA, [PlayerB], [PlayerA, PlayerB], [], "192.168.122.1", 50000)
+        : new SpawnMatchPlan("spawnmap.ini", "2022510934", 4242, false, PlayerB, [PlayerA], [PlayerA, PlayerB], [], "192.168.122.1", 50000);
 
     [Fact]
     public void SpawnIniDescribesTheWholeTwoPlayerMatch()
@@ -59,6 +59,42 @@ public sealed class SpawnMatchTests
         Assert.Contains("Superweapons=", ini, StringComparison.Ordinal);
         Assert.DoesNotContain("SuperWeapons=", ini, StringComparison.Ordinal);
         Assert.DoesNotContain("GameMode=Battle", ini, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AiHousesGetAllThreeSectionsAndSeatsAfterTheHumans()
+    {
+        // AIPlayers=N on its own produces a scenario that never loads: no
+        // debug log, no telemetry, black screen with music. Each AI also needs
+        // Multi{humans+n} entries in three house sections plus a seat.
+        SpawnMatchPlan plan = Plan() with
+        {
+            AiPlayers = [new SpawnAiParticipant(Handicap: 2, Country: 0, Color: 4, SpawnLocation: 2),
+                         new SpawnAiParticipant(Handicap: 2, Country: 5, Color: 5, SpawnLocation: 3)],
+        };
+
+        string ini = SpawnIniRenderer.Render(plan);
+
+        Assert.Contains("AIPlayers=2", ini, StringComparison.Ordinal);
+        foreach (string section in new[] { "[HouseHandicaps]", "[HouseCountries]", "[HouseColors]" })
+        {
+            Assert.Contains(section, ini, StringComparison.Ordinal);
+        }
+        // Two humans, so the AI are Multi3 and Multi4.
+        Assert.Contains("Multi3=2", ini, StringComparison.Ordinal);
+        Assert.Contains("Multi4=3", ini, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheGameIsToldToExitWithoutTheScoreScreen()
+    {
+        // Otherwise the match ends but the process waits on a click, and the
+        // only way to finish a run is to kill it -- which makes an aborted run
+        // look like a completed one.
+        string ini = SpawnIniRenderer.Render(Plan());
+
+        Assert.Contains("SkipScoreScreen=Yes", ini, StringComparison.Ordinal);
+        Assert.Contains("QuickExit=Yes", ini, StringComparison.Ordinal);
     }
 
     [Fact]

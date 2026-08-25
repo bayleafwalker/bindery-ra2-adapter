@@ -15,6 +15,10 @@ public sealed record LiveClientLaunch(
     int Side = 0,
     int Color = 0,
     int SpawnLocation = -1,
+    // A spectator has no house. At least one client must NOT be a spectator:
+    // the match ends when the last human house is defeated, so all-spectator
+    // is an immediate game over.
+    bool IsSpectator = false,
     // Seat and colour default per client below; -1 means "not chosen".
     string SpawnerLogName = "syringe.log");
 
@@ -32,7 +36,8 @@ public sealed record LiveAcceptanceRequest(
     string TelemetryEndpoint,
     string TelemetryProtocol = Ra2LabProfile.TelemetryProtocol,
     Uri? TunnelV2Uri = null,
-    SpawnGameOptions? GameOptions = null);
+    SpawnGameOptions? GameOptions = null,
+    IReadOnlyList<SpawnAiParticipant>? AiPlayers = null);
 
 public sealed record LiveClientEvidence(
     string ClientId,
@@ -171,8 +176,10 @@ public sealed class LiveAcceptanceRunner
         int firstSeat = request.FirstLaunch.SpawnLocation >= 0 ? request.FirstLaunch.SpawnLocation : 0;
         int secondSeat = request.SecondLaunch.SpawnLocation >= 0 ? request.SecondLaunch.SpawnLocation : 1;
         if (firstSeat == secondSeat) throw new ArgumentException("the two clients cannot share a starting location");
-        SpawnParticipant firstParticipant = new(request.FirstLaunch.PlayerName, ports[0], request.FirstLaunch.Side, firstColor, firstSeat);
-        SpawnParticipant secondParticipant = new(request.SecondLaunch.PlayerName, ports[1], request.SecondLaunch.Side, secondColor, secondSeat);
+        if (request.FirstLaunch.IsSpectator && request.SecondLaunch.IsSpectator)
+            throw new ArgumentException("at least one client must have a house: an all-spectator match ends immediately");
+        SpawnParticipant firstParticipant = new(request.FirstLaunch.PlayerName, ports[0], request.FirstLaunch.Side, firstColor, firstSeat, request.FirstLaunch.IsSpectator);
+        SpawnParticipant secondParticipant = new(request.SecondLaunch.PlayerName, ports[1], request.SecondLaunch.Side, secondColor, secondSeat, request.SecondLaunch.IsSpectator);
         // The orchestrator's own client hosts: it is the machine that already
         // owns session creation, so hosting there needs no extra coordination.
         // Global player order: identical on both clients, first client first.
@@ -182,8 +189,11 @@ public sealed class LiveAcceptanceRunner
         // Scenario at the .map file left the engine unable to read the map's
         // waypoints, so every player was seated on the same cell.
         const string scenario = "spawnmap.ini";
-        SpawnMatchPlan firstPlan = new(scenario, gameId, seed, true, firstParticipant, [secondParticipant], globalOrder, relay.RelayHost!, relay.RelayPort!.Value, request.GameOptions);
-        SpawnMatchPlan secondPlan = new(scenario, gameId, seed, false, secondParticipant, [firstParticipant], globalOrder, relay.RelayHost!, relay.RelayPort!.Value, request.GameOptions);
+        // AI houses, if the scenario asks for any. Their seats follow the human
+        // seats, so a two-client match with two AI needs a four-seat map.
+        IReadOnlyList<SpawnAiParticipant> aiPlayers = request.AiPlayers ?? [];
+        SpawnMatchPlan firstPlan = new(scenario, gameId, seed, true, firstParticipant, [secondParticipant], globalOrder, aiPlayers, relay.RelayHost!, relay.RelayPort!.Value, request.GameOptions);
+        SpawnMatchPlan secondPlan = new(scenario, gameId, seed, false, secondParticipant, [firstParticipant], globalOrder, aiPlayers, relay.RelayHost!, relay.RelayPort!.Value, request.GameOptions);
 
         string firstIni = await WriteSpawnIniAsync(request.EvidenceDirectory, "client-a", firstPlan, cancellationToken).ConfigureAwait(false);
         string secondIni = await WriteSpawnIniAsync(request.EvidenceDirectory, "client-b", secondPlan, cancellationToken).ConfigureAwait(false);

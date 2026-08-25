@@ -16,6 +16,25 @@ public sealed record SpawnParticipant(
     bool IsSpectator = false);
 
 /// <summary>
+/// A computer-controlled house.
+/// </summary>
+/// <remarks>
+/// AI players are not [Other#] sections -- those are network peers. Each AI
+/// needs an entry keyed Multi{humans + n} in [HouseHandicaps],
+/// [HouseCountries] and [HouseColors], plus its own starting location.
+/// Declaring only AIPlayers=N yields a scenario that never loads.
+///
+/// <paramref name="Handicap"/> is the difficulty: measured 2026-08-25, **2 is
+/// aggressive and 0 is passive** -- at 0 the AI ignored idle human players and
+/// fought each other.
+/// </remarks>
+public sealed record SpawnAiParticipant(
+    int Handicap = 2,
+    int Country = 0,
+    int Color = 4,
+    int SpawnLocation = -1);
+
+/// <summary>
 /// Match rules, using the spawner's own option names.
 /// </summary>
 /// <remarks>
@@ -28,7 +47,7 @@ public sealed record SpawnParticipant(
 /// <c>Superweapons</c>, not <c>SuperWeapons</c>.
 /// </remarks>
 public sealed record SpawnGameOptions(
-    int GameSpeed = 3,
+    int GameSpeed = 0,
     int Credits = 10000,
     int UnitCount = 10,
     bool ShortGame = true,
@@ -47,7 +66,12 @@ public sealed record SpawnGameOptions(
     int FrameSendRate = 2,
     int Protocol = 0,
     int ReconnectTimeout = 1400,
-    int MaxAhead = 10);
+    int MaxAhead = 10,
+    // Without these the game sits on the score screen waiting for a click, and
+    // the only way to end a run is to kill the process -- which makes an
+    // aborted run indistinguishable from a completed one.
+    bool SkipScoreScreen = true,
+    bool QuickExit = true);
 
 /// <summary>
 /// Everything one client needs to join one match. The five-key INI the adapter
@@ -62,6 +86,7 @@ public sealed record SpawnMatchPlan(
     SpawnParticipant Local,
     IReadOnlyList<SpawnParticipant> Others,
     IReadOnlyList<SpawnParticipant> GlobalOrder,
+    IReadOnlyList<SpawnAiParticipant> AiPlayers,
     string TunnelHost,
     int TunnelPort,
     SpawnGameOptions? Options = null,

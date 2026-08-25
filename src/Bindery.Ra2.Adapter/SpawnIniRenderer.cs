@@ -89,6 +89,11 @@ public static class SpawnIniRenderer
         Append(output, "ReconnectTimeout", options.ReconnectTimeout);
         // Under Protocol 0 this is the lockstep lookahead window.
         Append(output, "MaxAhead", options.MaxAhead);
+        // Engine-level exit at match end, so no one has to click Continue and
+        // the harness never has to kill a process to end a run.
+        Append(output, "SkipScoreScreen", options.SkipScoreScreen);
+        Append(output, "QuickExit", options.QuickExit);
+        if (plan.AiPlayers.Count > 0) Append(output, "AIPlayers", plan.AiPlayers.Count);
 
         int index = 1;
         foreach (SpawnParticipant other in plan.Others)
@@ -103,6 +108,15 @@ public static class SpawnIniRenderer
             Append(output, "Ip", plan.PeerAddress);
             Append(output, "Port", other.TunnelPort);
             index++;
+        }
+
+        // AI houses are keyed Multi{humans + n} across three sections. Only
+        // AIPlayers=N, without these, produces a scenario that never loads.
+        if (plan.AiPlayers.Count > 0)
+        {
+            AppendAiSection(output, "HouseHandicaps", plan, static ai => ai.Handicap);
+            AppendAiSection(output, "HouseCountries", plan, static ai => ai.Country);
+            AppendAiSection(output, "HouseColors", plan, static ai => ai.Color);
         }
 
         // Written in GLOBAL player order and byte identical on every client:
@@ -120,11 +134,25 @@ public static class SpawnIniRenderer
                 if (participant.SpawnLocation >= 0)
                     Append(output, "Multi" + (seat + 1).ToString(CultureInfo.InvariantCulture), participant.SpawnLocation);
             }
+            for (int ai = 0; ai < plan.AiPlayers.Count; ai++)
+            {
+                if (plan.AiPlayers[ai].SpawnLocation >= 0)
+                    Append(output, "Multi" + (plan.GlobalOrder.Count + ai + 1).ToString(CultureInfo.InvariantCulture), plan.AiPlayers[ai].SpawnLocation);
+            }
         }
 
         output.Append("\r\n[Tunnel]\r\nIp=").Append(plan.TunnelHost).Append("\r\nPort=")
             .Append(plan.TunnelPort.ToString(CultureInfo.InvariantCulture)).Append("\r\n");
         return output.ToString();
+    }
+
+    private static void AppendAiSection(StringBuilder output, string section, SpawnMatchPlan plan, Func<SpawnAiParticipant, int> value)
+    {
+        output.Append("\r\n[").Append(section).Append("]\r\n");
+        for (int ai = 0; ai < plan.AiPlayers.Count; ai++)
+        {
+            Append(output, "Multi" + (plan.GlobalOrder.Count + ai + 1).ToString(CultureInfo.InvariantCulture), value(plan.AiPlayers[ai]));
+        }
     }
 
     private static void Append(StringBuilder output, string key, string value) => output.Append(key).Append('=').Append(value).Append("\r\n");

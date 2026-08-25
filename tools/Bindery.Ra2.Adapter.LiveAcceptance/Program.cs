@@ -69,7 +69,8 @@ try
         settings.TelemetryEndpoint,
         settings.TelemetryProtocol,
         string.IsNullOrWhiteSpace(settings.TunnelV2Uri) ? null : new Uri(settings.TunnelV2Uri, UriKind.Absolute),
-        settings.GameOptions);
+        settings.GameOptions,
+        settings.AiPlayers);
 
     LiveAcceptanceEvidence evidence = await runner.RunAsync(request);
     Console.WriteLine($"evidence={Path.Combine(settings.EvidenceDirectory, "live-acceptance-evidence.json")}");
@@ -144,6 +145,12 @@ internal sealed class LiveAcceptanceSettings
 
     /// <summary>Match rules; omit for plain CnCNet defaults.</summary>
     public SpawnGameOptions? GameOptions { get; init; }
+
+    /// <summary>
+    /// Computer-controlled houses. Their seats follow the human seats, so two
+    /// clients plus two AI need a four-seat map. Handicap 2 is aggressive.
+    /// </summary>
+    public SpawnAiParticipant[]? AiPlayers { get; init; }
 
     public string Region { get; init; } = "eu-north";
     public int RegionRttMilliseconds { get; init; } = 40;

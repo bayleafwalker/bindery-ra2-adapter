@@ -81,6 +81,15 @@ $packetsForwarded = 0
 if (Has-Property $external 'packets_forwarded') { $packetsForwarded = [long]$external.packets_forwarded }
 elseif ((Has-Property $evidence.relay 'packets_forwarded') -and $null -ne $evidence.relay.packets_forwarded) { $packetsForwarded = [long]$evidence.relay.packets_forwarded }
 if (-not $relayTrafficObserved -or $packetsForwarded -le 0) { $failures.Add('positive relay traffic evidence is missing') }
+# Under lockstep both clients advance through the same number of event
+# snapshots, so unequal counts mean the simulations diverged. This catches what
+# SYNC*.TXT cannot: an observer can desync and drop without writing a dump.
+if (Has-Property $external 'telemetry_client_counts_match') {
+    if (-not $external.telemetry_client_counts_match) {
+        $failures.Add('the two clients recorded different telemetry event counts, so their simulations diverged')
+    }
+}
+
 $telemetryObserved = Get-ExternalFlag 'telemetry_raw_events_observed' $evidence $external
 $rawEventCount = 0
 if (Has-Property $external 'telemetry_raw_event_count') { $rawEventCount = [long]$external.telemetry_raw_event_count }
