@@ -13,7 +13,17 @@ try
     LiveAcceptanceSettings settings = JsonSerializer.Deserialize<LiveAcceptanceSettings>(await File.ReadAllTextAsync(args[0]), new JsonSerializerOptions(JsonSerializerDefaults.Web))
         ?? throw new InvalidOperationException("settings file was empty");
     Uri serviceUri = new(settings.ServiceUri, UriKind.Absolute);
-    using HttpClient httpClient = new() { BaseAddress = serviceUri };
+    // A match runs for minutes with no control-plane traffic in between, so a
+    // pooled connection can go stale and the next report fails with
+    // HttpRequestException. Retire idle connections rather than reusing a dead
+    // one, and allow for the game holding the machine busy.
+    SocketsHttpHandler handler = new()
+    {
+        PooledConnectionIdleTimeout = TimeSpan.FromSeconds(15),
+        PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+        ConnectTimeout = TimeSpan.FromSeconds(15),
+    };
+    using HttpClient httpClient = new(handler) { BaseAddress = serviceUri, Timeout = TimeSpan.FromSeconds(60) };
     BinderyAdapterClient controlPlane = new(httpClient);
     ILiveMatchDriver driver = settings.TransportProvider switch
     {

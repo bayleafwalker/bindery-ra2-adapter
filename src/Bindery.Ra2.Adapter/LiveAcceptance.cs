@@ -43,7 +43,8 @@ public sealed record LiveClientEvidence(
     string SpawnIniSha256,
     IReadOnlyList<string> Reports,
     int? ProcessExitCode,
-    string? Failure);
+    string? Failure,
+    IReadOnlyList<RunObservation>? Observations = null);
 
 public sealed record LiveRelayEvidence(
     string ProviderId,
@@ -224,7 +225,7 @@ public sealed class LiveAcceptanceRunner
             new LiveQualificationFlags(lifecycleComplete, false, false, false, false, false),
             [
                 "relay traffic observation must be supplied from the relay/control-plane telemetry path",
-                "spawner crash detection reads the debugger log; a spawner that logs nothing cannot be checked this way",
+                "debugger exception lines are first-chance events, not failures; only a desync dump is treated as notable",
                 "Kctl knowledge.candidate.intake authority must be verified by the served identity",
                 "oracle reads must be traced and attached to the qualification packet",
                 "human acceptance is required before global qualification"
@@ -263,7 +264,17 @@ public sealed class LiveAcceptanceRunner
                 async report =>
                 {
                     reports.Enqueue(report.Kind);
-                    await controlPlane.ReportAsync(client.Configuration, report, cancellationToken).ConfigureAwait(false);
+                    // One retry: losing the final lifecycle report to a stale
+                    // pooled connection would fail an otherwise good run.
+                    try
+                    {
+                        await controlPlane.ReportAsync(client.Configuration, report, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (HttpRequestException)
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+                        await controlPlane.ReportAsync(client.Configuration, report, cancellationToken).ConfigureAwait(false);
+                    }
                 },
                 cancellationToken).ConfigureAwait(false);
             string gameHash = await host.Sha256Async(launch.GameExecutable, cancellationToken).ConfigureAwait(false);
@@ -271,15 +282,35 @@ public sealed class LiveAcceptanceRunner
             // Syringe exits 0 even when the game it hosted threw, so the exit
             // code alone cannot say whether the client ran. Ask its log.
             string? spawnerLog = await host.ReadSpawnerLogAsync(launch.WorkingDirectory, launch.SpawnerLogName, cancellationToken).ConfigureAwait(false);
-            string? crash = SpawnerCrashDetection.FindCrash(spawnerLog);
-            if (crash is not null)
+            List<RunObservation> observations = [.. SpawnerLogObservations.Read(spawnerLog)];
+
+            // A desync is not a crash, and the match still ends with both
+            // clients exiting normally -- but the two simulations diverged, so
+            // it is the one log-adjacent event that must be notable.
+            string? syncDump = await host.ReadSpawnerLogAsync(launch.WorkingDirectory, "SYNC0.TXT", cancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrEmpty(syncDump))
+                observations.Add(new RunObservation(RunObservation.Desync, "the game wrote SYNC0.TXT", Notable: true));
+            // Only a notable observation changes the run's standing, and even
+            // then it is reported as what it is rather than as a "failure".
+            RunObservation? notable = observations.FirstOrDefault(static observation => observation.Notable);
+            if (notable is not null)
             {
-                LifecycleReport crashReport = new(Guid.NewGuid().ToString(), LifecycleKind.Failed, crash);
+                LifecycleReport report = new(Guid.NewGuid().ToString(), LifecycleKind.Failed, $"{notable.Kind}: {notable.Detail}");
                 reports.Enqueue(LifecycleKind.Failed);
-                await controlPlane.ReportAsync(client.Configuration, crashReport, cancellationToken).ConfigureAwait(false);
-                return new LiveClientRun(ToEvidence(client, launch, goldenApplianceId, gameHash, spawnIniPath, reports, exitCode, crash), reports, exitCode);
+                // Best effort: this arrives after the client has exited and may
+                // already have departed, so the control plane can legitimately
+                // reject it. Failing to announce the observation must not
+                // replace the observation itself with a transport error.
+                try
+                {
+                    await controlPlane.ReportAsync(client.Configuration, report, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is HttpRequestException or InvalidOperationException)
+                {
+                    observations.Add(new RunObservation("control_plane_report_rejected", exception.GetType().Name, Notable: false));
+                }
             }
-            return new LiveClientRun(ToEvidence(client, launch, goldenApplianceId, gameHash, spawnIniPath, reports, exitCode, null), reports, exitCode);
+            return new LiveClientRun(ToEvidence(client, launch, goldenApplianceId, gameHash, spawnIniPath, reports, exitCode, notable is null ? null : $"{notable.Kind}: {notable.Detail}", observations), reports, exitCode);
         }
         catch (Exception exception) when (exception is InvalidOperationException or PlatformNotSupportedException or IOException or UnauthorizedAccessException or HttpRequestException or OperationCanceledException)
         {
@@ -288,7 +319,11 @@ public sealed class LiveAcceptanceRunner
             string gameHash;
             try { gameHash = await host.Sha256Async(launch.GameExecutable, CancellationToken.None).ConfigureAwait(false); }
             catch (Exception hashException) when (hashException is InvalidOperationException or IOException or UnauthorizedAccessException or HttpRequestException) { gameHash = string.Empty; }
-            return new LiveClientRun(ToEvidence(client, launch, goldenApplianceId, gameHash, spawnIniPath, reports, null, exception.GetType().Name), reports, null);
+            // Record what actually went wrong: a bare type name cost two runs
+            // of guessing which call failed.
+            string detail = $"{exception.GetType().Name}: {exception.Message}";
+            if (exception.InnerException is not null) detail += $" -- inner {exception.InnerException.GetType().Name}: {exception.InnerException.Message}";
+            return new LiveClientRun(ToEvidence(client, launch, goldenApplianceId, gameHash, spawnIniPath, reports, null, detail), reports, null);
         }
         finally
         {
@@ -304,7 +339,7 @@ public sealed class LiveAcceptanceRunner
         }
     }
 
-    private static LiveClientEvidence ToEvidence(PreparedLiveClient client, LiveClientLaunch launch, string goldenApplianceId, string gameExecutableSha256, string spawnIniPath, IEnumerable<LifecycleKind> reports, int? exitCode, string? failure) => new(
+    private static LiveClientEvidence ToEvidence(PreparedLiveClient client, LiveClientLaunch launch, string goldenApplianceId, string gameExecutableSha256, string spawnIniPath, IEnumerable<LifecycleKind> reports, int? exitCode, string? failure, IReadOnlyList<RunObservation>? observations = null) => new(
         client.Enrollment.ClientId,
         client.Definition.Identity.AccountId,
         client.Definition.ClientInstanceId,
@@ -313,7 +348,8 @@ public sealed class LiveAcceptanceRunner
         Hashing.Sha256File(spawnIniPath),
         reports.Distinct().Select(LifecycleKindName).ToArray(),
         exitCode,
-        failure);
+        failure,
+        observations);
 
     private static string LifecycleKindName(LifecycleKind kind) => kind switch
     {

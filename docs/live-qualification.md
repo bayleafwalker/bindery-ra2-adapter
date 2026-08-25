@@ -131,18 +131,23 @@ first live run recorded `exit 0`, `failure: null` and a complete lifecycle for
 a run where both clients threw `0xE06D7363` and no relay traffic ever
 happened.
 
-`SyringeDebugger::HandleException` is Syringe's ordinary log channel -- feature
-flag notes and hook setup all arrive through it -- so the function name is not
-a crash signal and matching on it fails every run. Only the message content
-counts (`Exception (Code:`, access violations), plus the debuggee's own exit
-code, which Syringe logs as `Run: Done with exit code N` before exiting 0
-itself.
+Syringe is a debugger, so its log describes events, not verdicts, and three
+different readings of it were wrong before this was settled:
 
-The harness now clears the spawner log before each run and reads it after,
-reporting `failed` on a crash marker or a non-zero hosted exit code; `control_plane_lifecycle_complete`
-treats any `failed` report as a veto, and the preflight rejects both a `failed`
-report and a non-empty `failure` field. A spawner that writes no log at all
-cannot be checked this way, which the evidence records as a limitation.
+- `SyringeDebugger::HandleException` is Syringe's ordinary log channel --
+  feature-flag notes and hook setup arrive through it.
+- `Exception (Code: ...)` lines are **first-chance** exceptions: ones the game
+  throws and handles. RA2 with Ares logs several in a match that plays and
+  exits cleanly.
+- The hosted game's exit code is not a verdict either. Yuri's Revenge exits
+  with **3** when the player quits from the score screen.
+
+The harness therefore records what it saw as observations
+(`spawner_exception`, `hosted_exit_code`, `desync`) rather than deciding from
+log strings. Only a **notable** observation bears on qualification, and the
+one that qualifies is a desync: the game writes `SYNC0.TXT` when the two
+simulations diverge. A desync is not a crash -- both clients still exit
+normally -- but a diverged match is not an acceptable one.
 
 ## Run the qualification preflight
 

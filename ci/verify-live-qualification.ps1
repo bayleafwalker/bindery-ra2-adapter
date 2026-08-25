@@ -63,6 +63,15 @@ foreach ($client in $clients) {
     # failure must veto the run even when the exit code looks clean.
     if ($reports -contains 'failed') { $failures.Add("client $($client.client_id) reported a failed lifecycle") }
     if (-not [string]::IsNullOrWhiteSpace($client.failure)) { $failures.Add("client $($client.client_id) recorded a failure: $($client.failure)") }
+    # Observations are events, not verdicts. Only the notable ones bear on
+    # qualification -- a desync means the two simulations diverged, which no
+    # amount of clean exiting makes acceptable. Debugger exception lines and
+    # the hosted exit code are recorded and deliberately not judged here.
+    foreach ($observation in @($client.observations)) {
+        if ($observation -and $observation.notable) {
+            $failures.Add("client $($client.client_id) observed $($observation.kind): $($observation.detail)")
+        }
+    }
     if ($client.game_executable_sha256 -notmatch '^sha256:[0-9a-f]{64}$') { $failures.Add("client $($client.client_id) has no valid executable hash") }
     if ($client.spawn_ini_sha256 -notmatch '^sha256:[0-9a-f]{64}$') { $failures.Add("client $($client.client_id) has no valid spawn INI hash") }
 }

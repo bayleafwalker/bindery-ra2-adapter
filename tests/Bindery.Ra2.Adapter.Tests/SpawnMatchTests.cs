@@ -129,62 +129,49 @@ public sealed class SpawnMatchTests
         Assert.Throws<InvalidOperationException>(() => TunnelPortAllocation.Parse("[31952,31952]", 2));
     }
 
-    [Theory]
-    [InlineData("[18:13:40] SyringeDebugger::HandleException: Exception (Code: 0xE06D7363 at 0x76003874)!")]
-    [InlineData("gamemd.exe has crashed")]
-    [InlineData("Access violation at 0x00401000")]
-    public void SpawnerCrashesAreDetectedInTheDebuggerLog(string line)
+    [Fact]
+    public void DebuggerExceptionLinesAreRecordedAsEventsNotFailures()
     {
-        Assert.NotNull(SpawnerCrashDetection.FindCrash($"[18:13:39] starting\n{line}\n"));
+        // Syringe logs first-chance exceptions: ones the game throws and
+        // handles. RA2 with Ares does this routinely in a match that plays and
+        // exits normally, so these are events, not verdicts.
+        IReadOnlyList<RunObservation> observations = SpawnerLogObservations.Read(
+            "[21:09:19] SyringeDebugger::HandleException: Exception (Code: 0xE06D7363 at 0x7689A2B4)!\n" +
+            "[21:09:48] SyringeDebugger::Run: Done with exit code 3 (3).\n");
+
+        RunObservation exception = Assert.Single(observations, o => o.Kind == RunObservation.SpawnerException);
+        Assert.False(exception.Notable);
+        Assert.All(observations, o => Assert.False(o.Notable));
     }
 
     [Fact]
-    public void TheHostedGamesExitCodeIsRecoveredFromTheLog()
+    public void TheHostedExitCodeIsRecordedWithoutJudgingIt()
     {
-        // Syringe exits 0 regardless; the debuggee's code is the real outcome.
-        string? reason = SpawnerCrashDetection.FindCrash(
-            "[18:49:36] SyringeDebugger::Run: Waiting for process to exit...\n" +
-            "[18:49:37] SyringeDebugger::Run: Done with exit code 3 (3).\n" +
-            "[18:49:37] WinMain: Exiting on success.\n");
+        // Yuri's Revenge exits with 3 on an ordinary quit from the score screen.
+        IReadOnlyList<RunObservation> observations = SpawnerLogObservations.Read(
+            "[21:09:48] SyringeDebugger::Run: Done with exit code 3 (3).\n");
 
-        Assert.NotNull(reason);
-        Assert.Contains("3", reason, StringComparison.Ordinal);
+        RunObservation exitCode = Assert.Single(observations, o => o.Kind == RunObservation.HostedExitCode);
+        Assert.Contains("3", exitCode.Detail, StringComparison.Ordinal);
+        Assert.False(exitCode.Notable);
     }
 
     [Fact]
-    public void HandleExceptionIsSyringesOrdinaryLogChannelNotACrash()
+    public void RoutineHookWarningsProduceNoObservations()
     {
-        // This is the false positive that made a working run look failed:
-        // routine feature-flag and hook-setup notes are logged through a
-        // function called HandleException, so the name alone means nothing.
-        Assert.Null(SpawnerCrashDetection.FindCrash(
-            "[18:48:39] SyringeDebugger::HandleException: Feature flag \"ZFPreservation\" not exported by \"libra2yrcpp.dll\", skipping.\n" +
-            "[18:48:39] SyringeDebugger::HandleException: Finished setting feature flags.\n" +
-            "[18:48:39] SyringeDebugger::HandleException: Creating code hooks.\n" +
-            "[18:49:37] SyringeDebugger::Run: Done with exit code 0 (0).\n"));
+        // Syringe reports these on every RA2 run.
+        Assert.Empty(SpawnerLogObservations.Read(
+            "[18:48:39] SyringeDebugger::RebuildInstructions: Failed to decode instruction at 0x00416C4E.\n" +
+            "[18:48:39] SyringeDebugger::HandleException: Finished setting feature flags.\n"));
     }
 
     [Fact]
-    public void FailedInstructionDecodesAreNotCrashes()
+    public void ADesyncIsNotableAndIsNotCalledACrash()
     {
-        // Syringe reports these on every RA2 run; they are warnings about hook
-        // sites, not failures.
-        Assert.Null(SpawnerCrashDetection.FindCrash(
-            "[18:48:39] SyringeDebugger::RebuildInstructions: Failed to decode instruction at 0x00416C4E, copying remaining 4 bytes verbatim.\n" +
-            "[18:49:37] SyringeDebugger::Run: Done with exit code 0 (0).\n"));
+        RunObservation desync = new(RunObservation.Desync, "the game wrote SYNC0.TXT", Notable: true);
+
+        Assert.True(desync.Notable);
+        Assert.DoesNotContain("crash", desync.Kind, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public void ACleanSpawnerLogIsNotACrash()
-    {
-        Assert.Null(SpawnerCrashDetection.FindCrash("[18:13:39] Syringe 0.8\n[18:13:40] Loading gamemd.exe\n"));
-    }
-
-    [Fact]
-    public void NoSpawnerLogIsNotACrash()
-    {
-        // A spawner that logs nothing cannot be checked this way; the evidence
-        // records that as a limitation rather than pretending it passed.
-        Assert.Null(SpawnerCrashDetection.FindCrash(null));
-    }
 }
