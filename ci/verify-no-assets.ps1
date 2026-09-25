@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$forbidden = @('RA2MD.exe', 'gamemd.exe', 'YURI.exe', 'rules.ini', 'maps')
+$forbidden = @('RA2MD.exe', 'gamemd.exe', 'YURI.exe', 'rules.ini', 'maps', 'rulesmd.ini')
 foreach ($name in $forbidden) {
     if (Get-ChildItem -Recurse -Force -File | Where-Object { $_.Name -ieq $name }) {
         throw "Proprietary game asset found in adapter repository: $name"

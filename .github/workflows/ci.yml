@@ -43,3 +43,40 @@ jobs:
         run: dotnet build tools/Bindery.Ra2.Adapter.ControlPlaneGate/Bindery.Ra2.Adapter.ControlPlaneGate.csproj --configuration Release --no-restore
       - name: Test adapter
         run: dotnet test tests/Bindery.Ra2.Adapter.Tests/Bindery.Ra2.Adapter.Tests.csproj --configuration Release --no-restore
+      - name: Restore strategic bot tests
+        run: dotnet restore tests/Bindery.Ra2.Bot.Tests/Bindery.Ra2.Bot.Tests.csproj
+      - name: Build strategic bot tests
+        run: dotnet build tests/Bindery.Ra2.Bot.Tests/Bindery.Ra2.Bot.Tests.csproj --configuration Release --no-restore
+      - name: Test strategic bot
+        run: dotnet test tests/Bindery.Ra2.Bot.Tests/Bindery.Ra2.Bot.Tests.csproj --configuration Release --no-restore
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Restore strategic bot projects
+        run: |
+          dotnet restore src/Bindery.Ra2.Bot/Bindery.Ra2.Bot.csproj
+          dotnet restore src/Bindery.Ra2.Bot.Sim/Bindery.Ra2.Bot.Sim.csproj
+          dotnet restore src/Bindery.Ra2.Bot.Claude/Bindery.Ra2.Bot.Claude.csproj
+          dotnet restore tools/Bindery.Ra2.Bot.Arena/Bindery.Ra2.Bot.Arena.csproj
+      - name: Build strategic bot projects
+        run: |
+          dotnet build src/Bindery.Ra2.Bot/Bindery.Ra2.Bot.csproj --configuration Release --no-restore
+          dotnet build src/Bindery.Ra2.Bot.Sim/Bindery.Ra2.Bot.Sim.csproj --configuration Release --no-restore
+          dotnet build src/Bindery.Ra2.Bot.Claude/Bindery.Ra2.Bot.Claude.csproj --configuration Release --no-restore
+          dotnet build tools/Bindery.Ra2.Bot.Arena/Bindery.Ra2.Bot.Arena.csproj --configuration Release --no-restore
+      - name: Restore strategic bot tests
+        run: dotnet restore tests/Bindery.Ra2.Bot.Tests/Bindery.Ra2.Bot.Tests.csproj
+      - name: Test strategic bot
+        run: dotnet test tests/Bindery.Ra2.Bot.Tests/Bindery.Ra2.Bot.Tests.csproj --configuration Release --no-restore
+      - name: Arena smoke run
+        env:
+          BINDERY_BOT_LIVE_LLM: "0"
+        run: |
+          dotnet run --project tools/Bindery.Ra2.Bot.Arena -- run \
+            --arms selector --maps training --opponents balanced --seeds 1 \
+            --max-seconds 300 --out artifacts/arena
