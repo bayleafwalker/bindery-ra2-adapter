@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>Bindery.Ra2.Bot</AssemblyName>
+    <RootNamespace>Bindery.Ra2.Bot</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Bindery.Ra2.Bot.Tests" />
+  </ItemGroup>
+</Project>
