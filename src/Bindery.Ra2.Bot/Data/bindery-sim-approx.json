@@ -1,0 +1,1389 @@
+{
+  "rulesetId": "bindery-sim-approx",
+  "provenance": "Hand-authored approximate fixture for the Bindery simulator and unit tests. Costs, build times, stats and the weapon-versus-armor matrix are plausible illustrative estimates chosen by the Bindery.Ra2.Bot.Rules package; they are NOT derived from retail Red Alert 2 / Yuri's Revenge game files and are NOT retail-accurate. BuildSeconds = max(2, cost * 0.06).",
+  "units": [
+    {
+      "typeId": "AMCV",
+      "name": "Allied Mobile Construction Vehicle",
+      "factions": [
+        "Allied"
+      ],
+      "kind": "Vehicle",
+      "role": "Mcv",
+      "queue": "Vehicle",
+      "cost": 3000,
+      "buildSeconds": 180.0,
+      "power": 0,
+      "prerequisites": [
+        [
+          "GAWEAP"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 600,
+      "armor": "Heavy",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 4.0,
+      "sight": 5,
+      "antiAir": false,
+      "deployable": true
+    },
+    {
+      "typeId": "APOC",
+      "name": "Soviet Apocalypse Tank",
+      "factions": [
+        "Soviet"
+      ],
+      "kind": "Vehicle",
+      "role": "AntiArmor",
+      "queue": "Vehicle",
+      "cost": 1750,
+      "buildSeconds": 105.0,
+      "power": 0,
+      "prerequisites": [
+        [
+          "NAWEAP"
+        ],
+        [
+          "NATECH"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 1000,
+      "armor": "Heavy",
+      "damage": 40,
+      "weapon": "AntiArmor",
+      "range": 6,
+      "speed": 4.0,
+      "sight": 7,
+      "antiAir": true,
+      "deployable": false
+    },
+    {
+      "typeId": "CMIN",
+      "name": "Allied Chrono Miner",
+      "factions": [
+        "Allied"
+      ],
+      "kind": "Vehicle",
+      "role": "Harvester",
+      "queue": "Vehicle",
+      "cost": 1400,
+      "buildSeconds": 84.0,
+      "power": 0,
+      "prerequisites": [
+        [
+          "GAWEAP"
+        ],
+        [
+          "GAREFN"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 400,
+      "armor": "Medium",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 6.0,
+      "sight": 5,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "E1",
+      "name": "Allied GI",
+      "factions": [
+        "Allied"
+      ],
+      "kind": "Infantry",
+      "role": "AntiInfantry",
+      "queue": "Infantry",
+      "cost": 200,
+      "buildSeconds": 12.0,
+      "power": 0,
+      "prerequisites": [
+        [
+          "GAPILE"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 125,
+      "armor": "None",
+      "damage": 12,
+      "weapon": "AntiInfantry",
+      "range": 5,
+      "speed": 3.5,
+      "sight": 5,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "E2",
+      "name": "Soviet Conscript",
+      "factions": [
+        "Soviet"
+      ],
+      "kind": "Infantry",
+      "role": "AntiInfantry",
+      "queue": "Infantry",
+      "cost": 100,
+      "buildSeconds": 6.0,
+      "power": 0,
+      "prerequisites": [
+        [
+          "NAHAND"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 125,
+      "armor": "None",
+      "damage": 10,
+      "weapon": "AntiInfantry",
+      "range": 5,
+      "speed": 3.0,
+      "sight": 5,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "E3",
+      "name": "Allied Rocketeer",
+      "factions": [
+        "Allied"
+      ],
+      "kind": "Infantry",
+      "role": "AntiAir",
+      "queue": "Infantry",
+      "cost": 600,
+      "buildSeconds": 36.0,
+      "power": 0,
+      "prerequisites": [
+        [
+          "GAAIRC"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 75,
+      "armor": "None",
+      "damage": 15,
+      "weapon": "AntiAir",
+      "range": 5,
+      "speed": 6.0,
+      "sight": 6,
+      "antiAir": true,
+      "deployable": false
+    },
+    {
+      "typeId": "E4",
+      "name": "Soviet Flak Trooper",
+      "factions": [
+        "Soviet"
+      ],
+      "kind": "Infantry",
+      "role": "AntiAir",
+      "queue": "Infantry",
+      "cost": 300,
+      "buildSeconds": 18.0,
+      "power": 0,
+      "prerequisites": [
+        [
+          "NAHAND"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 125,
+      "armor": "None",
+      "damage": 15,
+      "weapon": "AntiAir",
+      "range": 6,
+      "speed": 3.0,
+      "sight": 5,
+      "antiAir": true,
+      "deployable": false
+    },
+    {
+      "typeId": "E5",
+      "name": "Soviet Tesla Trooper",
+      "factions": [
+        "Soviet"
+      ],
+      "kind": "Infantry",
+      "role": "AntiArmor",
+      "queue": "Infantry",
+      "cost": 700,
+      "buildSeconds": 42.0,
+      "power": 0,
+      "prerequisites": [
+        [
+          "NATECH"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 125,
+      "armor": "None",
+      "damage": 25,
+      "weapon": "AntiArmor",
+      "range": 4,
+      "speed": 3.0,
+      "sight": 5,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "ENGINEER",
+      "name": "Allied Engineer",
+      "factions": [
+        "Allied"
+      ],
+      "kind": "Infantry",
+      "role": "Engineer",
+      "queue": "Infantry",
+      "cost": 500,
+      "buildSeconds": 30.0,
+      "power": 0,
+      "prerequisites": [
+        [
+          "GAPILE"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 50,
+      "armor": "None",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 3.0,
+      "sight": 4,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "FV",
+      "name": "Allied IFV",
+      "factions": [
+        "Allied"
+      ],
+      "kind": "Vehicle",
+      "role": "AntiInfantry",
+      "queue": "Vehicle",
+      "cost": 500,
+      "buildSeconds": 30.0,
+      "power": 0,
+      "prerequisites": [
+        [
+          "GAWEAP"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 200,
+      "armor": "Light",
+      "damage": 18,
+      "weapon": "AntiInfantry",
+      "range": 4.5,
+      "speed": 6.0,
+      "sight": 5,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "GAAIRC",
+      "name": "Allied Airforce Command HQ",
+      "factions": [
+        "Allied"
+      ],
+      "kind": "Building",
+      "role": "Tech",
+      "queue": "Building",
+      "cost": 1000,
+      "buildSeconds": 60.0,
+      "power": -20,
+      "prerequisites": [
+        [
+          "GAWEAP"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 400,
+      "armor": "Concrete",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 0,
+      "sight": 6,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "GADEPT",
+      "name": "Allied Service Depot",
+      "factions": [
+        "Allied"
+      ],
+      "kind": "Building",
+      "role": "Support",
+      "queue": "Building",
+      "cost": 500,
+      "buildSeconds": 30.0,
+      "power": -10,
+      "prerequisites": [
+        [
+          "GAWEAP"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 500,
+      "armor": "Concrete",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 0,
+      "sight": 5,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "GAPATR",
+      "name": "Allied Patriot Missile System",
+      "factions": [
+        "Allied"
+      ],
+      "kind": "Building",
+      "role": "Defense",
+      "queue": "Defense",
+      "cost": 1000,
+      "buildSeconds": 60.0,
+      "power": -50,
+      "prerequisites": [
+        [
+          "GAWEAP"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 400,
+      "armor": "Concrete",
+      "damage": 60,
+      "weapon": "AntiAir",
+      "range": 10,
+      "speed": 0,
+      "sight": 8,
+      "antiAir": true,
+      "deployable": false
+    },
+    {
+      "typeId": "GAPILE",
+      "name": "Allied Barracks",
+      "factions": [
+        "Allied"
+      ],
+      "kind": "Building",
+      "role": "Production",
+      "queue": "Building",
+      "cost": 500,
+      "buildSeconds": 30.0,
+      "power": -10,
+      "prerequisites": [
+        [
+          "GAYARD"
+        ],
+        [
+          "GAPOWR"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 500,
+      "armor": "Concrete",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 0,
+      "sight": 5,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "GAPOWR",
+      "name": "Allied Power Plant",
+      "factions": [
+        "Allied"
+      ],
+      "kind": "Building",
+      "role": "Power",
+      "queue": "Building",
+      "cost": 800,
+      "buildSeconds": 48.0,
+      "power": 100,
+      "prerequisites": [
+        [
+          "GAYARD"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 400,
+      "armor": "Concrete",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 0,
+      "sight": 5,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "GAPRIS",
+      "name": "Allied Prism Tower",
+      "factions": [
+        "Allied"
+      ],
+      "kind": "Building",
+      "role": "Defense",
+      "queue": "Defense",
+      "cost": 1500,
+      "buildSeconds": 90.0,
+      "power": -75,
+      "prerequisites": [
+        [
+          "GAWEAP"
+        ],
+        [
+          "GATECH"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 750,
+      "armor": "Concrete",
+      "damage": 70,
+      "weapon": "AntiArmor",
+      "range": 8,
+      "speed": 0,
+      "sight": 7,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "GAREFN",
+      "name": "Allied Ore Refinery",
+      "factions": [
+        "Allied"
+      ],
+      "kind": "Building",
+      "role": "Economy",
+      "queue": "Building",
+      "cost": 2000,
+      "buildSeconds": 120.0,
+      "power": -30,
+      "prerequisites": [
+        [
+          "GAYARD"
+        ],
+        [
+          "GAPOWR"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 900,
+      "armor": "Concrete",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 0,
+      "sight": 6,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "GATECH",
+      "name": "Allied Battle Lab",
+      "factions": [
+        "Allied"
+      ],
+      "kind": "Building",
+      "role": "Tech",
+      "queue": "Building",
+      "cost": 1500,
+      "buildSeconds": 90.0,
+      "power": -30,
+      "prerequisites": [
+        [
+          "GAWEAP"
+        ],
+        [
+          "GAAIRC"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 500,
+      "armor": "Concrete",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 0,
+      "sight": 6,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "GAWEAP",
+      "name": "Allied War Factory",
+      "factions": [
+        "Allied"
+      ],
+      "kind": "Building",
+      "role": "Production",
+      "queue": "Building",
+      "cost": 2000,
+      "buildSeconds": 120.0,
+      "power": -30,
+      "prerequisites": [
+        [
+          "GAYARD"
+        ],
+        [
+          "GAPOWR"
+        ],
+        [
+          "GAREFN"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 800,
+      "armor": "Concrete",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 0,
+      "sight": 6,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "GAWEAT",
+      "name": "Allied Weather Control Device",
+      "factions": [
+        "Allied"
+      ],
+      "kind": "Building",
+      "role": "Superweapon",
+      "queue": "Building",
+      "cost": 5000,
+      "buildSeconds": 300.0,
+      "power": -100,
+      "prerequisites": [
+        [
+          "GATECH"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 1000,
+      "armor": "Concrete",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 0,
+      "sight": 6,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "GAYARD",
+      "name": "Allied Construction Yard",
+      "factions": [
+        "Allied"
+      ],
+      "kind": "Building",
+      "role": "Production",
+      "queue": "Building",
+      "cost": 0,
+      "buildSeconds": 2.0,
+      "power": 0,
+      "prerequisites": [],
+      "techLevel": 0,
+      "strength": 1000,
+      "armor": "Concrete",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 0,
+      "sight": 8,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "HARR",
+      "name": "Allied Harrier",
+      "factions": [
+        "Allied"
+      ],
+      "kind": "Aircraft",
+      "role": "AntiArmor",
+      "queue": "Aircraft",
+      "cost": 1200,
+      "buildSeconds": 72.0,
+      "power": 0,
+      "prerequisites": [
+        [
+          "GAAIRC"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 125,
+      "armor": "Light",
+      "damage": 40,
+      "weapon": "AntiArmor",
+      "range": 5,
+      "speed": 10.0,
+      "sight": 6,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "HARV",
+      "name": "Soviet War Miner",
+      "factions": [
+        "Soviet"
+      ],
+      "kind": "Vehicle",
+      "role": "Harvester",
+      "queue": "Vehicle",
+      "cost": 1400,
+      "buildSeconds": 84.0,
+      "power": 0,
+      "prerequisites": [
+        [
+          "NAWEAP"
+        ],
+        [
+          "NAREFN"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 600,
+      "armor": "Medium",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 4.5,
+      "sight": 5,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "HTK",
+      "name": "Soviet Flak Track",
+      "factions": [
+        "Soviet"
+      ],
+      "kind": "Vehicle",
+      "role": "AntiAir",
+      "queue": "Vehicle",
+      "cost": 800,
+      "buildSeconds": 48.0,
+      "power": 0,
+      "prerequisites": [
+        [
+          "NAWEAP"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 400,
+      "armor": "Light",
+      "damage": 20,
+      "weapon": "AntiAir",
+      "range": 6,
+      "speed": 6.0,
+      "sight": 5,
+      "antiAir": true,
+      "deployable": false
+    },
+    {
+      "typeId": "HTNK",
+      "name": "Soviet Rhino Tank",
+      "factions": [
+        "Soviet"
+      ],
+      "kind": "Vehicle",
+      "role": "AntiArmor",
+      "queue": "Vehicle",
+      "cost": 900,
+      "buildSeconds": 54.0,
+      "power": 0,
+      "prerequisites": [
+        [
+          "NAWEAP"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 600,
+      "armor": "Heavy",
+      "damage": 32,
+      "weapon": "AntiArmor",
+      "range": 5,
+      "speed": 5.0,
+      "sight": 6,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "KIROV",
+      "name": "Soviet Kirov Airship",
+      "factions": [
+        "Soviet"
+      ],
+      "kind": "Aircraft",
+      "role": "AntiArmor",
+      "queue": "Aircraft",
+      "cost": 2000,
+      "buildSeconds": 120.0,
+      "power": 0,
+      "prerequisites": [
+        [
+          "NARADR"
+        ],
+        [
+          "NATECH"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 1000,
+      "armor": "Heavy",
+      "damage": 100,
+      "weapon": "AntiStructure",
+      "range": 3,
+      "speed": 2.0,
+      "sight": 6,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "MTNK",
+      "name": "Allied Grizzly Tank",
+      "factions": [
+        "Allied"
+      ],
+      "kind": "Vehicle",
+      "role": "AntiArmor",
+      "queue": "Vehicle",
+      "cost": 700,
+      "buildSeconds": 42.0,
+      "power": 0,
+      "prerequisites": [
+        [
+          "GAWEAP"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 400,
+      "armor": "Heavy",
+      "damage": 30,
+      "weapon": "AntiArmor",
+      "range": 5,
+      "speed": 5.0,
+      "sight": 6,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "NACNST",
+      "name": "Soviet Construction Yard",
+      "factions": [
+        "Soviet"
+      ],
+      "kind": "Building",
+      "role": "Production",
+      "queue": "Building",
+      "cost": 0,
+      "buildSeconds": 2.0,
+      "power": 0,
+      "prerequisites": [],
+      "techLevel": 0,
+      "strength": 1000,
+      "armor": "Concrete",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 0,
+      "sight": 8,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "NADEPT",
+      "name": "Soviet Service Depot",
+      "factions": [
+        "Soviet"
+      ],
+      "kind": "Building",
+      "role": "Support",
+      "queue": "Building",
+      "cost": 500,
+      "buildSeconds": 30.0,
+      "power": -10,
+      "prerequisites": [
+        [
+          "NAWEAP"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 500,
+      "armor": "Concrete",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 0,
+      "sight": 5,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "NAFLAK",
+      "name": "Soviet Flak Cannon",
+      "factions": [
+        "Soviet"
+      ],
+      "kind": "Building",
+      "role": "Defense",
+      "queue": "Defense",
+      "cost": 1000,
+      "buildSeconds": 60.0,
+      "power": -50,
+      "prerequisites": [
+        [
+          "NAWEAP"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 400,
+      "armor": "Concrete",
+      "damage": 50,
+      "weapon": "AntiAir",
+      "range": 9,
+      "speed": 0,
+      "sight": 8,
+      "antiAir": true,
+      "deployable": false
+    },
+    {
+      "typeId": "NAHAND",
+      "name": "Soviet Barracks",
+      "factions": [
+        "Soviet"
+      ],
+      "kind": "Building",
+      "role": "Production",
+      "queue": "Building",
+      "cost": 500,
+      "buildSeconds": 30.0,
+      "power": -10,
+      "prerequisites": [
+        [
+          "NACNST"
+        ],
+        [
+          "NAPOWR",
+          "NANRCT"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 500,
+      "armor": "Concrete",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 0,
+      "sight": 5,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "NAMISL",
+      "name": "Soviet Nuclear Missile Silo",
+      "factions": [
+        "Soviet"
+      ],
+      "kind": "Building",
+      "role": "Superweapon",
+      "queue": "Building",
+      "cost": 5000,
+      "buildSeconds": 300.0,
+      "power": -100,
+      "prerequisites": [
+        [
+          "NATECH"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 1000,
+      "armor": "Concrete",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 0,
+      "sight": 6,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "NANRCT",
+      "name": "Soviet Nuclear Reactor",
+      "factions": [
+        "Soviet"
+      ],
+      "kind": "Building",
+      "role": "Power",
+      "queue": "Building",
+      "cost": 1000,
+      "buildSeconds": 60.0,
+      "power": 200,
+      "prerequisites": [
+        [
+          "NACNST"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 500,
+      "armor": "Concrete",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 0,
+      "sight": 5,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "NAPOWR",
+      "name": "Soviet Power Plant",
+      "factions": [
+        "Soviet"
+      ],
+      "kind": "Building",
+      "role": "Power",
+      "queue": "Building",
+      "cost": 700,
+      "buildSeconds": 42.0,
+      "power": 100,
+      "prerequisites": [
+        [
+          "NACNST"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 400,
+      "armor": "Concrete",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 0,
+      "sight": 5,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "NARADR",
+      "name": "Soviet Radar Tower",
+      "factions": [
+        "Soviet"
+      ],
+      "kind": "Building",
+      "role": "Tech",
+      "queue": "Building",
+      "cost": 1000,
+      "buildSeconds": 60.0,
+      "power": -20,
+      "prerequisites": [
+        [
+          "NAWEAP"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 400,
+      "armor": "Concrete",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 0,
+      "sight": 6,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "NAREFN",
+      "name": "Soviet Ore Refinery",
+      "factions": [
+        "Soviet"
+      ],
+      "kind": "Building",
+      "role": "Economy",
+      "queue": "Building",
+      "cost": 2000,
+      "buildSeconds": 120.0,
+      "power": -30,
+      "prerequisites": [
+        [
+          "NACNST"
+        ],
+        [
+          "NAPOWR",
+          "NANRCT"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 900,
+      "armor": "Concrete",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 0,
+      "sight": 6,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "NASNGN",
+      "name": "Soviet Sentry Gun",
+      "factions": [
+        "Soviet"
+      ],
+      "kind": "Building",
+      "role": "Defense",
+      "queue": "Defense",
+      "cost": 400,
+      "buildSeconds": 24.0,
+      "power": -5,
+      "prerequisites": [
+        [
+          "NAHAND"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 400,
+      "armor": "Concrete",
+      "damage": 15,
+      "weapon": "AntiInfantry",
+      "range": 5,
+      "speed": 0,
+      "sight": 5,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "NATECH",
+      "name": "Soviet Battle Lab",
+      "factions": [
+        "Soviet"
+      ],
+      "kind": "Building",
+      "role": "Tech",
+      "queue": "Building",
+      "cost": 1500,
+      "buildSeconds": 90.0,
+      "power": -30,
+      "prerequisites": [
+        [
+          "NAWEAP"
+        ],
+        [
+          "NARADR"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 500,
+      "armor": "Concrete",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 0,
+      "sight": 6,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "NATSLA",
+      "name": "Soviet Tesla Coil",
+      "factions": [
+        "Soviet"
+      ],
+      "kind": "Building",
+      "role": "Defense",
+      "queue": "Defense",
+      "cost": 1500,
+      "buildSeconds": 90.0,
+      "power": -75,
+      "prerequisites": [
+        [
+          "NAWEAP"
+        ],
+        [
+          "NATECH"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 750,
+      "armor": "Concrete",
+      "damage": 90,
+      "weapon": "AntiArmor",
+      "range": 7,
+      "speed": 0,
+      "sight": 7,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "NAWEAP",
+      "name": "Soviet War Factory",
+      "factions": [
+        "Soviet"
+      ],
+      "kind": "Building",
+      "role": "Production",
+      "queue": "Building",
+      "cost": 2000,
+      "buildSeconds": 120.0,
+      "power": -30,
+      "prerequisites": [
+        [
+          "NACNST"
+        ],
+        [
+          "NAPOWR",
+          "NANRCT"
+        ],
+        [
+          "NAREFN"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 800,
+      "armor": "Concrete",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 0,
+      "sight": 6,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "PBOX",
+      "name": "Allied Pillbox",
+      "factions": [
+        "Allied"
+      ],
+      "kind": "Building",
+      "role": "Defense",
+      "queue": "Defense",
+      "cost": 400,
+      "buildSeconds": 24.0,
+      "power": -5,
+      "prerequisites": [
+        [
+          "GAPILE"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 400,
+      "armor": "Concrete",
+      "damage": 15,
+      "weapon": "AntiInfantry",
+      "range": 5,
+      "speed": 0,
+      "sight": 5,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "SENGINEER",
+      "name": "Soviet Engineer",
+      "factions": [
+        "Soviet"
+      ],
+      "kind": "Infantry",
+      "role": "Engineer",
+      "queue": "Infantry",
+      "cost": 500,
+      "buildSeconds": 30.0,
+      "power": 0,
+      "prerequisites": [
+        [
+          "NAHAND"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 50,
+      "armor": "None",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 3.0,
+      "sight": 4,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "SMCV",
+      "name": "Soviet Mobile Construction Vehicle",
+      "factions": [
+        "Soviet"
+      ],
+      "kind": "Vehicle",
+      "role": "Mcv",
+      "queue": "Vehicle",
+      "cost": 3000,
+      "buildSeconds": 180.0,
+      "power": 0,
+      "prerequisites": [
+        [
+          "NAWEAP"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 600,
+      "armor": "Heavy",
+      "damage": 0,
+      "weapon": "None",
+      "range": 0,
+      "speed": 4.0,
+      "sight": 5,
+      "antiAir": false,
+      "deployable": true
+    },
+    {
+      "typeId": "SREF",
+      "name": "Allied Prism Tank",
+      "factions": [
+        "Allied"
+      ],
+      "kind": "Vehicle",
+      "role": "AntiArmor",
+      "queue": "Vehicle",
+      "cost": 1200,
+      "buildSeconds": 72.0,
+      "power": 0,
+      "prerequisites": [
+        [
+          "GAWEAP"
+        ],
+        [
+          "GATECH"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 350,
+      "armor": "Heavy",
+      "damage": 55,
+      "weapon": "AntiArmor",
+      "range": 7,
+      "speed": 4.5,
+      "sight": 6,
+      "antiAir": false,
+      "deployable": false
+    },
+    {
+      "typeId": "V3",
+      "name": "Soviet V3 Rocket Launcher",
+      "factions": [
+        "Soviet"
+      ],
+      "kind": "Vehicle",
+      "role": "Artillery",
+      "queue": "Vehicle",
+      "cost": 800,
+      "buildSeconds": 48.0,
+      "power": 0,
+      "prerequisites": [
+        [
+          "NAWEAP"
+        ],
+        [
+          "NARADR"
+        ]
+      ],
+      "techLevel": 0,
+      "strength": 200,
+      "armor": "Light",
+      "damage": 45,
+      "weapon": "Artillery",
+      "range": 10,
+      "speed": 4.0,
+      "sight": 5,
+      "antiAir": false,
+      "deployable": false
+    }
+  ],
+  "effectiveness": {
+    "AntiInfantry": {
+      "None": 1.5,
+      "Flak": 1.0,
+      "Plate": 1.0,
+      "Light": 0.5,
+      "Medium": 0.4,
+      "Heavy": 0.25,
+      "Wood": 1.2,
+      "Steel": 0.3,
+      "Concrete": 0.3,
+      "Special": 0.8
+    },
+    "AntiArmor": {
+      "None": 0.5,
+      "Flak": 0.6,
+      "Plate": 0.8,
+      "Light": 1.0,
+      "Medium": 1.1,
+      "Heavy": 1.25,
+      "Wood": 0.6,
+      "Steel": 1.0,
+      "Concrete": 0.5,
+      "Special": 0.8
+    },
+    "AntiStructure": {
+      "None": 0.4,
+      "Flak": 0.4,
+      "Plate": 0.5,
+      "Light": 0.6,
+      "Medium": 0.6,
+      "Heavy": 0.7,
+      "Wood": 1.2,
+      "Steel": 0.8,
+      "Concrete": 1.5,
+      "Special": 0.6
+    },
+    "AntiAir": {
+      "None": 1.0,
+      "Flak": 1.0,
+      "Plate": 1.0,
+      "Light": 1.0,
+      "Medium": 1.0,
+      "Heavy": 1.0,
+      "Wood": 1.0,
+      "Steel": 1.0,
+      "Concrete": 1.0,
+      "Special": 1.0
+    },
+    "Artillery": {
+      "None": 1.2,
+      "Flak": 1.0,
+      "Plate": 1.1,
+      "Light": 1.0,
+      "Medium": 1.0,
+      "Heavy": 1.0,
+      "Wood": 1.3,
+      "Steel": 0.9,
+      "Concrete": 1.2,
+      "Special": 0.9
+    },
+    "General": {
+      "None": 1.0,
+      "Flak": 1.0,
+      "Plate": 1.0,
+      "Light": 1.0,
+      "Medium": 1.0,
+      "Heavy": 1.0,
+      "Wood": 1.0,
+      "Steel": 1.0,
+      "Concrete": 1.0,
+      "Special": 1.0
+    }
+  }
+}
