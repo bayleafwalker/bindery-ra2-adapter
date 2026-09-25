@@ -65,3 +65,73 @@ The live Windows handoff is documented in
 [`docs/live-qualification.md`](docs/live-qualification.md). It requires a
 private settings file and a real Windows/control-plane environment; no live
 credentials or proprietary game files belong in this repository.
+
+## Strategic bot
+
+A hierarchical, mostly-deterministic RTS bot for RA2/YR lives in
+`src/Bindery.Ra2.Bot` (engine-agnostic) and plugs into this adapter through
+`src/Bindery.Ra2.Adapter/Bot`. Full design, invariants and metrics are in
+[`docs/architecture/strategic-bot.md`](docs/architecture/strategic-bot.md).
+
+| Layer | Cadence | What it does |
+|---|---|---|
+| Belief / Features | every frame | Turns raw observations into remembered, confidence-decayed state and compiled trends. |
+| Tactical | 5–15 Hz | Squad micro, harvester safety, repair, deploy. |
+| Operational | 1 s / on major events | Production, build placement, squad formation and objectives. |
+| Strategic | 10–30 s / on major events | One deterministic or LLM strategist proposes an `StrategicIntent`; never emits commands directly. |
+| Validator / arbiter | every proposal | Fog, freshness, commitment/hysteresis and single-ownership checks before anything reaches execution. |
+
+### Running the tests
+
+```bash
+nix shell nixpkgs#dotnet-sdk_8 -c dotnet test tests/Bindery.Ra2.Bot.Tests -c Release
+nix shell nixpkgs#dotnet-sdk_8 -c dotnet test tests/Bindery.Ra2.Adapter.Tests -c Release
+```
+
+The adapter's bot-bridge tests (`BotBridgeTests.cs`) target `net8.0-windows`
+but build and run on Linux because `EnableWindowsTargeting` is set; no
+Windows-only APIs are used.
+
+### Running the arena
+
+The arena CLI (`tools/Bindery.Ra2.Bot.Arena`) plays configured strategist
+arms against opponent styles on the deterministic region-graph simulator and
+reports win rate, invalid plans, decision lateness, strategic churn,
+production idle time, resource float, trade efficiency, inference cost and a
+hidden-information leakage probe:
+
+```bash
+nix shell nixpkgs#dotnet-sdk_8 -c dotnet run --project tools/Bindery.Ra2.Bot.Arena -- run \
+  --arms selector --maps training --opponents balanced --seeds 1 \
+  --max-seconds 300 --out artifacts/arena
+```
+
+### Importing an operator ruleset
+
+`RulesmdImporter` (`src/Bindery.Ra2.Bot/Rules`) turns an operator-supplied
+`rulesmd.ini` into the JSON `IRulesDatabase` fixture the bot reads, hashing it
+into a `rulesmd-sha256:<hash>` ruleset ID. Run the importer against your own
+`rulesmd.ini` **outside this repository** — `rulesmd.ini` and other retail
+assets are forbidden here and rejected by `ci/verify-no-assets.ps1`. Keep the
+imported JSON output wherever your own bot configuration lives; only the
+approximate `bindery-sim-approx` fixture is committed.
+
+### LLM arms
+
+The `llm`, `llm-shadow` and `llm+fast` arena arms (`src/Bindery.Ra2.Bot.Claude`)
+need `ANTHROPIC_API_KEY` in the environment, or a resolvable `ant auth`
+profile. Without either, those arms are skipped with a recorded reason; pass
+`--llm-fake` to exercise the pipeline with a scripted client instead of a live
+call.
+
+### Honesty notes
+
+- `src/Bindery.Ra2.Bot.Sim` is a **deterministic approximation**, not retail
+  RA2/YR: authored maps, an approximate rules fixture, and simplified combat
+  and economy resolution. Arena results from it are directional, not a
+  substitute for retail validation.
+- The retail RA2/YR route goes through this adapter's `IRa2TelemetrySource`
+  (in) and `IRa2CommandTransport` (out) seams over the ra2yrcpp fork's native
+  RPC. This repository decodes/encodes the documented envelopes
+  (`bindery.ra2.bot-observation/v1`, `bindery.ra2.bot-command/v1`) but does
+  not implement or vendor that native transport.
