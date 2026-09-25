@@ -5,13 +5,19 @@ namespace Bindery.Ra2.Bot.Arena;
 
 /// <summary>Per-player figures for one completed match, used to build the arena report's metrics.</summary>
 public sealed record PlayerMatchMetrics(
+    Faction Faction,
     int Proposals,
     int Rejected,
+    int LateDiscarded,
     IReadOnlyList<double> LateSeconds,
     int Activations,
     int PostureFlips,
     int CommandsDropped,
+    IReadOnlyDictionary<string, int> DroppedByReason,
     int InvalidCommands,
+    int FogRejections,
+    int ShadowProposals,
+    int ProposalsFailed,
     double ProductionIdleFraction,
     double AverageCreditsOnHand,
     int AssetValueDestroyedByOpponent,
@@ -20,7 +26,12 @@ public sealed record PlayerMatchMetrics(
     long TokensOut,
     string? Model,
     double Usd,
-    int FinalAssetValue)
+    int FinalAssetValue,
+    int UnitsBuilt,
+    int BuildingsBuilt,
+    int PeakArmyValue,
+    string? DecisionLogHash,
+    IReadOnlyList<string> Labels)
 {
     public double TradeEfficiency => AssetValueLostByPlayer <= 0
         ? (AssetValueDestroyedByOpponent > 0 ? AssetValueDestroyedByOpponent : 1.0)
@@ -28,6 +39,7 @@ public sealed record PlayerMatchMetrics(
 }
 
 /// <summary>One completed match, as reported in <c>results.json</c>.</summary>
+/// <param name="Winner">0 when the arm won, 1 when the opponent won, null on a draw.</param>
 public sealed record MatchRecord(
     string Arm,
     string Opponent,
@@ -40,87 +52,124 @@ public sealed record MatchRecord(
     IReadOnlyDictionary<string, PlayerMatchMetrics> Players);
 
 /// <summary>Runs one arm-vs-opponent match on one map with one seed to completion.</summary>
+/// <remarks>
+/// The arm plays Allied on odd seeds and Soviet on even seeds (the opponent takes the other
+/// faction), so the approximate fixture's faction asymmetry does not bias an arm's results
+/// one way. The arm is always player 0 and starts in the map's first start region.
+/// </remarks>
 public static class MatchRunner
 {
-    private static readonly PlayerId ArmPlayer = new(0);
-    private static readonly PlayerId OpponentPlayer = new(1);
+    public static readonly PlayerId ArmPlayer = new(0);
+    public static readonly PlayerId OpponentPlayer = new(1);
 
-    public static MatchRecord Run(ArmSpec arm, string opponent, SimMap map, string split, int seed, double maxSeconds, ArenaRuleset rules, IArenaAgentFactory factory)
+    public static Faction ArmFaction(int seed) => seed % 2 == 1 ? Faction.Allied : Faction.Soviet;
+
+    public static MatchRecord Run(ArmSpec arm, string opponent, SimMap map, string split, int seed, double maxSeconds, IRulesDatabase rules, IArenaAgentFactory factory, Action<IReadOnlyList<DecisionRecord>>? armLog = null)
     {
-        SimSettings settings = new(seed, maxSeconds, [new SimPlayer(ArmPlayer, Faction.Allied), new SimPlayer(OpponentPlayer, Faction.Soviet)]);
+        Faction armFaction = ArmFaction(seed);
+        Faction opponentFaction = armFaction == Faction.Allied ? Faction.Soviet : Faction.Allied;
+        SimSettings settings = new(seed, maxSeconds, [new SimPlayer(ArmPlayer, armFaction), new SimPlayer(OpponentPlayer, opponentFaction)]);
         SkirmishSimulation sim = new(map, rules, settings);
 
         ObservationMode mode = arm.Oracle ? ObservationMode.Oracle : ObservationMode.Belief;
-        IArenaAgent armAgent = factory.Create(arm, ArmPlayer, Faction.Allied, sim.Map, seed);
-        IArenaAgent opponentAgent = factory.Create(new ArmSpec(opponent, arm.Oracle, false), OpponentPlayer, Faction.Soviet, sim.Map, seed);
+        using IArenaAgent armAgent = factory.Create(arm, ArmPlayer, armFaction, sim.Map, seed);
+        using IArenaAgent opponentAgent = factory.Create(new ArmSpec(opponent, false, false), OpponentPlayer, opponentFaction, sim.Map, seed);
 
         Dictionary<PlayerId, int> destroyedValueOf = new() { [ArmPlayer] = 0, [OpponentPlayer] = 0 };
         Dictionary<PlayerId, double> creditsSampleSum = new() { [ArmPlayer] = 0, [OpponentPlayer] = 0 };
         Dictionary<PlayerId, int> idleSamples = new() { [ArmPlayer] = 0, [OpponentPlayer] = 0 };
+        Dictionary<PlayerId, int> unitsBuilt = new() { [ArmPlayer] = 0, [OpponentPlayer] = 0 };
+        Dictionary<PlayerId, int> buildingsBuilt = new() { [ArmPlayer] = 0, [OpponentPlayer] = 0 };
+        Dictionary<PlayerId, int> peakArmy = new() { [ArmPlayer] = 0, [OpponentPlayer] = 0 };
+        int cheapest = rules.All.Where(static r => r.Cost > 0).Select(static r => r.Cost).DefaultIfEmpty(0).Min();
         int samples = 0;
 
         int maxFrames = (int)(maxSeconds * GameTime.FramesPerSecond) + GameTime.FramesPerSecond;
         for (int frame = 0; frame < maxFrames && !sim.MatchEnded; frame++)
         {
             ObservationFrame armFrame = sim.Observe(ArmPlayer, mode);
-            ObservationFrame opponentFrame = sim.Observe(OpponentPlayer, mode);
+            ObservationFrame opponentFrame = sim.Observe(OpponentPlayer, ObservationMode.Belief);
             foreach (GameCommand c in armAgent.Tick(armFrame)) sim.Submit(ArmPlayer, c);
             foreach (GameCommand c in opponentAgent.Tick(opponentFrame)) sim.Submit(OpponentPlayer, c);
 
             sim.Step();
 
+            ObservationFrame oracle = sim.Observe(ArmPlayer, ObservationMode.Oracle);
+            foreach (GameEvent e in oracle.Events)
+            {
+                if (e.Owner is not { } owner || !rules.TryGet(e.TypeId ?? string.Empty, out UnitRule rule)) continue;
+                if (e.Kind == GameEventKind.EntityDestroyed && e.Detail == "combat") destroyedValueOf[owner] += rule.Cost;
+                if (e.Kind == GameEventKind.EntityCreated)
+                {
+                    if (rule.Kind == EntityKind.Building) buildingsBuilt[owner]++;
+                    else unitsBuilt[owner]++;
+                }
+            }
+
             if (sim.Time.Frame % GameTime.FramesPerSecond == 0)
             {
                 samples++;
-                ObservationFrame oracle0 = sim.Observe(ArmPlayer, ObservationMode.Oracle);
-                ObservationFrame oracle1 = sim.Observe(OpponentPlayer, ObservationMode.Oracle);
-                foreach (GameEvent e in oracle0.Events)
+                foreach (PlayerId p in new[] { ArmPlayer, OpponentPlayer })
                 {
-                    if (e.Kind == GameEventKind.EntityDestroyed && e.Owner is { } owner && rules.TryGet(e.TypeId ?? string.Empty, out UnitRule rule))
-                    {
-                        destroyedValueOf[owner] = destroyedValueOf.GetValueOrDefault(owner) + rule.Cost;
-                    }
+                    ObservationFrame view = p == ArmPlayer ? oracle : sim.Observe(p, ObservationMode.Oracle);
+                    creditsSampleSum[p] += view.Credits;
+                    if (IsProductionIdle(view, p, rules, cheapest)) idleSamples[p]++;
+                    int army = view.Entities
+                        .Where(e => e.Owner == p && rules.TryGet(e.TypeId, out UnitRule r) && r.Kind != EntityKind.Building && r.Damage > 0)
+                        .Sum(e => rules.Get(e.TypeId).Cost);
+                    peakArmy[p] = Math.Max(peakArmy[p], army);
                 }
-                creditsSampleSum[ArmPlayer] += oracle0.Credits;
-                creditsSampleSum[OpponentPlayer] += oracle1.Credits;
-                if (IsProductionIdle(oracle0)) idleSamples[ArmPlayer]++;
-                if (IsProductionIdle(oracle1)) idleSamples[OpponentPlayer]++;
             }
         }
 
         string reason = sim.MatchEnded ? sim.EndReason ?? "unknown" : "frame_budget_exhausted";
         double durationSeconds = sim.Time.Seconds;
+        bool? armWon = sim.Winner is { } w ? w == ArmPlayer : null;
+        double armAssets = sim.AssetValue(ArmPlayer), opponentAssets = sim.AssetValue(OpponentPlayer);
+        armAgent.Finish(armWon, armAssets, opponentAssets);
+        armLog?.Invoke(armAgent.DecisionLog);
+        opponentAgent.Finish(armWon is { } aw ? !aw : null, opponentAssets, armAssets);
+
+        PlayerMatchMetrics Metrics(PlayerId p, Faction faction, IArenaAgent agent) =>
+            BuildMetrics(p, faction, agent.Stats, sim, destroyedValueOf, creditsSampleSum, idleSamples, samples, unitsBuilt[p], buildingsBuilt[p], peakArmy[p]);
 
         Dictionary<string, PlayerMatchMetrics> perPlayer = new()
         {
-            ["arm"] = BuildMetrics(ArmPlayer, armAgent.Stats, sim, destroyedValueOf, creditsSampleSum, idleSamples, samples),
-            ["opponent"] = BuildMetrics(OpponentPlayer, opponentAgent.Stats, sim, destroyedValueOf, creditsSampleSum, idleSamples, samples),
+            ["arm"] = Metrics(ArmPlayer, armFaction, armAgent),
+            ["opponent"] = Metrics(OpponentPlayer, opponentFaction, opponentAgent),
         };
-
-        return new MatchRecord(arm.ToString(), opponent, map.Map.MapId, split, seed, sim.Winner?.Value, reason, durationSeconds, perPlayer);
+        int? winner = sim.Winner is { } winnerId ? winnerId.Value : null;
+        return new MatchRecord(arm.ToString(), opponent, map.Map.MapId, split, seed, winner, reason, durationSeconds, perPlayer);
     }
 
-    private static bool IsProductionIdle(ObservationFrame frame)
+    /// <summary>Spec: at least one factory, nothing queued, and credits for the cheapest buildable item.</summary>
+    private static bool IsProductionIdle(ObservationFrame frame, PlayerId player, IRulesDatabase rules, int cheapest)
     {
-        List<ProductionQueueState> factoryQueues = frame.Queues.Where(q => q.Factories > 0).ToList();
-        if (factoryQueues.Count == 0) return false;
-        return factoryQueues.All(q => q.Items.Count == 0);
+        bool hasFactory = frame.Entities.Any(e => e.Owner == player && rules.TryGet(e.TypeId, out UnitRule r) && r.Kind == EntityKind.Building && r.Role == UnitRole.Production);
+        if (!hasFactory || frame.Credits < cheapest) return false;
+        return frame.Queues.All(static q => q.Items.Count == 0);
     }
 
     private static PlayerMatchMetrics BuildMetrics(
-        PlayerId player, ArenaAgentStats stats, SkirmishSimulation sim,
+        PlayerId player, Faction faction, ArenaAgentStats stats, SkirmishSimulation sim,
         Dictionary<PlayerId, int> destroyedValueOf, Dictionary<PlayerId, double> creditsSampleSum,
-        Dictionary<PlayerId, int> idleSamples, int samples)
+        Dictionary<PlayerId, int> idleSamples, int samples, int unitsBuilt, int buildingsBuilt, int peakArmy)
     {
         PlayerId opponent = player == ArmPlayer ? OpponentPlayer : ArmPlayer;
         return new PlayerMatchMetrics(
+            Faction: faction,
             Proposals: stats.Proposals,
             Rejected: stats.Rejected,
+            LateDiscarded: stats.LateDiscarded,
             LateSeconds: stats.LateSeconds,
             Activations: stats.Activations,
             PostureFlips: stats.PostureFlips,
             CommandsDropped: stats.CommandsDropped,
+            DroppedByReason: new SortedDictionary<string, int>(stats.DroppedByReason, StringComparer.Ordinal),
             InvalidCommands: sim.RejectedCommandCount(player),
+            FogRejections: stats.FogRejections,
+            ShadowProposals: stats.ShadowProposals,
+            ProposalsFailed: stats.ProposalsFailed,
             ProductionIdleFraction: samples == 0 ? 0 : idleSamples[player] / (double)samples,
             AverageCreditsOnHand: samples == 0 ? 0 : creditsSampleSum[player] / samples,
             AssetValueDestroyedByOpponent: destroyedValueOf.GetValueOrDefault(opponent),
@@ -129,6 +178,11 @@ public static class MatchRunner
             TokensOut: stats.TokensOut,
             Model: stats.Model,
             Usd: stats.Usd,
-            FinalAssetValue: sim.AssetValue(player));
+            FinalAssetValue: sim.AssetValue(player),
+            UnitsBuilt: unitsBuilt,
+            BuildingsBuilt: buildingsBuilt,
+            PeakArmyValue: peakArmy,
+            DecisionLogHash: stats.DecisionLogHash,
+            Labels: [.. stats.Labels]);
     }
 }

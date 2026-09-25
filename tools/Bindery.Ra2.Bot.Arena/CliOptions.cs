@@ -10,7 +10,9 @@ public sealed record CliOptions(
     string OutDir,
     bool Oracle,
     bool LlmFake,
-    double MaxSeconds)
+    double MaxSeconds,
+    string? Dataset = null,
+    double? LlmLatencySeconds = null)
 {
     public const double DefaultMaxSeconds = 1200;
 
@@ -18,7 +20,7 @@ public sealed record CliOptions(
     {
         if (args.Count == 0 || args[0] != "run")
         {
-            throw new ArgumentException("Usage: arena run --arms a,b --maps training|heldout|all --opponents rush,turtle,... --seeds N --out <dir> [--oracle] [--llm-fake] [--max-seconds N]");
+            throw new ArgumentException("Usage: arena run --arms a,b --maps training|heldout|all --opponents rush,turtle,... --seeds N --out <dir> [--oracle] [--llm-fake] [--max-seconds N] [--dataset <decisions.ndjson>] [--llm-latency <game seconds>]");
         }
 
         List<string> arms = ["selector"];
@@ -29,6 +31,8 @@ public sealed record CliOptions(
         bool oracle = false;
         bool llmFake = false;
         double maxSeconds = DefaultMaxSeconds;
+        string? dataset = null;
+        double? llmLatency = null;
 
         for (int i = 1; i < args.Count; i++)
         {
@@ -37,16 +41,20 @@ public sealed record CliOptions(
                 case "--arms": arms = Split(args, ref i); break;
                 case "--maps": mapSplit = Next(args, ref i); break;
                 case "--opponents": opponents = Split(args, ref i); break;
-                case "--seeds": seeds = int.Parse(Next(args, ref i)); break;
+                case "--seeds": seeds = int.Parse(Next(args, ref i), System.Globalization.CultureInfo.InvariantCulture); break;
                 case "--out": outDir = Next(args, ref i); break;
                 case "--oracle": oracle = true; break;
                 case "--llm-fake": llmFake = true; break;
-                case "--max-seconds": maxSeconds = double.Parse(Next(args, ref i)); break;
+                case "--max-seconds": maxSeconds = double.Parse(Next(args, ref i), System.Globalization.CultureInfo.InvariantCulture); break;
+                case "--dataset": dataset = Next(args, ref i); break;
+                case "--llm-latency": llmLatency = double.Parse(Next(args, ref i), System.Globalization.CultureInfo.InvariantCulture); break;
                 default: throw new ArgumentException($"Unknown argument '{args[i]}'.");
             }
         }
 
-        return new CliOptions(arms, mapSplit, opponents, seeds, outDir, oracle, llmFake, maxSeconds);
+        if (opponents.Count == 1 && opponents[0] == "all") opponents = [.. BotAgentFactory.OpponentStyles.Keys];
+        if (arms.Count == 1 && arms[0] == "all") arms = [.. BotAgentFactory.Arms];
+        return new CliOptions(arms, mapSplit, opponents, seeds, outDir, oracle, llmFake, maxSeconds, dataset, llmLatency);
     }
 
     private static string Next(IReadOnlyList<string> args, ref int i)

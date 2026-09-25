@@ -5,143 +5,183 @@ using System.Text;
 namespace Bindery.Ra2.Bot.Arena;
 
 /// <summary>
-/// Turns a completed run's <see cref="MatchRecord"/>s into <c>report.md</c>,
-/// using exactly the metric definitions in
-/// <c>docs/architecture/strategic-bot.md</c>'s Metrics section. All figures
-/// come from <c>results.json</c> (sim state and agent stats); nothing here
-/// is estimated separately.
+/// Turns a completed run into <c>report.md</c>, using the metric definitions in
+/// <c>docs/architecture/strategic-bot.md</c>. Every figure comes from the match
+/// records (simulator state and the bots' decision logs); every rate carries its
+/// numerator and denominator.
 /// </summary>
 public static class ReportBuilder
 {
-    public static string Build(IReadOnlyList<MatchRecord> matches, bool leakageProbePassed)
+    public static string Build(IReadOnlyList<MatchRecord> matches, IReadOnlyList<LeakageProbeResult> probes, IReadOnlyList<SkippedArm> skipped, CliOptions options, string rulesetId)
     {
+        ArgumentNullException.ThrowIfNull(matches);
         StringBuilder sb = new();
         sb.AppendLine("# Bindery region sim arena report");
         sb.AppendLine();
-        sb.AppendLine("Results are from the bindery region sim, not retail RA2. Figures below are computed from `results.json`.");
+        sb.AppendLine($"Results are from the bindery region simulator with the approximate `{rulesetId}` rules, not retail RA2; they are directional.");
+        sb.AppendLine($"Every side is a full `BotRuntime`; opponents are pinned-playbook styles. The arm plays Allied on odd seeds and Soviet on even seeds. Match limit {F(options.MaxSeconds, "0")} s (a timeout is won on final asset value).");
+        List<string> labels = matches.SelectMany(static m => m.Players["arm"].Labels).Distinct(StringComparer.Ordinal).OrderBy(static l => l, StringComparer.Ordinal).ToList();
+        if (labels.Count > 0) sb.AppendLine($"Labels in this run: {string.Join(", ", labels.Select(static l => $"`{l}`"))}.");
         sb.AppendLine();
         sb.AppendLine($"Matches: {matches.Count}");
         sb.AppendLine();
 
+        AppendSkipped(sb, skipped);
         AppendWinRate(sb, matches);
-        AppendInvalidPlans(sb, matches);
-        AppendLateness(sb, matches);
-        AppendChurn(sb, matches);
-        AppendIdleAndFloat(sb, matches);
-        AppendTradeEfficiency(sb, matches);
+        AppendPerOpponent(sb, matches);
+        AppendGame(sb, matches);
+        AppendStrategy(sb, matches);
+        AppendCommands(sb, matches);
         AppendInferenceCost(sb, matches);
-        AppendLeakage(sb, matches, leakageProbePassed);
-
+        AppendLeakage(sb, matches, probes);
         return sb.ToString();
+    }
+
+    private static void AppendSkipped(StringBuilder sb, IReadOnlyList<SkippedArm> skipped)
+    {
+        if (skipped.Count == 0) return;
+        sb.AppendLine("## Skipped arms");
+        sb.AppendLine();
+        foreach (SkippedArm s in skipped) sb.AppendLine($"- **{s.Arm}**: {s.Reason}");
+        sb.AppendLine();
     }
 
     private static void AppendWinRate(StringBuilder sb, IReadOnlyList<MatchRecord> matches)
     {
-        sb.AppendLine("## Win rate");
+        sb.AppendLine("## Win rate (arm × split)");
         sb.AppendLine();
-        sb.AppendLine("| Arm | Split | Opponent | Wins | Matches | Win rate |");
-        sb.AppendLine("|---|---|---|---|---|---|");
-        foreach (var group in matches.GroupBy(m => (m.Arm, m.Split, m.Opponent)).OrderBy(g => g.Key))
+        sb.AppendLine("| Arm | Split | Wins | Losses | Draws | Matches | Win rate | Eliminations won | Timeouts |");
+        sb.AppendLine("|---|---|---|---|---|---|---|---|---|");
+        foreach (var group in matches.GroupBy(m => (m.Arm, m.Split)).OrderBy(g => g.Key.Arm, StringComparer.Ordinal).ThenBy(g => g.Key.Split, StringComparer.Ordinal))
         {
-            int wins = group.Count(m => m.Winner == 0);
+            int wins = group.Count(static m => m.Winner == 0);
+            int losses = group.Count(static m => m.Winner == 1);
+            int draws = group.Count(static m => m.Winner is null);
             int total = group.Count();
-            sb.AppendLine($"| {group.Key.Arm} | {group.Key.Split} | {group.Key.Opponent} | {wins} | {total} | {Rate(wins, total)} |");
+            int elimWins = group.Count(static m => m.Winner == 0 && m.Reason == "elimination");
+            int timeouts = group.Count(static m => m.Reason == "timeout");
+            sb.AppendLine($"| {group.Key.Arm} | {group.Key.Split} | {wins} | {losses} | {draws} | {total} | {Rate(wins, total)} | {elimWins} | {timeouts} |");
         }
         sb.AppendLine();
     }
 
-    private static void AppendInvalidPlans(StringBuilder sb, IReadOnlyList<MatchRecord> matches)
+    private static void AppendPerOpponent(StringBuilder sb, IReadOnlyList<MatchRecord> matches)
     {
-        sb.AppendLine("## Invalid plans");
+        sb.AppendLine("## Win rate by opponent style");
         sb.AppendLine();
-        foreach (var group in matches.GroupBy(m => m.Arm).OrderBy(g => g.Key))
+        List<string> opponents = matches.Select(static m => m.Opponent).Distinct(StringComparer.Ordinal).OrderBy(static o => o, StringComparer.Ordinal).ToList();
+        sb.AppendLine($"| Arm | Split | {string.Join(" | ", opponents)} |");
+        sb.AppendLine($"|---|---|{string.Concat(opponents.Select(static _ => "---|"))}");
+        foreach (var group in matches.GroupBy(m => (m.Arm, m.Split)).OrderBy(g => g.Key.Arm, StringComparer.Ordinal).ThenBy(g => g.Key.Split, StringComparer.Ordinal))
         {
-            int proposals = group.Sum(m => m.Players["arm"].Proposals);
-            int rejected = group.Sum(m => m.Players["arm"].Rejected);
-            sb.AppendLine($"- **{group.Key}**: {rejected} / {proposals} rejected proposals ({Rate(rejected, proposals)}); {group.Sum(m => m.Players["arm"].InvalidCommands)} invalid sim commands.");
+            IEnumerable<string> cells = opponents.Select(o =>
+            {
+                List<MatchRecord> vs = group.Where(m => m.Opponent == o).ToList();
+                return vs.Count == 0 ? "–" : $"{vs.Count(static m => m.Winner == 0)}/{vs.Count}";
+            });
+            sb.AppendLine($"| {group.Key.Arm} | {group.Key.Split} | {string.Join(" | ", cells)} |");
         }
         sb.AppendLine();
     }
 
-    private static void AppendLateness(StringBuilder sb, IReadOnlyList<MatchRecord> matches)
+    private static void AppendGame(StringBuilder sb, IReadOnlyList<MatchRecord> matches)
     {
-        sb.AppendLine("## Decision lateness");
+        sb.AppendLine("## Economy, production and combat (arm side, per-match averages)");
         sb.AppendLine();
-        foreach (var group in matches.GroupBy(m => m.Arm).OrderBy(g => g.Key))
+        sb.AppendLine("Production idle: seconds with a factory, nothing queued and credits for the cheapest item, over match seconds. Trade efficiency: enemy value destroyed in combat / own value lost in combat (pooled over matches).");
+        sb.AppendLine();
+        sb.AppendLine("| Arm | Duration s | Units built | Buildings built | Peak army value | Idle fraction | Avg credits | Final assets (arm / opp) | Trade efficiency |");
+        sb.AppendLine("|---|---|---|---|---|---|---|---|---|");
+        foreach (var group in matches.GroupBy(static m => m.Arm).OrderBy(static g => g.Key, StringComparer.Ordinal))
         {
-            List<double> late = [.. group.SelectMany(m => m.Players["arm"].LateSeconds)];
-            double avg = late.Count == 0 ? 0 : late.Average();
-            int proposals = group.Sum(m => m.Players["arm"].Proposals);
-            sb.AppendLine($"- **{group.Key}**: avg {avg.ToString("0.00", CultureInfo.InvariantCulture)}s late-validate; late-discard {Rate(late.Count, proposals)}.");
+            List<PlayerMatchMetrics> arm = group.Select(static m => m.Players["arm"]).ToList();
+            List<PlayerMatchMetrics> opp = group.Select(static m => m.Players["opponent"]).ToList();
+            long destroyed = arm.Sum(static a => (long)a.AssetValueDestroyedByOpponent);
+            long lost = arm.Sum(static a => (long)a.AssetValueLostByPlayer);
+            sb.AppendLine($"| {group.Key} | {F(group.Average(static m => m.DurationSeconds), "0")} | {F(arm.Average(static a => a.UnitsBuilt), "0.0")} | {F(arm.Average(static a => a.BuildingsBuilt), "0.0")} | {F(arm.Average(static a => a.PeakArmyValue), "0")} | {F(arm.Average(static a => a.ProductionIdleFraction), "0.000")} | {F(arm.Average(static a => a.AverageCreditsOnHand), "0")} | {F(arm.Average(static a => a.FinalAssetValue), "0")} / {F(opp.Average(static a => a.FinalAssetValue), "0")} | {(lost == 0 ? "n/a" : F(destroyed / (double)lost, "0.00"))} ({destroyed}/{lost}) |");
         }
         sb.AppendLine();
     }
 
-    private static void AppendChurn(StringBuilder sb, IReadOnlyList<MatchRecord> matches)
+    private static void AppendStrategy(StringBuilder sb, IReadOnlyList<MatchRecord> matches)
     {
-        sb.AppendLine("## Strategic churn (per 10 game minutes)");
+        sb.AppendLine("## Strategy layer (arm side)");
         sb.AppendLine();
-        foreach (var group in matches.GroupBy(m => m.Arm).OrderBy(g => g.Key))
+        sb.AppendLine("Invalid plans: rejected / proposals. Lateness: seconds from a proposal's snapshot to its validation; late-discard count / proposals. Churn: activations and posture flips per 10 game minutes.");
+        sb.AppendLine();
+        sb.AppendLine("| Arm | Proposals | Invalid plans | Mean lateness s | Late-discarded | Failed requests | Shadow proposals | Activations /10 min | Posture flips /10 min |");
+        sb.AppendLine("|---|---|---|---|---|---|---|---|---|");
+        foreach (var group in matches.GroupBy(static m => m.Arm).OrderBy(static g => g.Key, StringComparer.Ordinal))
         {
-            double minutes = Math.Max(1.0 / 60, group.Sum(m => m.DurationSeconds) / 60.0);
-            double activationsPer10 = group.Sum(m => m.Players["arm"].Activations) / minutes * 10;
-            double flipsPer10 = group.Sum(m => m.Players["arm"].PostureFlips) / minutes * 10;
-            sb.AppendLine($"- **{group.Key}**: {activationsPer10.ToString("0.00", CultureInfo.InvariantCulture)} activations, {flipsPer10.ToString("0.00", CultureInfo.InvariantCulture)} posture flips.");
+            List<PlayerMatchMetrics> arm = group.Select(static m => m.Players["arm"]).ToList();
+            int proposals = arm.Sum(static a => a.Proposals);
+            int rejected = arm.Sum(static a => a.Rejected);
+            int late = arm.Sum(static a => a.LateDiscarded);
+            List<double> lateness = arm.SelectMany(static a => a.LateSeconds).ToList();
+            double minutes = Math.Max(1.0 / 60, group.Sum(static m => m.DurationSeconds) / 60.0);
+            sb.AppendLine($"| {group.Key} | {proposals} | {rejected}/{proposals} ({Rate(rejected, proposals)}) | {(lateness.Count == 0 ? "n/a" : F(lateness.Average(), "0.00"))} | {late}/{proposals} ({Rate(late, proposals)}) | {arm.Sum(static a => a.ProposalsFailed)} | {arm.Sum(static a => a.ShadowProposals)} | {F(arm.Sum(static a => a.Activations) / minutes * 10, "0.00")} | {F(arm.Sum(static a => a.PostureFlips) / minutes * 10, "0.00")} |");
         }
         sb.AppendLine();
     }
 
-    private static void AppendIdleAndFloat(StringBuilder sb, IReadOnlyList<MatchRecord> matches)
+    private static void AppendCommands(StringBuilder sb, IReadOnlyList<MatchRecord> matches)
     {
-        sb.AppendLine("## Production idle time and resource float");
+        sb.AppendLine("## Command gate and simulator rejections (arm side, totals)");
         sb.AppendLine();
-        sb.AppendLine("| Arm | Idle fraction | Avg credits on hand |");
-        sb.AppendLine("|---|---|---|");
-        foreach (var group in matches.GroupBy(m => m.Arm).OrderBy(g => g.Key))
+        foreach (var group in matches.GroupBy(static m => m.Arm).OrderBy(static g => g.Key, StringComparer.Ordinal))
         {
-            double idle = group.Average(m => m.Players["arm"].ProductionIdleFraction);
-            double credits = group.Average(m => m.Players["arm"].AverageCreditsOnHand);
-            sb.AppendLine($"| {group.Key} | {idle.ToString("0.000", CultureInfo.InvariantCulture)} | {credits.ToString("0", CultureInfo.InvariantCulture)} |");
-        }
-        sb.AppendLine();
-    }
-
-    private static void AppendTradeEfficiency(StringBuilder sb, IReadOnlyList<MatchRecord> matches)
-    {
-        sb.AppendLine("## Trade efficiency (enemy value destroyed / own value lost)");
-        sb.AppendLine();
-        foreach (var group in matches.GroupBy(m => m.Arm).OrderBy(g => g.Key))
-        {
-            double avg = group.Average(m => m.Players["arm"].TradeEfficiency);
-            sb.AppendLine($"- **{group.Key}**: {avg.ToString("0.00", CultureInfo.InvariantCulture)}");
+            List<PlayerMatchMetrics> arm = group.Select(static m => m.Players["arm"]).ToList();
+            Dictionary<string, int> reasons = new(StringComparer.Ordinal);
+            foreach (PlayerMatchMetrics a in arm)
+            {
+                foreach ((string reason, int count) in a.DroppedByReason) reasons[reason] = reasons.GetValueOrDefault(reason) + count;
+            }
+            string breakdown = reasons.Count == 0 ? "none" : string.Join(", ", reasons.OrderBy(static r => r.Key, StringComparer.Ordinal).Select(static r => $"{r.Key}: {r.Value}"));
+            sb.AppendLine($"- **{group.Key}**: {arm.Sum(static a => a.CommandsDropped)} dropped by the gate ({breakdown}); {arm.Sum(static a => a.InvalidCommands)} commands rejected by the simulator.");
         }
         sb.AppendLine();
     }
 
     private static void AppendInferenceCost(StringBuilder sb, IReadOnlyList<MatchRecord> matches)
     {
-        sb.AppendLine("## Inference cost");
+        sb.AppendLine("## Inference cost (arm side)");
         sb.AppendLine();
-        foreach (var group in matches.GroupBy(m => m.Arm).OrderBy(g => g.Key))
+        foreach (var group in matches.GroupBy(static m => m.Arm).OrderBy(static g => g.Key, StringComparer.Ordinal))
         {
-            long tokensIn = group.Sum(m => m.Players["arm"].TokensIn);
-            long tokensOut = group.Sum(m => m.Players["arm"].TokensOut);
-            double usd = group.Sum(m => m.Players["arm"].Usd);
-            string? model = group.Select(m => m.Players["arm"].Model).FirstOrDefault(m => m is not null);
-            sb.AppendLine($"- **{group.Key}** ({model ?? "n/a"}): {tokensIn} in / {tokensOut} out tokens, ${usd.ToString("0.0000", CultureInfo.InvariantCulture)}.");
+            List<PlayerMatchMetrics> arm = group.Select(static m => m.Players["arm"]).ToList();
+            long tokensIn = arm.Sum(static a => a.TokensIn);
+            long tokensOut = arm.Sum(static a => a.TokensOut);
+            double usd = arm.Sum(static a => a.Usd);
+            string? model = arm.Select(static a => a.Model).FirstOrDefault(static m => m is not null);
+            bool fake = arm.Any(static a => a.Labels.Contains("llm-fake"));
+            int n = Math.Max(1, arm.Count);
+            string note = fake ? " (fake client: tokens estimated from prompt size, priced at the list rate; not a measurement)" : string.Empty;
+            sb.AppendLine($"- **{group.Key}** ({model ?? "no model"}): {tokensIn / n} in / {tokensOut / n} out tokens and ${F(usd / n, "0.0000")} per match{note}.");
         }
         sb.AppendLine();
     }
 
-    private static void AppendLeakage(StringBuilder sb, IReadOnlyList<MatchRecord> matches, bool leakageProbePassed)
+    private static void AppendLeakage(StringBuilder sb, IReadOnlyList<MatchRecord> matches, IReadOnlyList<LeakageProbeResult> probes)
     {
         sb.AppendLine("## Hidden-information leakage");
         sb.AppendLine();
-        _ = matches;
-        sb.AppendLine("- Validator `fog.*` rejections: 0 (the validator is not wired into the arena yet; it belongs to package C).");
-        sb.AppendLine($"- Arena leakage probe (`SimLeakageProbe.PerturbHidden`, belief-mode frame diff): {(leakageProbePassed ? "PASS — 0 differences" : "FAIL — observation changed")}.");
+        foreach (var group in matches.GroupBy(static m => m.Arm).OrderBy(static g => g.Key, StringComparer.Ordinal))
+        {
+            sb.AppendLine($"- **{group.Key}**: {group.Sum(static m => m.Players["arm"].FogRejections)} validator `fog.*` rejections.");
+        }
+        sb.AppendLine();
+        sb.AppendLine("Probe: two lockstep simulations, hidden state of one perturbed (`SimLeakageProbe`), strategist-context hash compared on every following frame.");
+        sb.AppendLine();
+        sb.AppendLine("| Arm | Map | Seed | Perturbed at s | Lockstep before | Differing frames | Note |");
+        sb.AppendLine("|---|---|---|---|---|---|---|");
+        foreach (LeakageProbeResult p in probes)
+        {
+            sb.AppendLine($"| {p.Arm} | {p.Map} | {p.Seed} | {F(p.PerturbedAtSeconds, "0")} | {(p.StatesMatchedBeforePerturbation ? "yes" : "no")} | {p.Differences}/{p.FramesCompared} | {p.Note ?? string.Empty} |");
+        }
         sb.AppendLine();
     }
+
+    private static string F(double value, string format) => value.ToString(format, CultureInfo.InvariantCulture);
 
     private static string Rate(int numerator, int denominator) =>
         denominator == 0 ? "n/a" : (numerator / (double)denominator).ToString("0.000", CultureInfo.InvariantCulture);
