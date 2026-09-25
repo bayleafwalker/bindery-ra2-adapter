@@ -271,6 +271,12 @@ public sealed partial class OperationalPlanner
 
     private RegionId ResolveAttackTarget(BeliefSnapshot belief, RegionGraph graph, RegionId home, RegionId? objective)
     {
+        // A target the army cannot walk to (water, or cut off) is no target: contacts near a shore can map to
+        // the water region by nearest centre, and ordering a ground army there only produces rejected moves.
+        bool Reachable(RegionId region) => !double.IsInfinity(graph.Distance(home, region));
+        if (objective is { } requested && !Reachable(requested)) objective = null;
+        if (attackTarget is { } previous && !Reachable(previous)) attackTarget = null;
+
         bool Cleared(RegionId region) =>
             belief.RegionLastSeen.TryGetValue(region, out GameTime seen)
             && belief.Time.SecondsSince(seen) < 2
@@ -283,9 +289,9 @@ public sealed partial class OperationalPlanner
         }
         if (attackTarget is { } current && !Cleared(current)) return current;
         RegionId? next = KnownEnemyBaseRegion(belief, graph, home);
-        next ??= belief.EnemyPlayers.Select(static p => p.SuspectedStart).FirstOrDefault(static s => s is not null);
+        next ??= belief.EnemyPlayers.Select(static p => p.SuspectedStart).FirstOrDefault(s => s is { } start && Reachable(start));
         next ??= belief.Map.Regions
-            .Where(r => r.IsStartLocation && r.Id != home && !Cleared(r.Id))
+            .Where(r => r.IsStartLocation && r.Id != home && !Cleared(r.Id) && Reachable(r.Id))
             .OrderBy(r => belief.RegionLastSeen.TryGetValue(r.Id, out GameTime t) ? t.Frame : long.MinValue)
             .ThenBy(r => graph.Distance(home, r.Id)).ThenBy(static r => r.Id.Value)
             .Select(static r => (RegionId?)r.Id).FirstOrDefault();
@@ -297,6 +303,7 @@ public sealed partial class OperationalPlanner
         belief.Enemies
             .Where(static c => !c.ConfirmedDestroyed && c.Kind == EntityKind.Building)
             .Select(static c => c.LastSeenRegion).Distinct()
+            .Where(r => !double.IsInfinity(graph.Distance(home, r)))
             .OrderBy(r => graph.Distance(home, r)).ThenBy(static r => r.Value)
             .Select(static r => (RegionId?)r).FirstOrDefault();
 }

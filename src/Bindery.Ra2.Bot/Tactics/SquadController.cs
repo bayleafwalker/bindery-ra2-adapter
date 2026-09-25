@@ -68,7 +68,7 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
 
             if (!order.Engage || nearby.Count == 0)
             {
-                commands.Add(RouteCommand(order, owner, held, members, centroid, graph, belief));
+                if (RouteCommand(order, owner, held, members, centroid, graph, belief) is { } route) commands.Add(route);
                 continue;
             }
 
@@ -98,9 +98,10 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
             else
             {
                 EntityId? target = ChooseFocusTarget(members, nearby, rules);
-                commands.Add(target is { } t
+                GameCommand? command = target is { } t
                     ? new AttackCommand(owner, held, t)
-                    : RouteCommand(order, owner, held, members, centroid, graph, belief));
+                    : RouteCommand(order, owner, held, members, centroid, graph, belief);
+                if (command is not null) commands.Add(command);
             }
         }
         return commands;
@@ -152,7 +153,8 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
     private static bool IsArmed(EnemyContact contact, IRulesDatabase rules) =>
         rules.TryGet(contact.TypeId, out UnitRule rule) && rule.Weapon != WeaponClass.None && rule.Damage > 0;
 
-    private GameCommand RouteCommand(
+    /// <summary>Attack-move toward the next waypoint; null when the target has no ground route from the squad.</summary>
+    private GameCommand? RouteCommand(
         SquadOrder order,
         string owner,
         List<EntityId> held,
@@ -162,6 +164,7 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
         BeliefSnapshot belief)
     {
         RegionId currentRegion = ModeRegion(members);
+        if (currentRegion != order.TargetRegion && graph.Path(currentRegion, order.TargetRegion).Count == 0) return null;
         Cell destination = NextWaypoint(currentRegion, order.TargetRegion, graph, belief.Map);
         return new AttackMoveCommand(owner, held, destination);
     }
