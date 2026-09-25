@@ -55,6 +55,10 @@ public sealed record ScoutingFeatures(
     IReadOnlyList<string> ImportantUnknowns);
 
 /// <summary>Local threat to one region: enemy value near it versus own value that can respond.</summary>
+/// <remarks>
+/// Seconds-valued features use 9999 for "unreachable" or "never observed" (as
+/// <see cref="EconomyFeatures.CashRunwaySeconds"/> caps at 9999), so every feature is finite.
+/// </remarks>
 public sealed record ThreatAssessment(
     RegionId Region,
     double EnemyValue,

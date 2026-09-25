@@ -83,6 +83,12 @@ public interface ICommandSink
 public sealed record SquadOrder(string SquadId, ObjectiveKind Objective, RegionId TargetRegion, IReadOnlyList<EntityId> Units, bool Engage, double RetreatBelowForceRatio);
 
 /// <summary>Output of one operational planning pass.</summary>
+/// <param name="BudgetReservations">
+/// Credits to reserve this pass, keyed by budget pool name (<c>economy</c>, <c>army</c>, <c>tech</c>,
+/// <c>defense</c>; case-insensitive). The runtime reserves them in the ledger under the controller that
+/// issued <see cref="ProductionCommands"/>, and the command gate spends them; an empty map grants every
+/// pool its full share.
+/// </param>
 public sealed record OperationalPlan(
     GameTime Time,
     string IntentId,
@@ -97,6 +103,12 @@ public interface IOperationalPlanner
 }
 
 /// <summary>Fast controllers: squads, harvesters, repair, deployment.</summary>
+/// <remarks>
+/// A controller commands only units whose lease it holds when it issues the command: it acquires (or
+/// renews) its own leases, except squad units, which the operational planner leases as
+/// <c>squad:&lt;SquadId&gt;</c> for the squad controller. The command gate drops any command naming a unit
+/// the issuing controller does not hold.
+/// </remarks>
 public interface ITacticalController
 {
     string Id { get; }
