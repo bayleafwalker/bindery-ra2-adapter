@@ -212,6 +212,13 @@ public sealed class StrategyScheduler : IDisposable
     private StrategistContext Context(StrategicFeatures features) =>
         new(features, rules, playbooks, arbiter.Active, arbiter.History.ToArray(), Options.Personality);
 
+    /// <summary>The context a strategist would receive for these features right now (for probes and diagnostics).</summary>
+    public StrategistContext ContextFor(StrategicFeatures features)
+    {
+        ArgumentNullException.ThrowIfNull(features);
+        return Context(features);
+    }
+
     private string? PrimaryTrigger(StrategicFeatures features)
     {
         string? eventTrigger = null;

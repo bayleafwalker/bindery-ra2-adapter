@@ -61,7 +61,7 @@ public sealed class BotRuntime : IDisposable
         log = components.Log;
         Metrics = new BotMetrics();
         Leases = new LeaseManager(log);
-        Ledger = new BudgetLedger(new LedgerOptions(options.OperationalCadenceSeconds), Leases);
+        Ledger = new BudgetLedger(new LedgerOptions(options.OperationalCadenceSeconds, options.AccrueBudgets), Leases);
         Gate = new CommandGate(Leases, Ledger, components.Rules, log, Metrics);
         Arbiter = new IntentArbiter(components.Playbooks, options.Arbiter, log, Metrics);
         Scheduler = new StrategyScheduler(
@@ -92,6 +92,9 @@ public sealed class BotRuntime : IDisposable
     public StrategicFeatures? CurrentFeatures { get; private set; }
 
     public OperationalPlan? LastPlan { get; private set; }
+
+    /// <summary>What a strategist asked now would receive, built from <see cref="CurrentFeatures"/>; null before the first frame.</summary>
+    public StrategistContext? CurrentStrategistContext => CurrentFeatures is null ? null : Scheduler.ContextFor(CurrentFeatures);
 
     /// <summary>Squad orders currently handed to tactics.</summary>
     public IReadOnlyList<SquadOrder> Squads => squads;
@@ -244,6 +247,9 @@ public sealed class BotRuntime : IDisposable
         }
         else
         {
+            // Two passes: every pool first reserves from its own share, then pools still short borrow what the
+            // others left unreserved, largest share first, so the intent's split decides who waits.
+            Dictionary<string, (int Requested, int Granted)> grants = new(StringComparer.Ordinal);
             foreach (string key in requested.Keys.OrderBy(static k => k, StringComparer.Ordinal))
             {
                 string? pool = BudgetPools.Normalise(key);
@@ -253,7 +259,19 @@ public sealed class BotRuntime : IDisposable
                     continue;
                 }
                 int amount = Math.Max(0, requested[key]);
-                reservations.Add(new { pool, requested = amount, granted = Ledger.Reserve(pool, controller, amount) });
+                grants[pool] = (amount, Ledger.Reserve(pool, controller, amount));
+            }
+            foreach (string pool in grants.Keys
+                .OrderByDescending(p => BudgetPools.ShareOf(intent.Budget, p))
+                .ThenBy(static p => p, StringComparer.Ordinal)
+                .ToList())
+            {
+                (int amount, int granted) = grants[pool];
+                if (granted < amount) grants[pool] = (amount, granted + Ledger.ReserveWithBorrowing(pool, controller, amount - granted));
+            }
+            foreach ((string pool, (int amount, int granted)) in grants.OrderBy(static g => g.Key, StringComparer.Ordinal))
+            {
+                reservations.Add(new { pool, requested = amount, granted });
             }
         }
 

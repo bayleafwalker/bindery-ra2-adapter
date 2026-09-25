@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using Bindery.Ra2.Bot.Runtime;
+using Bindery.Ra2.Bot.Strategy;
 
 namespace Bindery.Ra2.Bot.Arbitration;
 
@@ -253,6 +254,12 @@ public sealed class IntentArbiter
         return new ArbitrationDecision(ArbitrationOutcome.Activated, "switch", challenger);
     }
 
+    /// <remarks>
+    /// The <c>strategy.intent_activated</c> payload (written here and by <see cref="Renew"/>) carries the
+    /// <see cref="DecisionDataset"/> contract: <c>faction</c>, <c>featureVersion</c>, <c>features</c>
+    /// (<see cref="FeatureVector.Encode"/> of the features the decision was made on) and <c>intent</c>
+    /// (canonical <see cref="IntentJson"/>), alongside the arbitration fields.
+    /// </remarks>
     private void Activate(StrategicIntent intent, StrategicFeatures features, ProposalRole role, string reason)
     {
         StrategicIntent? previous = Active;
@@ -291,6 +298,10 @@ public sealed class IntentArbiter
             previousIntentId = previous?.IntentId,
             basedOnSnapshotVersion = intent.BasedOnSnapshotVersion,
             expiresAtFrame = intent.ExpiresAt.Frame,
+            faction = features.Faction,
+            featureVersion = FeatureVector.Version,
+            features = FeatureVector.Encode(features),
+            intent = IntentJson.ToElement(intent),
         })));
     }
 
@@ -318,6 +329,10 @@ public sealed class IntentArbiter
             previousIntentId = previous.IntentId,
             basedOnSnapshotVersion = intent.BasedOnSnapshotVersion,
             expiresAtFrame = intent.ExpiresAt.Frame,
+            faction = features.Faction,
+            featureVersion = FeatureVector.Version,
+            features = FeatureVector.Encode(features),
+            intent = IntentJson.ToElement(intent),
         })));
     }
 

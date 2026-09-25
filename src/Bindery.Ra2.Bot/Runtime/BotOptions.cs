@@ -25,6 +25,7 @@ namespace Bindery.Ra2.Bot.Runtime;
 /// <param name="EmergencyPlaybookId">Playbook used when no strategist produced any valid intent.</param>
 /// <param name="Arbiter">Commitment and hysteresis settings; null for the spec defaults.</param>
 /// <param name="LogPlans">Write an <c>operations.plan</c> record for every operational pass.</param>
+/// <param name="AccrueBudgets">Run the budget ledger in accrual mode (<see cref="LedgerOptions.AccrueByShare"/>).</param>
 public sealed record BotOptions(
     double StrategicCadenceSeconds = 20,
     double MajorEventSeverity = 0.6,
@@ -39,7 +40,8 @@ public sealed record BotOptions(
     string? Personality = null,
     string? EmergencyPlaybookId = "generic-defend",
     ArbiterOptions? Arbiter = null,
-    bool LogPlans = true)
+    bool LogPlans = true,
+    bool AccrueBudgets = true)
 {
     public static BotOptions Default { get; } = new();
 

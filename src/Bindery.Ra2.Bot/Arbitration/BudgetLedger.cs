@@ -54,7 +54,14 @@ public static class BudgetPools
 /// Forecast horizon for income. The runtime re-opens the ledger on every
 /// operational pass, so the natural horizon is the operational cadence.
 /// </param>
-public sealed record LedgerOptions(double PlanningPeriodSeconds = 1.0)
+/// <param name="AccrueByShare">
+/// When false, every period splits the whole capacity by the current shares. When true, each pool is a
+/// running account: new credits (capacity above the accounts' total) are split by the shares, spending is
+/// charged to the pool it came from, and a pool's cap is its balance. Accrual lets a pool with a small share
+/// save up for an item larger than its share of today's credits (a refinery in a 30% economy pool), which a
+/// per-period split can never afford once credits fall; the accounts never total more than the capacity.
+/// </param>
+public sealed record LedgerOptions(double PlanningPeriodSeconds = 1.0, bool AccrueByShare = false)
 {
     public static LedgerOptions Default { get; } = new();
 }
@@ -83,6 +90,7 @@ public sealed class BudgetLedger
     private readonly Dictionary<string, int> caps = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> spent = new(StringComparer.Ordinal);
     private readonly Dictionary<(string Pool, string Controller), int> reservations = [];
+    private readonly Dictionary<string, long> balances = new(StringComparer.Ordinal);
 
     public BudgetLedger(LedgerOptions? options = null, ILeaseManager? leases = null)
     {
@@ -96,8 +104,12 @@ public sealed class BudgetLedger
         {
             caps[pool] = 0;
             spent[pool] = 0;
+            balances[pool] = 0;
         }
     }
+
+    /// <summary>A pool's running account (accrual mode); equals its cap at the start of a period.</summary>
+    public long Balance(string pool) => balances[Require(pool)];
 
     public LedgerOptions Options { get; }
 
@@ -126,15 +138,65 @@ public sealed class BudgetLedger
 
         double[] raw = BudgetPools.All.Select(p => Sanitise(BudgetPools.ShareOf(shares, p))).ToArray();
         double sum = raw.Sum();
-        for (int i = 0; i < BudgetPools.All.Count; i++)
+        double[] normalised = raw.Select(r => sum > 0 ? r / sum : 1.0 / BudgetPools.All.Count).ToArray();
+        if (Options.AccrueByShare)
         {
-            double share = sum > 0 ? raw[i] / sum : 1.0 / BudgetPools.All.Count;
-            // The epsilon absorbs binary rounding (1300 × 0.3 must be 390, not 389); caps stay
-            // integers whose sum cannot exceed the integer capacity.
-            caps[BudgetPools.All[i]] = (int)Math.Floor(Capacity * share + 1e-7);
-            spent[BudgetPools.All[i]] = 0;
+            Accrue(normalised);
         }
+        else
+        {
+            for (int i = 0; i < BudgetPools.All.Count; i++)
+            {
+                // The epsilon absorbs binary rounding (1300 × 0.3 must be 390, not 389); caps stay
+                // integers whose sum cannot exceed the integer capacity.
+                caps[BudgetPools.All[i]] = (int)Math.Floor(Capacity * normalised[i] + 1e-7);
+            }
+        }
+        foreach (string pool in BudgetPools.All) spent[pool] = 0;
         reservations.Clear();
+    }
+
+    /// <summary>
+    /// Brings the accounts' total to the capacity: a surplus (income) is split by share, the rounding
+    /// remainder going to the largest share; a shortfall (credits spent outside the ledger, or a lower
+    /// forecast) is taken from every account in proportion to its balance, the remainder from the largest.
+    /// </summary>
+    private void Accrue(double[] shares)
+    {
+        IReadOnlyList<string> pools = BudgetPools.All;
+        long total = balances.Values.Sum();
+        long delta = Capacity - total;
+        if (delta > 0)
+        {
+            long given = 0;
+            for (int i = 0; i < pools.Count; i++)
+            {
+                long part = (long)Math.Floor(delta * shares[i] + 1e-7);
+                balances[pools[i]] += part;
+                given += part;
+            }
+            int largest = Array.IndexOf(shares, shares.Max());
+            balances[pools[largest]] += delta - given;
+        }
+        else if (delta < 0)
+        {
+            long cut = -delta, taken = 0;
+            foreach (string pool in pools)
+            {
+                long part = total > 0 ? (long)Math.Floor(cut * (balances[pool] / (double)total)) : 0;
+                part = Math.Min(part, balances[pool]);
+                balances[pool] -= part;
+                taken += part;
+            }
+            foreach (string pool in pools.OrderByDescending(p => balances[p]).ThenBy(static p => p, StringComparer.Ordinal))
+            {
+                if (taken >= cut) break;
+                long part = Math.Min(cut - taken, balances[pool]);
+                balances[pool] -= part;
+                taken += part;
+            }
+        }
+        foreach (string pool in pools) caps[pool] = (int)Math.Min(int.MaxValue, Math.Max(0, balances[pool]));
     }
 
     public int PoolCapacity(string pool) => caps[Require(pool)];
@@ -182,6 +244,40 @@ public sealed class BudgetLedger
         return granted;
     }
 
+    /// <summary>
+    /// Reserves up to <paramref name="amount"/> from a pool, and when the pool alone cannot cover it, moves
+    /// unreserved balance from the other pools (largest available first, then pool order) into it for the
+    /// shortfall. Returns what was granted. Totals are unchanged by the move, so the capacity invariant holds;
+    /// the intent's shares still decide who is served first, because the runtime lets every pool reserve from
+    /// its own balance before any pool borrows.
+    /// </summary>
+    public int ReserveWithBorrowing(string pool, string controller, int amount)
+    {
+        string key = Require(pool);
+        ArgumentException.ThrowIfNullOrEmpty(controller);
+        ArgumentOutOfRangeException.ThrowIfNegative(amount);
+        if (!MayReserve(key, controller)) return 0;
+        int granted = Reserve(key, controller, amount);
+        int shortfall = amount - granted;
+        foreach (string other in BudgetPools.All.Where(p => p != key).OrderByDescending(Available).ThenBy(p => BudgetPools.All.ToList().IndexOf(p)))
+        {
+            if (shortfall <= 0) break;
+            int move = Math.Min(shortfall, Available(other));
+            if (move <= 0) continue;
+            caps[other] -= move;
+            caps[key] += move;
+            if (Options.AccrueByShare)
+            {
+                balances[other] -= move;
+                balances[key] += move;
+            }
+            reservations[(key, controller)] = Reserved(key, controller) + move;
+            granted += move;
+            shortfall -= move;
+        }
+        return granted;
+    }
+
     /// <summary>All-or-nothing reservation.</summary>
     public bool TryReserve(string pool, string controller, int amount)
     {
@@ -215,6 +311,7 @@ public sealed class BudgetLedger
         if (held < amount || !reservations.ContainsKey((key, controller))) return false;
         reservations[(key, controller)] = held - amount;
         spent[key] += amount;
+        if (Options.AccrueByShare) balances[key] = Math.Max(0, balances[key] - amount);
         return true;
     }
 
