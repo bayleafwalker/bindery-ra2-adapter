@@ -32,17 +32,64 @@ public interface IDecisionLog
     IReadOnlyList<DecisionRecord> Records { get; }
 }
 
-/// <summary>Shared JSON settings: camelCase, string enums, no indentation.</summary>
+/// <summary>
+/// Shared JSON settings: camelCase, string enums, no indentation. Non-finite doubles are written as the
+/// named literals <c>"Infinity"</c>/<c>"NaN"</c> (several features use infinity for "never observed"), and
+/// <see cref="RegionId"/> works as a dictionary key (written as its number), so every contract record,
+/// including <see cref="StrategicFeatures"/> and <see cref="BeliefSnapshot"/>, serialises.
+/// </summary>
 public static class BotJson
 {
     public static readonly JsonSerializerOptions Options = Create();
 
     private static JsonSerializerOptions Create()
     {
-        JsonSerializerOptions options = new(JsonSerializerDefaults.Web) { WriteIndented = false };
+        JsonSerializerOptions options = new(JsonSerializerDefaults.Web)
+        {
+            WriteIndented = false,
+            NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals,
+        };
         options.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+        options.Converters.Add(new RegionIdJsonConverter());
         return options;
     }
 
     public static JsonElement ToElement<T>(T value) => JsonSerializer.SerializeToElement(value, Options);
+
+    /// <summary>
+    /// Keeps the default value shape (<c>{"value":3}</c>) and adds dictionary-key support (<c>"3"</c>).
+    /// </summary>
+    private sealed class RegionIdJsonConverter : System.Text.Json.Serialization.JsonConverter<RegionId>
+    {
+        public override RegionId Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.Number) return new RegionId(reader.GetInt32());
+            if (reader.TokenType != JsonTokenType.StartObject) throw new JsonException("RegionId must be an object or a number.");
+            int? value = null;
+            while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+            {
+                if (reader.TokenType != JsonTokenType.PropertyName) throw new JsonException("Malformed RegionId.");
+                bool isValue = string.Equals(reader.GetString(), "value", StringComparison.OrdinalIgnoreCase);
+                reader.Read();
+                if (isValue) value = reader.GetInt32();
+                else reader.Skip();
+            }
+            return new RegionId(value ?? throw new JsonException("RegionId has no value."));
+        }
+
+        public override void Write(Utf8JsonWriter writer, RegionId value, JsonSerializerOptions options)
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("value", value.Value);
+            writer.WriteEndObject();
+        }
+
+        public override RegionId ReadAsPropertyName(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+            int.TryParse(reader.GetString(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int id)
+                ? new RegionId(id)
+                : throw new JsonException($"'{reader.GetString()}' is not a region id.");
+
+        public override void WriteAsPropertyName(Utf8JsonWriter writer, RegionId value, JsonSerializerOptions options) =>
+            writer.WritePropertyName(value.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
 }

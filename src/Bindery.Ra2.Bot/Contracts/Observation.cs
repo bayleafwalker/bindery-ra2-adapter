@@ -62,6 +62,11 @@ public sealed record GameEvent(
 /// append-only facts: the belief model derives memory (last seen, age,
 /// confidence) from their sequence.
 /// </summary>
+/// <param name="OreRemaining">
+/// Ore value left in each ore region the player can currently see, as the game shows it; null when the
+/// source does not report ore (the RA2 telemetry contract does not yet). Regions out of sight are absent,
+/// never estimated.
+/// </param>
 public sealed record ObservationFrame(
     GameTime Time,
     ObservationMode Mode,
@@ -73,7 +78,8 @@ public sealed record ObservationFrame(
     IReadOnlyList<ProductionQueueState> Queues,
     IReadOnlyList<GameEvent> Events,
     IReadOnlySet<RegionId> VisibleRegions,
-    MapInfo Map);
+    MapInfo Map,
+    IReadOnlyDictionary<RegionId, int>? OreRemaining = null);
 
 /// <summary>Where frames come from: the RA2 bridge, the simulator, or a replay.</summary>
 public interface IObservationSource

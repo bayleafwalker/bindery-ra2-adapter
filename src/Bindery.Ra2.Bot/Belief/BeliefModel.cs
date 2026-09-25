@@ -27,6 +27,7 @@ public sealed class BeliefModel : IBeliefModel
 
     private long version;
     private BeliefSnapshot? current;
+    private Dictionary<RegionId, int>? oreLastSeen;
 
     public BeliefModel(IRulesDatabase rules, BeliefOptions options)
     {
@@ -43,6 +44,11 @@ public sealed class BeliefModel : IBeliefModel
         ArgumentNullException.ThrowIfNull(frame);
 
         UpdateRegionLastSeen(frame);
+        if (frame.OreRemaining is { } ore)
+        {
+            oreLastSeen ??= [];
+            foreach ((RegionId region, int remaining) in ore) oreLastSeen[region] = remaining;
+        }
         List<OwnEntity> own = BuildOwnEntities(frame);
         UpdateEnemyContacts(frame);
         ApplyDestroyedEvents(frame);
@@ -67,7 +73,8 @@ public sealed class BeliefModel : IBeliefModel
             frame.Queues,
             new Dictionary<RegionId, GameTime>(regionLastSeen),
             [.. recentEvents],
-            frame.Map);
+            frame.Map,
+            oreLastSeen is null ? null : new Dictionary<RegionId, int>(oreLastSeen));
 
         current = snapshot;
         return snapshot;

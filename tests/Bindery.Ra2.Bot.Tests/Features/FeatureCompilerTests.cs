@@ -10,41 +10,6 @@ namespace Bindery.Ra2.Bot.Tests.Features;
 
 public sealed class FeatureCompilerTests
 {
-    /// <summary>
-    /// <see cref="BotJson.Options"/> cannot serialise a <see cref="RegionId"/>
-    /// dictionary key out of the box (System.Text.Json only supports a fixed
-    /// set of primitive key types), and <see cref="StrategicFeatures.MapControl"/>
-    /// and <see cref="ScoutingFeatures.RegionAgeSeconds"/> are both keyed by
-    /// it — a real gap for whichever package logs a <see cref="StrategicFeatures"/>
-    /// with <see cref="BotJson"/> later (see contract change requests). This
-    /// test cannot edit the fixed <see cref="BotJson"/> options, so it
-    /// extends a copy of them with the missing key converter, purely to make
-    /// the required "serialize with BotJson and compare" fog test possible.
-    /// </summary>
-    private sealed class RegionIdKeyConverter : JsonConverter<RegionId>
-    {
-        public override RegionId Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
-            new(int.Parse(reader.GetString()!));
-
-        public override void Write(Utf8JsonWriter writer, RegionId value, JsonSerializerOptions options) =>
-            writer.WriteNumberValue(value.Value);
-
-        public override RegionId ReadAsPropertyName(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
-            new(int.Parse(reader.GetString()!));
-
-        public override void WriteAsPropertyName(Utf8JsonWriter writer, RegionId value, JsonSerializerOptions options) =>
-            writer.WritePropertyName(value.Value.ToString());
-    }
-
-    private static readonly JsonSerializerOptions ComparableBotJsonOptions = Extend();
-
-    private static JsonSerializerOptions Extend()
-    {
-        JsonSerializerOptions options = new(BotJson.Options);
-        options.Converters.Add(new RegionIdKeyConverter());
-        return options;
-    }
-
     private static readonly PlayerId Self = new(0);
     private static readonly PlayerId EnemyPlayer = new(1);
 
@@ -111,8 +76,8 @@ public sealed class FeatureCompilerTests
             lastB = compilerB.Compile(beliefB.Apply(FrameAt(t, credits)));
         }
 
-        JsonElement jsonA = JsonSerializer.SerializeToElement(lastA, ComparableBotJsonOptions);
-        JsonElement jsonB = JsonSerializer.SerializeToElement(lastB, ComparableBotJsonOptions);
+        JsonElement jsonA = JsonSerializer.SerializeToElement(lastA, BotJson.Options);
+        JsonElement jsonB = JsonSerializer.SerializeToElement(lastB, BotJson.Options);
         Assert.Equal(jsonA.GetRawText(), jsonB.GetRawText());
     }
 

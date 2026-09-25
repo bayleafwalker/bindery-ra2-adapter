@@ -46,6 +46,10 @@ public sealed record EnemyPlayerBelief(
 /// increments on every applied frame and is the freshness key for every
 /// asynchronous decision.
 /// </summary>
+/// <param name="OreLastSeen">
+/// Ore value last seen in each ore region (from <see cref="ObservationFrame.OreRemaining"/>); regions never
+/// seen with an ore report are absent. Null when the source never reports ore.
+/// </param>
 public sealed record BeliefSnapshot(
     long Version,
     GameTime Time,
@@ -60,7 +64,8 @@ public sealed record BeliefSnapshot(
     IReadOnlyList<ProductionQueueState> Queues,
     IReadOnlyDictionary<RegionId, GameTime> RegionLastSeen,
     IReadOnlyList<GameEvent> RecentEvents,
-    MapInfo Map)
+    MapInfo Map,
+    IReadOnlyDictionary<RegionId, int>? OreLastSeen = null)
 {
     public IReadOnlySet<string> OwnBuildingTypes =>
         Own.Where(static e => e.Kind == EntityKind.Building).Select(static e => e.TypeId).ToHashSet(StringComparer.Ordinal);

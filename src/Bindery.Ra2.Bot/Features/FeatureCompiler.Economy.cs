@@ -57,10 +57,16 @@ public sealed partial class FeatureCompiler
         int harvesters = snapshot.Own.Count(static e => e.Role == UnitRole.Harvester);
         int refineries = snapshot.Own.Count(static e => e.Kind == EntityKind.Building && e.Role == UnitRole.Economy);
 
-        // The observation/belief contracts carry no live ore-remaining signal
-        // (OreField only states its initial value), so this cannot be
-        // measured from belief alone; see the contract change request.
-        const double oreRemainingFraction = 1.0;
+        // Ore last seen per region over the map's initial ore; a region never seen with an ore report counts
+        // at its initial value (unknown is not depleted). Without any ore reports the fraction stays 1.
+        double initial = snapshot.Map.OreFields.Sum(static o => (double)o.InitialValue);
+        double oreRemainingFraction = 1.0;
+        if (snapshot.OreLastSeen is { } seen && initial > 0)
+        {
+            double remaining = snapshot.Map.OreFields.GroupBy(static o => o.Region)
+                .Sum(g => seen.TryGetValue(g.Key, out int left) ? left : g.Sum(static o => (double)o.InitialValue));
+            oreRemainingFraction = Math.Clamp(remaining / initial, 0, 1);
+        }
 
         return new EconomyFeatures(
             Trend.Flat(snapshot.Credits), Trend.Flat(incomePerMinute), Trend.Flat(spendingPerMinute),
