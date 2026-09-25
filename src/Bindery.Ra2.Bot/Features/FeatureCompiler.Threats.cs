@@ -18,7 +18,9 @@ public sealed partial class FeatureCompiler
         HashSet<RegionId> baseRegionSet = [.. baseRegions];
         HashSet<RegionId> regionsOfInterest = [.. baseRegionSet, .. clusters.Select(static c => c.Region)];
 
-        List<EnemyContact> alive = [.. snapshot.Enemies.Where(static c => !c.ConfirmedDestroyed)];
+        // Only mobile combat units threaten a region: an enemy base that happens to lie within the search radius
+        // is not an incoming attack, and counting its buildings would read as a permanent base threat.
+        List<EnemyContact> alive = [.. snapshot.Enemies.Where(static c => !c.ConfirmedDestroyed && c.Kind != EntityKind.Building && CombatRoles.Contains(c.Role))];
 
         List<ThreatAssessment> result = [];
         foreach (RegionId region in regionsOfInterest.OrderBy(static r => r.Value))

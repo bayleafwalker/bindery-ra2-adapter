@@ -7,9 +7,12 @@ public sealed partial class FeatureCompiler
     {
         List<EnemyContact> alive = [.. snapshot.Enemies.Where(static c => !c.ConfirmedDestroyed)];
 
+        // The estimate uses the same definition as own army value (mobile units in combat roles), so the
+        // two are comparable in ratios; enemy buildings and harvesters are economy, not force.
+        List<EnemyContact> army = [.. alive.Where(static c => c.Kind != EntityKind.Building && CombatRoles.Contains(c.Role))];
         double weightedValue = 0, totalValue = 0;
         Dictionary<UnitRole, double> composition = [];
-        foreach (EnemyContact c in alive)
+        foreach (EnemyContact c in army)
         {
             double contribution = c.Value * c.Confidence;
             weightedValue += contribution;
@@ -18,11 +21,12 @@ public sealed partial class FeatureCompiler
         }
         armyValueCurrent = weightedValue;
 
-        double confidence = alive.Count == 0
-            ? 1.0
+        // No army contact at all is no evidence: confidence 0, not certainty that the enemy has nothing.
+        double confidence = army.Count == 0
+            ? 0.0
             : totalValue > 0
                 ? weightedValue / totalValue
-                : alive.Average(static c => c.Confidence);
+                : army.Average(static c => c.Confidence);
 
         HashSet<string> knownTech = new(StringComparer.Ordinal);
         foreach (EnemyPlayerBelief p in snapshot.EnemyPlayers) knownTech.UnionWith(p.SeenTech);
