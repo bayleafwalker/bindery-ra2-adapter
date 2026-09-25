@@ -16,7 +16,7 @@ public sealed record SkippedArm(string Arm, string Reason);
 /// `arena run` entry point: arms × maps (for the requested split) × opponents ×
 /// seeds, every side a full <c>BotRuntime</c> on the bindery region sim (not
 /// retail RA2). Writes <c>results.json</c>, <c>probes.json</c>, <c>report.md</c>
-/// and one <c>dataset-&lt;arm&gt;.ndjson</c> of decision examples per arm into <c>--out</c>.
+/// and one <c>dataset-&lt;arm&gt;.ndjson</c> of training-map decision examples per arm into <c>--out</c>.
 /// </summary>
 /// <remarks>
 /// Order: the distilled arm needs a dataset, so when <c>--dataset</c> is absent it trains on the
@@ -113,8 +113,10 @@ public static class Program
             }
             results.AddRange(armResults);
 
+            // Exported datasets hold training-map decisions only, so a distilled arm trained on them is never
+            // evaluated on maps its teacher's data came from.
             DecisionDataset dataset = DecisionDataset.Merge(Enumerable.Range(0, jobs.Count)
-                .Where(logs.ContainsKey)
+                .Where(i => logs.ContainsKey(i) && jobs[i].Split == "training")
                 .Select(i => DecisionDataset.FromDecisionLog(logs[i], DatasetFilter.PrimaryOnly, MatchId(jobs[i]))));
             using (StreamWriter writer = new(Path.Combine(options.OutDir, $"dataset-{Slug(arm.ToString())}.ndjson")))
             {
