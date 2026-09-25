@@ -122,3 +122,42 @@ itself is exercised.
 - **Hidden-information leakage**: count of validator `fog.*` rejections, plus
   the arena probe that perturbs hidden simulator state and diffs the
   strategist context hash (must be 0 differences).
+
+## Integration record
+
+Recorded when the eight work packages were merged into `feat/strategic-bot`.
+
+- **Package E** (deterministic strategists) was not delivered: its agent was
+  launched in a checkout of a different repository. It was implemented during
+  integration in `src/Bindery.Ra2.Bot/Strategy/`, together with
+  `IntentComposer` (playbook defaults plus posture-derived objectives, shared by
+  every deterministic strategist), `PinnedPlaybookStrategist` (arena opponent
+  styles), `TwoSpeedStrategist` (the `llm+fast` primary slot) and
+  `StrategistContextHash` (fog probe).
+- **Contract changes** (each minimal): `BotJson.Options` writes non-finite
+  doubles as named literals and `RegionId` dictionary keys as numbers, so
+  features and belief serialise; `ObservationFrame.OreRemaining` (visible ore
+  regions only, optional) and `BeliefSnapshot.OreLastSeen` make
+  `EconomyFeatures.OreRemainingFraction` measurable; doc comments state the
+  `OperationalPlan.BudgetReservations` key convention, who leases units for
+  tactical controllers, and the 9999-second "unknown" convention. Not applied:
+  owned building types in `StrategistContext`, an `IStrategistDiagnostics`
+  interface, and moving `IFrameAwareStrategist` into the contracts (the arena
+  subscribes to `ClaudeStrategist.ProposalFailed` instead).
+- **Single definitions.** The planner's private condition evaluator was deleted;
+  `ConditionEvaluator` is the only definition of every metric. The
+  `strategy.intent_activated` record carries the `DecisionDataset` payload
+  (`faction`, `featureVersion`, `features`, canonical `intent`).
+- **Budget ledger.** The runtime runs the ledger in accrual mode: pools are
+  running accounts fed by share, and a pool short of an item may borrow other
+  pools' unreserved balance after every pool has reserved from its own. A
+  per-period split of credits on hand could never afford a 2000-credit
+  refinery from a 30% pool once credits fell, which stalled every economy.
+- **Selector default.** In a style-versus-style matrix on training maps only
+  (5 opponent styles × 3 maps × 4 seeds per style), the mixed-army playbooks
+  won 47/60, tech 43, rush and harass 36, turtle far less; the selector's
+  default is the faction's mixed army, with armour kept as the answer to a
+  confident armour-heavy enemy. (An earlier exploratory matrix also included
+  held-out maps; the choice was re-checked on training maps before adoption.)
+- **Arena datasets** (`dataset-<arm>.ndjson`) contain training-map decisions
+  only, so a distilled arm is never trained on the maps it is evaluated on.

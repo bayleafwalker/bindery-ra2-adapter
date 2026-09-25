@@ -106,6 +106,16 @@ nix shell nixpkgs#dotnet-sdk_8 -c dotnet run --project tools/Bindery.Ra2.Bot.Are
   --max-seconds 300 --out artifacts/arena
 ```
 
+Arms: `selector`, `bandit`, `llm-shadow`, `llm`, `llm+fast`, `distilled`
+(`--arms all`); opponents: `rush`, `turtle`, `tech`, `harass`, `balanced`
+(`--opponents all`); maps: `training`, `heldout` or `all`. Every side is a full
+`BotRuntime`; the arm plays Allied on odd seeds and Soviet on even ones.
+`--oracle` gives the arm full-state frames (results are labelled), and
+`--dataset <file>` trains the distilled arm on an exported dataset (otherwise on
+the run's selector decisions). The output directory holds `results.json`,
+`probes.json` (per-arm leakage probes and skipped arms), `report.md` and one
+`dataset-<arm>.ndjson` of training-map decisions per arm.
+
 ### Importing an operator ruleset
 
 `RulesmdImporter` (`src/Bindery.Ra2.Bot/Rules`) turns an operator-supplied
