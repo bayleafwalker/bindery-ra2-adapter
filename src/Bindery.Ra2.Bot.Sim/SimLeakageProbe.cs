@@ -1,0 +1,38 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+namespace Bindery.Ra2.Bot.Sim;
+
+/// <summary>
+/// Perturbs hidden state belonging to players other than <c>observer</c> so a
+/// test can assert that a belief-mode <see cref="ObservationFrame"/> (or,
+/// upstream, a strategist context built from it) never moved: enemy credits,
+/// enemy production queues, and enemy units placed in a region the observer
+/// cannot currently see are all facts the observer has no legitimate way to
+/// know. If perturbing them changes what the observer sees, fog is leaking.
+/// </summary>
+public static class SimLeakageProbe
+{
+    public static void PerturbHidden(SkirmishSimulation sim, PlayerId observer)
+    {
+        ArgumentNullException.ThrowIfNull(sim);
+        IReadOnlySet<RegionId> visible = sim.VisibleRegionsForProbe(observer);
+        RegionId unseenRegion = sim.Map.Regions.Select(r => r.Id).FirstOrDefault(r => !visible.Contains(r), sim.StartRegionOf(observer));
+
+        foreach (PlayerId other in sim.Players)
+        {
+            if (other == observer) continue;
+
+            sim.DebugAdjustCredits(other, 12_345);
+            sim.DebugEnqueue(other, QueueKind.Building, "__leakage-probe__");
+
+            RegionId hiddenRegion = visible.Contains(sim.StartRegionOf(other)) ? unseenRegion : sim.StartRegionOf(other);
+            if (!visible.Contains(hiddenRegion))
+            {
+                string? anyType = FirstKnownUnitType(sim);
+                if (anyType is not null) sim.DebugSpawnSilently(other, anyType, hiddenRegion);
+            }
+        }
+    }
+
+    private static string? FirstKnownUnitType(SkirmishSimulation sim) =>
+        sim.Observe(sim.Players[0], ObservationMode.Oracle).Entities.Select(e => e.TypeId).FirstOrDefault();
+}
