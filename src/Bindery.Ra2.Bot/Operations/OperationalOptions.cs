@@ -26,11 +26,19 @@ namespace Bindery.Ra2.Bot.Operations;
 /// </param>
 /// <param name="BuildSearchRings">How many square rings the placement search expands outward.</param>
 /// <param name="BuildGridStep">Cell spacing between placement candidates and the clearance from existing buildings.</param>
+/// <param name="PowerBuffer">Power surplus below which, with nothing else to build, another power plant is queued.</param>
+/// <param name="MaxProductionBuildings">Production buildings (each speeds every queue) the planner adds up to when rich.</param>
+/// <param name="ExtraProductionCredits">Credits on hand before an extra production building is considered.</param>
+/// <param name="DefaultExpandAtSeconds">Game time of the second refinery when the playbook has no <c>expandAtSeconds</c>.</param>
+/// <param name="MaxRefineries">Refinery cap (also capped by the map's ore regions).</param>
+/// <param name="MaxDefenses">Static defense cap for defensive budgets.</param>
+/// <param name="MinAttackArmyValue">Army value an attack waits for when the playbook has no <c>attackArmyValue</c>.</param>
+/// <param name="AttackHoldFraction">An attack in progress continues while army value stays above this fraction of that threshold.</param>
+/// <param name="ScoutRevisitSeconds">A start location seen within this many seconds is not re-scouted first.</param>
 /// <param name="ConditionEvaluator">
 /// Evaluates one <see cref="Condition"/> against <see cref="StrategicFeatures"/>. Left null,
-/// the planner uses its own <see cref="DefaultConditionEvaluator"/>; the Arbitration package
-/// writes the shared evaluator concurrently, and the integrator may pass that one in instead
-/// so both packages agree on attack-condition semantics.
+/// the planner uses the canonical <see cref="Arbitration.ConditionEvaluator.Holds"/>, the single
+/// definition of every metric shared with the validator and arbiter; a test may substitute a stub.
 /// </param>
 public sealed record OperationalOptions(
     string ControllerId = "ops",
@@ -43,8 +51,17 @@ public sealed record OperationalOptions(
     int ReinforceSquadTargetSize = 4,
     int BuildSearchRings = 16,
     int BuildGridStep = 3,
-    Func<Condition, StrategicFeatures, bool>? ConditionEvaluator = null)
+    Func<Condition, StrategicFeatures, bool>? ConditionEvaluator = null,
+    int PowerBuffer = 50,
+    int MaxProductionBuildings = 4,
+    int ExtraProductionCredits = 2500,
+    double DefaultExpandAtSeconds = 150,
+    int MaxRefineries = 4,
+    int MaxDefenses = 8,
+    double MinAttackArmyValue = 1500,
+    double AttackHoldFraction = 0.5,
+    double ScoutRevisitSeconds = 60)
 {
     /// <summary>The evaluator actually used: <see cref="ConditionEvaluator"/> when set, else the default.</summary>
-    public Func<Condition, StrategicFeatures, bool> Evaluator => ConditionEvaluator ?? DefaultConditionEvaluator.Evaluate;
+    public Func<Condition, StrategicFeatures, bool> Evaluator => ConditionEvaluator ?? Arbitration.ConditionEvaluator.Holds;
 }

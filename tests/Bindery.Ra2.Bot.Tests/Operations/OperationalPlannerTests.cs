@@ -110,8 +110,9 @@ public sealed class OperationalPlannerTests
         StrategicIntent intent = Fixture.Intent(objectives: [attack], attackConditions: [condition]);
 
         OperationalPlan staged = planner.Plan(notReadyBelief, weakFeatures, intent, leases);
+        // Staging holds at home (engaged, so a staging army still defends itself) and is not an attack.
         SquadOrder stagingOrder = Assert.Single(staged.Squads);
-        Assert.False(stagingOrder.Engage);
+        Assert.NotEqual(ObjectiveKind.AttackRegion, stagingOrder.Objective);
         Assert.Equal(Fixture.Home, stagingOrder.TargetRegion);
 
         BeliefSnapshot readyBelief = Fixture.Belief(own: own, time: new GameTime(200));
@@ -123,6 +124,7 @@ public sealed class OperationalPlannerTests
         OperationalPlan committed = planner.Plan(readyBelief, readyFeatures, intent, leases);
         SquadOrder attackOrder = Assert.Single(committed.Squads);
         Assert.True(attackOrder.Engage);
+        Assert.Equal(ObjectiveKind.AttackRegion, attackOrder.Objective);
         Assert.Equal(Fixture.Front, attackOrder.TargetRegion);
     }
 }

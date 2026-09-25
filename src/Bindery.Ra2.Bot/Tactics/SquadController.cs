@@ -72,8 +72,10 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
                 continue;
             }
 
+            // Only armed enemies oppose the squad: buildings and unarmed units are targets, not force, so a
+            // squad reaching an enemy base does not read the base's worth as a reason to retreat.
             double ownValue = members.Sum(static m => m.Value);
-            double enemyValue = nearby.Sum(static e => e.Value);
+            double enemyValue = nearby.Where(e => IsArmed(e, rules)).Sum(static e => e.Value);
             double localRatio = enemyValue <= 0 ? double.PositiveInfinity : ownValue / enemyValue;
 
             SquadCombatState state = GetOrInitState(order.SquadId, belief.Time, localRatio, order.RetreatBelowForceRatio);
@@ -134,7 +136,10 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
                 count++;
             }
             double avgEffectiveness = count > 0 ? effectiveness / count : 1.0;
-            double score = avgEffectiveness * (1.0 - candidate.HealthFractionWhenSeen) * Math.Max(1, candidate.Value);
+            // Low health first, but a full-health target still scores (the 1.25 floor), and armed targets
+            // outrank unarmed ones so the squad kills what shoots back before it razes buildings.
+            double threat = IsArmed(candidate, rules) ? 3.0 : 1.0;
+            double score = avgEffectiveness * (1.25 - candidate.HealthFractionWhenSeen) * Math.Max(1, candidate.Value) * threat;
             if (score > bestScore)
             {
                 bestScore = score;
@@ -143,6 +148,9 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
         }
         return best;
     }
+
+    private static bool IsArmed(EnemyContact contact, IRulesDatabase rules) =>
+        rules.TryGet(contact.TypeId, out UnitRule rule) && rule.Weapon != WeaponClass.None && rule.Damage > 0;
 
     private GameCommand RouteCommand(
         SquadOrder order,

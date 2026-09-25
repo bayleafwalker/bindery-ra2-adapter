@@ -11,6 +11,8 @@ public sealed class HarvesterSafetyController(HarvesterSafetyOptions options) : 
 {
     public string Id => "harvest";
 
+    private readonly Dictionary<EntityId, string> lastOrder = [];
+
     public IReadOnlyList<GameCommand> Tick(BeliefSnapshot belief, IReadOnlyList<SquadOrder> squads, ILeaseManager leases, IRulesDatabase rules)
     {
         ArgumentNullException.ThrowIfNull(belief);
@@ -42,20 +44,37 @@ public sealed class HarvesterSafetyController(HarvesterSafetyOptions options) : 
             if (threatened && refineries.Count > 0)
             {
                 OwnEntity safest = refineries.OrderBy(r => r.Position.DistanceTo(harvester.Position)).First();
-                commands.Add(new MoveCommand(options.Owner, [harvester.Id], safest.Position));
+                if (Issue(harvester.Id, $"flee:{safest.Id.Value}")) commands.Add(new MoveCommand(options.Owner, [harvester.Id], safest.Position));
                 continue;
             }
 
-            OreField? field = belief.Map.OreFields
+            // Fields last seen empty are skipped; a field never seen with an ore report is assumed to hold ore.
+            List<OreField> fields = belief.Map.OreFields
+                .Where(o => belief.OreLastSeen is not { } seen || !seen.TryGetValue(o.Region, out int left) || left > 0)
+                .ToList();
+            OreField? field = fields
                 .Where(o => o.Region == harvester.Region || refineries.Any(r => r.Region == o.Region))
                 .OrderBy(o => o.Center.DistanceTo(harvester.Position))
                 .FirstOrDefault();
-            field ??= belief.Map.OreFields.OrderBy(o => o.Center.DistanceTo(harvester.Position)).FirstOrDefault();
-            if (field is not null)
+            field ??= fields.OrderBy(o => o.Center.DistanceTo(harvester.Position)).FirstOrDefault();
+            if (field is not null && Issue(harvester.Id, $"harvest:{field.Region.Value}"))
             {
                 commands.Add(new HarvestCommand(options.Owner, harvester.Id, field.Center));
             }
         }
+        foreach (EntityId gone in lastOrder.Keys.Where(id => !harvesters.Any(h => h.Id == id)).ToList()) lastOrder.Remove(gone);
         return commands;
+    }
+
+    /// <summary>
+    /// Orders are edge-triggered: a harvester is told to harvest a field, or to flee, only when that differs
+    /// from its last order. Re-issuing the same order every tick would restart the engine's harvest cycle and
+    /// no load would ever be delivered.
+    /// </summary>
+    private bool Issue(EntityId harvester, string order)
+    {
+        if (lastOrder.TryGetValue(harvester, out string? previous) && previous == order) return false;
+        lastOrder[harvester] = order;
+        return true;
     }
 }
