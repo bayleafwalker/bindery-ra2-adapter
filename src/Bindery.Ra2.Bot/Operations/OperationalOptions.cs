@@ -42,7 +42,7 @@ namespace Bindery.Ra2.Bot.Operations;
 /// </param>
 public sealed record OperationalOptions(
     string ControllerId = "ops",
-    double DefaultHarvesterTargetPerRefinery = 2.0,
+    double DefaultHarvesterTargetPerRefinery = 3.0,
     double DefaultRetreatBelowForceRatio = 0.6,
     double SquadLeaseMinHoldSeconds = 10.0,
     double SquadLeaseTtlSeconds = 5.0,
@@ -53,8 +53,8 @@ public sealed record OperationalOptions(
     int BuildGridStep = 3,
     Func<Condition, StrategicFeatures, bool>? ConditionEvaluator = null,
     int PowerBuffer = 50,
-    int MaxProductionBuildings = 4,
-    int ExtraProductionCredits = 2500,
+    int MaxProductionBuildings = 6,
+    int ExtraProductionCredits = 2000,
     double DefaultExpandAtSeconds = 150,
     int MaxRefineries = 4,
     int MaxDefenses = 8,

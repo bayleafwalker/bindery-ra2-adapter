@@ -186,14 +186,17 @@ public sealed class BeliefModel : IBeliefModel
         foreach (ObservedEntity e in frame.Entities)
         {
             if (e.Owner == frame.Self) continue;
-            if (!rules.TryGet(e.TypeId, out UnitRule rule) || rule.Kind != EntityKind.Building) continue;
+            if (!rules.TryGet(e.TypeId, out UnitRule rule)) continue;
 
+            // Every seen type is known tech, units included: a Harrier overhead proves the enemy can build
+            // Harriers as surely as its airfield would, and counter-picking needs the units.
             if (!seenTech.TryGetValue(e.Owner, out HashSet<string>? tech))
             {
                 tech = new HashSet<string>(StringComparer.Ordinal);
                 seenTech[e.Owner] = tech;
             }
             tech.Add(e.TypeId);
+            if (rule.Kind != EntityKind.Building) continue;
 
             RegionId region = RegionOf(frame.Map, e.Position);
             if (!RegionIsStart(frame.Map, region)) continue;

@@ -39,12 +39,12 @@ public sealed class StrategyTests
     }
 
     [Fact]
-    public void Selector_defends_under_base_threat_and_otherwise_plays_the_faction_timing()
+    public void Selector_defends_under_base_threat_and_otherwise_plays_the_faction_mix()
     {
         PlaybookSelector selector = new();
         Assert.Equal("generic-defend", Propose(selector, Fx.Features(100, threats: [BaseThreat(3000, 1000)])).PlaybookId);
-        Assert.Equal("allied-grizzly-timing", Propose(selector, Fx.Features(100)).PlaybookId);
-        Assert.Equal("soviet-rhino-rush", Propose(selector, Fx.Features(100, faction: Faction.Soviet)).PlaybookId);
+        Assert.Equal("allied-ifv-mix", Propose(selector, Fx.Features(100)).PlaybookId);
+        Assert.Equal("soviet-flak-mix", Propose(selector, Fx.Features(100, faction: Faction.Soviet)).PlaybookId);
     }
 
     [Fact]

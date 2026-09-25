@@ -6,16 +6,16 @@ namespace Bindery.Ra2.Bot.Strategy;
 /// <summary>Tunables for <see cref="PlaybookSelector"/>.</summary>
 /// <param name="DefendThreatRatio">Base threat ratio at or above which the selector defends.</param>
 /// <param name="TurtleArmyRatio">Army value ratio below which (with confident enemy evidence) the selector turtles.</param>
-/// <param name="TurtleMinConfidence">Enemy estimate confidence required before a low ratio causes turtling.</param>
-/// <param name="InfantryHeavyShare">Enemy anti-infantry-plus-engineer share that switches to an anti-infantry mix.</param>
+/// <param name="EvidenceConfidence">Enemy estimate confidence required before composition or ratio rules apply.</param>
+/// <param name="ArmourHeavyShare">Enemy anti-armour share at which the selector answers with its own armour.</param>
 /// <param name="AirThreatShare">Enemy air presence (0.3 per distinct aircraft type seen) that switches to an anti-air mix.</param>
 /// <param name="TechAfterSeconds">Game time after which a comfortable lead turns into a tech transition.</param>
 /// <param name="LifetimeSeconds">Intent lifetime; the scheduler asks again well before it expires.</param>
 public sealed record PlaybookSelectorOptions(
     double DefendThreatRatio = 1.3,
-    double TurtleArmyRatio = 0.5,
-    double TurtleMinConfidence = 0.5,
-    double InfantryHeavyShare = 0.5,
+    double TurtleArmyRatio = 0.35,
+    double EvidenceConfidence = 0.5,
+    double ArmourHeavyShare = 0.6,
     double AirThreatShare = 0.25,
     double TechAfterSeconds = 720,
     double LifetimeSeconds = 60);
@@ -28,9 +28,10 @@ public sealed record PlaybookSelectorOptions(
 /// <item>Base threat ratio ≥ <see cref="PlaybookSelectorOptions.DefendThreatRatio"/>: <c>generic-defend</c>.</item>
 /// <item>Confident enemy estimate and army ratio &lt; <see cref="PlaybookSelectorOptions.TurtleArmyRatio"/>: the faction's turtle.</item>
 /// <item>Enemy air presence ≥ <see cref="PlaybookSelectorOptions.AirThreatShare"/>: the faction's anti-air mix.</item>
-/// <item>Enemy anti-infantry share ≥ <see cref="PlaybookSelectorOptions.InfantryHeavyShare"/>: the faction's anti-infantry mix.</item>
+/// <item>Confident enemy anti-armour share ≥ <see cref="PlaybookSelectorOptions.ArmourHeavyShare"/>: the faction's armour (Grizzly timing / Rhino rush).</item>
 /// <item>Late game with a lead (ratio ≥ 1.5) and at least two refineries: the faction's tech playbook.</item>
-/// <item>Otherwise the faction's main armour timing (Grizzly timing / Rhino rush).</item>
+/// <item>Otherwise the faction's mixed army (IFV mix / flak mix), the strongest pinned style in the region
+/// simulator's style-versus-style matrix (see the arena notes in the spec).</item>
 /// </list>
 /// Playbooks missing from the library, or not serving the faction, are skipped in favour of the next rule.
 /// </summary>
@@ -74,26 +75,25 @@ public sealed class PlaybookSelector : IStrategist
         }
 
         double ratio = ConditionEvaluator.ArmyValueRatio(features);
-        if (features.Enemy.ArmyValueConfidence >= options.TurtleMinConfidence && ratio < options.TurtleArmyRatio
+        bool confident = features.Enemy.ArmyValueConfidence >= options.EvidenceConfidence;
+        if (confident && ratio < options.TurtleArmyRatio
             && Pick(playbooks, faction, allied ? "allied-prism-turtle" : "soviet-turtle") is { } turtle)
         {
             return (turtle, $"outnumbered: army ratio {ratio:0.00}", 0.7);
         }
 
-        double enemyTotal = features.Enemy.CompositionByRole.Values.Where(static v => v > 0).Sum();
-        double Share(params UnitRole[] roles) =>
-            enemyTotal <= 0 ? 0 : roles.Sum(r => features.Enemy.CompositionByRole.GetValueOrDefault(r)) / enemyTotal;
-
         double air = AirPresence(features, rules);
         if (air >= options.AirThreatShare && Pick(playbooks, faction, allied ? "allied-harass" : "soviet-flak-mix") is { } antiAir)
         {
-            return (antiAir, $"enemy air share {air:0.00}", 0.65);
+            return (antiAir, $"enemy air presence {air:0.00}", 0.65);
         }
 
-        double infantry = Share(UnitRole.AntiInfantry, UnitRole.Engineer);
-        if (infantry >= options.InfantryHeavyShare && Pick(playbooks, faction, allied ? "allied-ifv-mix" : "soviet-rhino-rush") is { } antiInfantry)
+        double enemyTotal = features.Enemy.CompositionByRole.Values.Where(static v => v > 0).Sum();
+        double armour = enemyTotal <= 0 ? 0 : features.Enemy.CompositionByRole.GetValueOrDefault(UnitRole.AntiArmor) / enemyTotal;
+        if (confident && armour >= options.ArmourHeavyShare
+            && Pick(playbooks, faction, allied ? "allied-grizzly-timing" : "soviet-rhino-rush") is { } armoured)
         {
-            return (antiInfantry, $"enemy infantry share {infantry:0.00}", 0.6);
+            return (armoured, $"enemy armour share {armour:0.00}", 0.6);
         }
 
         if (features.Time.Seconds >= options.TechAfterSeconds && ratio >= 1.5 && features.Economy.Refineries >= 2
@@ -102,9 +102,9 @@ public sealed class PlaybookSelector : IStrategist
             return (tech, $"late lead: army ratio {ratio:0.00}", 0.6);
         }
 
-        Playbook? main = Pick(playbooks, faction, allied ? "allied-grizzly-timing" : "soviet-rhino-rush")
+        Playbook? main = Pick(playbooks, faction, allied ? "allied-ifv-mix" : "soviet-flak-mix")
             ?? playbooks.For(faction).OrderBy(static p => p.Id, StringComparer.Ordinal).FirstOrDefault();
-        return (main, "default armour timing", 0.6);
+        return (main, "default mixed army", 0.6);
     }
 
     /// <summary>
