@@ -90,6 +90,10 @@ public sealed class SkirmishSimulation
 
     public int RejectedCommandCount(PlayerId player) => players.TryGetValue(player, out SimPlayerState? s) ? s.RejectedCommands : 0;
 
+    /// <summary>The most recent commands (up to 32) the simulator rejected for a player, oldest first; for diagnostics.</summary>
+    public IReadOnlyList<GameCommand> RecentRejections(PlayerId player) =>
+        players.TryGetValue(player, out SimPlayerState? s) ? [.. s.RecentRejections] : [];
+
     public int AssetValue(PlayerId player)
     {
         if (!players.TryGetValue(player, out SimPlayerState? state)) return 0;
@@ -126,9 +130,14 @@ public sealed class SkirmishSimulation
             AdvanceRepair();
         }
 
+        // Each observation carries the events of the most recent step only: a frame is a set of new facts, and
+        // re-delivering old events would make every consumer de-duplicate (and grow without bound over a match).
         foreach (SimPlayerState state in players.Values.OrderBy(p => p.Id.Value))
         {
-            state.PendingEvents.AddRange(frameEvents.Where(e => IsEventForPlayer(e, state.Id)));
+            state.PendingEvents.Clear();
+            if (frameEvents.Count == 0) continue;
+            HashSet<RegionId> visible = VisibleRegionsFor(state.Id);
+            state.PendingEvents.AddRange(frameEvents.Where(e => IsEventForPlayer(e, state.Id, visible)));
         }
 
         CheckVictory();
@@ -162,10 +171,14 @@ public sealed class SkirmishSimulation
 
         List<GameEvent> events = mode == ObservationMode.Oracle
             ? frameEvents
-            : state.PendingEvents.Where(e => IsEventForPlayer(e, player)).ToList();
+            : [.. state.PendingEvents];
 
         PowerState power = ComputePower(state);
-        return new ObservationFrame(Time, mode, player, state.Faction, state.Credits, power, observed, queues, events, visible, map.Map);
+        Dictionary<RegionId, int> ore = oreRemaining
+            .Where(kv => visible.Contains(kv.Key))
+            .OrderBy(static kv => kv.Key.Value)
+            .ToDictionary(static kv => kv.Key, static kv => (int)Math.Round(kv.Value));
+        return new ObservationFrame(Time, mode, player, state.Faction, state.Credits, power, observed, queues, events, visible, map.Map, ore);
     }
 
     /// <summary>Deterministic digest of all visible-and-hidden state, for replay verification.</summary>
@@ -257,7 +270,12 @@ public sealed class SkirmishSimulation
         {
             if (!players.TryGetValue(player, out SimPlayerState? state)) continue;
             bool ok = Apply(player, state, command);
-            if (!ok) state.RejectedCommands++;
+            if (!ok)
+            {
+                state.RejectedCommands++;
+                state.RecentRejections.Enqueue(command);
+                if (state.RecentRejections.Count > 32) state.RecentRejections.Dequeue();
+            }
         }
         pending.Clear();
     }
@@ -439,6 +457,8 @@ public sealed class SkirmishSimulation
         if (!OwnsAlive(player, c.Harvester, out SimEntity entity)) return false;
         Region? region = map.Map.RegionOf(c.Ore);
         if (region is null || !region.HasOre || oreRemaining.GetValueOrDefault(region.Id) <= 0) return false;
+        // Re-ordering a harvester to the field it already works is a no-op, as in RA2: its cycle continues.
+        if (entity.AssignedOreRegion == region.Id && entity.Phase != HarvesterPhase.Idle) return true;
         entity.AssignedOreRegion = region.Id;
         entity.Phase = HarvesterPhase.Idle;
         entity.RemainingPath.Clear();
@@ -702,14 +722,17 @@ public sealed class SkirmishSimulation
                        .FirstOrDefault();
     }
 
+    /// <summary>
+    /// What can hit what: an anti-air weapon connects only with aircraft; an aircraft can be hit only by an
+    /// attacker with the dual-purpose <see cref="UnitRule.AntiAir"/> flag or a general weapon (the flag adds air
+    /// targets to a ground weapon rather than replacing them); and the rules must give a positive damage multiplier.
+    /// </summary>
     private bool CanTarget(UnitRule attackerRule, SimEntity target)
     {
         if (!rules.TryGet(target.TypeId, out UnitRule targetRule)) return false;
-        // AA-only weapons can hit aircraft only; everything else can hit aircraft only if it is a
-        // dedicated AA or general-purpose weapon.
-        if (attackerRule.AntiAir) return targetRule.Kind == EntityKind.Aircraft;
-        if (targetRule.Kind == EntityKind.Aircraft) return attackerRule.Weapon == WeaponClass.General;
-        return true;
+        if (attackerRule.Weapon == WeaponClass.AntiAir) return targetRule.Kind == EntityKind.Aircraft;
+        if (targetRule.Kind == EntityKind.Aircraft && !attackerRule.AntiAir && attackerRule.Weapon != WeaponClass.General) return false;
+        return rules.Effectiveness(attackerRule.TypeId, target.TypeId) > 0;
     }
 
     private void AdvanceRepair()
@@ -753,13 +776,13 @@ public sealed class SkirmishSimulation
         return visible;
     }
 
-    private bool IsEventForPlayer(GameEvent gameEvent, PlayerId player)
+    private bool IsEventForPlayer(GameEvent gameEvent, PlayerId player, HashSet<RegionId> visible)
     {
         if (gameEvent.Owner == player) return true;
         if (gameEvent.Position is { } position)
         {
             Region? region = map.Map.RegionOf(position);
-            if (region is not null && VisibleRegionsFor(player).Contains(region.Id)) return true;
+            if (region is not null && visible.Contains(region.Id)) return true;
         }
         return false;
     }
@@ -787,8 +810,10 @@ public sealed class SkirmishSimulation
 
         if (Time.Seconds >= settings.MaxSeconds)
         {
+            // Timeout: the highest asset value wins; an exact tie at the top is a draw, not a win for the lower id.
             MatchEnded = true;
-            Winner = alive.OrderByDescending(p => AssetValue(p.Id)).ThenBy(p => p.Id.Value).First().Id;
+            List<(PlayerId Id, int Assets)> ranked = alive.Select(p => (p.Id, AssetValue(p.Id))).OrderByDescending(static p => p.Item2).ToList();
+            Winner = ranked.Count > 1 && ranked[0].Assets == ranked[1].Assets ? null : ranked[0].Id;
             EndReason = "timeout";
         }
     }

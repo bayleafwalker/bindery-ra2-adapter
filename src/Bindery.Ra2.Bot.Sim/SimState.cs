@@ -85,4 +85,6 @@ internal sealed class SimPlayerState
     public Dictionary<QueueKind, QueueRuntime> Queues { get; } = [];
     public List<PendingPlacement> PendingPlacements { get; } = [];
     public List<GameEvent> PendingEvents { get; } = [];
+
+    public Queue<GameCommand> RecentRejections { get; } = new();
 }

@@ -117,9 +117,11 @@ public static class SimMaps
         ];
         RegionLink[] links =
         [
-            L(0, 1, 14), L(0, 2, 14), L(2, 3, 8, ground: false, naval: true),
-            L(3, 4, 8, ground: false, naval: true), L(4, 5, 18),
-            L(4, 6, 8, ground: false, naval: true), L(6, 7, 8, ground: false, naval: true),
+            // The straits are crossed by bridges (ground and naval): without them the two sides have no ground
+            // route to each other, and the fixture has no naval units, so every match could only time out.
+            L(0, 1, 14), L(0, 2, 14), L(2, 3, 8, ground: true, naval: true),
+            L(3, 4, 8, ground: true, naval: true), L(4, 5, 18),
+            L(4, 6, 8, ground: true, naval: true), L(6, 7, 8, ground: true, naval: true),
             L(7, 8, 20), L(7, 9, 14), L(9, 8, 14),
         ];
         OreField[] ore = [Ore(1, 15, 25), Ore(4, 50, 50, 14_000), Ore(5, 50, 20), Ore(8, 85, 25)];
