@@ -272,6 +272,10 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
         {
             strategist.ProposalFailed += (_, failure) =>
             {
+                // The record goes into the hashed decision log: under a fixed simulated latency it carries that
+                // latency, not the strategist's wall-clock stopwatch, or the same match would hash differently on
+                // every run (successful proposals get the same treatment from SimulatedLatencyStrategist).
+                if (SimulatedLatencySeconds is { } simulated) failure = failure with { Cost = failure.Cost with { LatencySeconds = simulated } };
                 log.Write(failure.ToDecisionRecord(strategist.Id));
                 if (!context.LlmFake && failure.Code is ClaudeFailureCodes.Unauthorized)
                 {
@@ -308,8 +312,10 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
         return strategist;
     }
 
-    private IStrategist Latency(IStrategist inner) =>
-        new SimulatedLatencyStrategist(inner, context.LlmLatencySeconds ?? (context.LlmFake ? FakeLatencySeconds : null));
+    private IStrategist Latency(IStrategist inner) => new SimulatedLatencyStrategist(inner, SimulatedLatencySeconds);
+
+    /// <summary>The fixed game-time latency LLM answers get (<c>--llm-latency</c>, or the fake's default); null for measured latency.</summary>
+    private double? SimulatedLatencySeconds => context.LlmLatencySeconds ?? (context.LlmFake ? FakeLatencySeconds : null);
 
     private void Label(List<string> labels)
     {
