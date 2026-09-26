@@ -124,7 +124,7 @@ public static class ReportBuilder
     {
         sb.AppendLine("## Win rate (arm × split)");
         sb.AppendLine();
-        sb.AppendLine("Distinct games drop repeats of an identical game against a differently named opponent (same arm decision log and outcome on the same map and seed: styles that have not diverged when the match ends); the distinct interval is the one to read. The arm plays Allied on odd seeds and Soviet on even seeds; the fixture is asymmetric, so the faction columns show the mix behind each rate.");
+        sb.AppendLine("Distinct games drop repeats of an identical game (same arm faction, decision log and outcome on the same map): against a differently named opponent whose style had not diverged when the match ended, or on another seed that changed nothing; the distinct interval is the one to read. The arm plays Allied on odd seeds and Soviet on even seeds; the fixture is asymmetric, so the faction columns show the mix behind each rate.");
         sb.AppendLine();
         sb.AppendLine("| Arm | Split | Wins | Losses | Draws | Matches | Win rate | 95% interval (Wilson) | Distinct games | Distinct wins | 95% interval, distinct | As Allied | As Soviet | Eliminations won | Timeouts |");
         sb.AppendLine("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
