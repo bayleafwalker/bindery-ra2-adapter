@@ -7,7 +7,7 @@ public sealed partial class FeatureCompiler
     /// <summary>Confidence above which a stale enemy contact still counts as "present" for map control.</summary>
     private const double PresenceConfidenceThreshold = 0.2;
 
-    private MapControlFeatures CompileMapControl(BeliefSnapshot snapshot, out IReadOnlyDictionary<RegionId, RegionControl> controlByRegion)
+    private MapControlFeatures CompileMapControl(BeliefSnapshot snapshot)
     {
         HashSet<RegionId> ownPresent = [.. snapshot.Own.Select(static e => e.Region)];
         HashSet<RegionId> enemyPresent = [.. snapshot.Enemies
@@ -27,11 +27,13 @@ public sealed partial class FeatureCompiler
                 _ => snapshot.RegionLastSeen.ContainsKey(region.Id) ? RegionControl.Neutral : RegionControl.Unknown,
             };
         }
-        controlByRegion = control;
 
+        // An ore field is taken by the enemy only when it holds an enemy building; a unit passing through makes
+        // the region Enemy-controlled for the moment but does not take the field away as an expansion.
+        HashSet<RegionId> enemyHeld = EnemyBuildingRegions(snapshot);
         List<Region> oreRegions = [.. snapshot.Map.Regions.Where(static r => r.HasOre)];
         List<RegionId> expansionCandidates = [.. oreRegions
-            .Where(r => control[r.Id] != RegionControl.Enemy)
+            .Where(r => !enemyHeld.Contains(r.Id))
             .Select(r => (Region: r, Distance: DistanceFromBase(snapshot, r.Id)))
             .OrderBy(static t => t.Distance)
             .ThenBy(static t => t.Region.Id.Value)
@@ -43,6 +45,12 @@ public sealed partial class FeatureCompiler
 
         return new MapControlFeatures(control, expansionCandidates, ownedOreFraction);
     }
+
+    /// <summary>Regions holding a live enemy building remembered with at least presence confidence.</summary>
+    private static HashSet<RegionId> EnemyBuildingRegions(BeliefSnapshot snapshot) =>
+        [.. snapshot.Enemies
+            .Where(static c => c.Kind == EntityKind.Building && !c.ConfirmedDestroyed && c.Confidence >= PresenceConfidenceThreshold)
+            .Select(static c => c.LastSeenRegion)];
 
     private static List<RegionId> BaseRegions(BeliefSnapshot snapshot) =>
         [.. snapshot.Own.Where(static e => e.Kind == EntityKind.Building).Select(static e => e.Region).Distinct().OrderBy(static r => r.Value)];

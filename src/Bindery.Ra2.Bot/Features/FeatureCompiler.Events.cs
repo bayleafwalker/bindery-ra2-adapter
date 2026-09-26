@@ -83,10 +83,17 @@ public sealed partial class FeatureCompiler
     /// Each is guarded by comparing to the previous compile's remembered
     /// state, so it fires once per genuine change, not once per frame.
     /// </summary>
-    private void DetectStateTransitionEvents(
-        BeliefSnapshot snapshot, EnemyFeatures enemy, Trend armyValueTrend,
-        IReadOnlyDictionary<RegionId, RegionControl> controlByRegion, List<StrategicEvent> events)
+    private void DetectStateTransitionEvents(BeliefSnapshot snapshot, EnemyFeatures enemy, Trend armyValueTrend, List<StrategicEvent> events)
     {
+        // Expansions change hands with buildings, not with whoever walks through: a harvester or a passing scout
+        // flickers region control every few seconds and would re-announce the same field each time.
+        HashSet<RegionId> oreRegions = [.. snapshot.Map.Regions.Where(static r => r.HasOre).Select(static r => r.Id)];
+        HashSet<RegionId> ownExpansions = [.. snapshot.Own
+            .Where(static e => e.Kind == EntityKind.Building)
+            .Select(static e => e.Region)
+            .Where(oreRegions.Contains)];
+        HashSet<RegionId> enemyExpansions = [.. EnemyBuildingRegions(snapshot).Where(oreRegions.Contains)];
+
         if (hasCompiledBefore)
         {
             foreach (string tech in enemy.KnownTech.OrderBy(static t => t, StringComparer.Ordinal))
@@ -111,15 +118,10 @@ public sealed partial class FeatureCompiler
             if (fraction > options.ArmyValueSwingThreshold)
                 EmitGated(events, StrategicEventKind.ArmyValueSwing, snapshot.Time, Math.Min(1.0, fraction), $"{fraction:P0} in 15s");
 
-            foreach (Region region in snapshot.Map.Regions.Where(static r => r.HasOre))
-            {
-                RegionControl current = controlByRegion[region.Id];
-                RegionControl previous = previousOreControl.TryGetValue(region.Id, out RegionControl p) ? p : RegionControl.Unknown;
-                if (previous != RegionControl.Own && current == RegionControl.Own)
-                    AddEvent(events, StrategicEventKind.ExpansionTaken, snapshot.Time, 0.3, "ore region taken", region.Id);
-                else if (previous != RegionControl.Enemy && current == RegionControl.Enemy)
-                    AddEvent(events, StrategicEventKind.EnemyExpansionSeen, snapshot.Time, 0.3, "enemy ore region", region.Id);
-            }
+            foreach (RegionId region in ownExpansions.Where(r => !previousOwnExpansions.Contains(r)).OrderBy(static r => r.Value))
+                AddEvent(events, StrategicEventKind.ExpansionTaken, snapshot.Time, 0.3, "ore region taken", region);
+            foreach (RegionId region in enemyExpansions.Where(r => !previousEnemyExpansions.Contains(r)).OrderBy(static r => r.Value))
+                AddEvent(events, StrategicEventKind.EnemyExpansionSeen, snapshot.Time, 0.3, "enemy ore region", region);
 
             if (snapshot.Power.LowPower)
             {
@@ -134,8 +136,9 @@ public sealed partial class FeatureCompiler
             previousKnownProduction.UnionWith(enemy.KnownProduction);
         }
 
-        previousOreControl.Clear();
-        foreach (Region region in snapshot.Map.Regions.Where(static r => r.HasOre))
-            previousOreControl[region.Id] = controlByRegion[region.Id];
+        previousOwnExpansions.Clear();
+        previousOwnExpansions.UnionWith(ownExpansions);
+        previousEnemyExpansions.Clear();
+        previousEnemyExpansions.UnionWith(enemyExpansions);
     }
 }

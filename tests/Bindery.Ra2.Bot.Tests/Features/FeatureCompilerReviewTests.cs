@@ -145,4 +145,56 @@ public sealed class FeatureCompilerReviewTests
         for (int t = 0; t <= 30; t++) f = compiler.Compile(belief.Apply(Frame(t, 500 - 10 * t, [ConYardAtHome()], queues: queues)));
         Assert.Equal(20.0, f.Economy.CashRunwaySeconds, precision: 6);
     }
+
+    /// <summary>
+    /// A lone enemy unit walking through an ore field is not an enemy expansion, and a harvester coming and going
+    /// is not an expansion taken; neither hides the field from the expansion candidates.
+    /// </summary>
+    [Fact]
+    public void ExpansionEvents_NeedBuildings_NotPassingUnits()
+    {
+        (BeliefModel belief, FeatureCompiler compiler) = New();
+        HashSet<RegionId> homeAndMiddle = [TestMaps.Home, TestMaps.Middle];
+        List<StrategicEvent> events = [];
+        StrategicFeatures f;
+
+        compiler.Compile(belief.Apply(Frame(0, 5000, [ConYardAtHome(), Own(2, "harvester", MiddleCell)], homeAndMiddle)));
+        compiler.Compile(belief.Apply(Frame(1, 5000, [ConYardAtHome(), Own(2, "harvester", MiddleCell)], homeAndMiddle)));
+        f = compiler.Compile(belief.Apply(Frame(2, 5000, [ConYardAtHome(), Own(2, "harvester", HomeCell), Enemy(40, "rifleman", MiddleCell)], homeAndMiddle)));
+        events.AddRange(f.Events);
+        Assert.Contains(TestMaps.Middle, f.MapControl.ExpansionCandidates);
+        for (int t = 3; t <= 31; t++)
+        {
+            Cell harvesterAt = t >= 31 ? MiddleCell : HomeCell;
+            f = compiler.Compile(belief.Apply(Frame(t, 5000, [ConYardAtHome(), Own(2, "harvester", harvesterAt)], new HashSet<RegionId> { TestMaps.Home })));
+            events.AddRange(f.Events);
+        }
+        Assert.DoesNotContain(events, static e => e.Kind is StrategicEventKind.EnemyExpansionSeen or StrategicEventKind.ExpansionTaken);
+
+        // An enemy refinery is an enemy expansion (once), and the field stops being a candidate.
+        events.Clear();
+        for (int t = 32; t <= 36; t++)
+        {
+            f = compiler.Compile(belief.Apply(Frame(t, 5000, [ConYardAtHome(), Enemy(60, "refinery", MiddleCell)], homeAndMiddle)));
+            events.AddRange(f.Events);
+        }
+        Assert.Single(events, static e => e.Kind == StrategicEventKind.EnemyExpansionSeen && e.Region == TestMaps.Middle);
+        Assert.DoesNotContain(TestMaps.Middle, f.MapControl.ExpansionCandidates);
+    }
+
+    [Fact]
+    public void ExpansionTaken_FiresOnceForAnOwnBuildingInAnOreRegion()
+    {
+        (BeliefModel belief, FeatureCompiler compiler) = New();
+        List<StrategicEvent> events = [];
+        compiler.Compile(belief.Apply(Frame(0, 5000, [ConYardAtHome()])));
+        for (int t = 1; t <= 10; t++)
+        {
+            // A harvester flickering in and out beside the refinery does not re-fire the event.
+            List<ObservedEntity> entities = [ConYardAtHome(), Own(5, "refinery", MiddleCell)];
+            if (t % 2 == 0) entities.Add(Own(6, "harvester", MiddleCell));
+            events.AddRange(compiler.Compile(belief.Apply(Frame(t, 5000, entities, new HashSet<RegionId> { TestMaps.Home, TestMaps.Middle }))).Events);
+        }
+        Assert.Single(events, static e => e.Kind == StrategicEventKind.ExpansionTaken && e.Region == TestMaps.Middle);
+    }
 }

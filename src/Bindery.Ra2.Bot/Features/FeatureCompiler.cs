@@ -41,7 +41,10 @@ public sealed partial class FeatureCompiler : IFeatureCompiler
     private readonly Dictionary<(StrategicEventKind Kind, RegionId? Region), GameTime> lastEmitted = [];
     private readonly HashSet<string> allSeenTechEver = new(StringComparer.Ordinal);
     private readonly HashSet<string> previousKnownProduction = new(StringComparer.Ordinal);
-    private readonly Dictionary<RegionId, RegionControl> previousOreControl = [];
+    /// <summary>Ore regions held by an own building at the previous compile, for <see cref="StrategicEventKind.ExpansionTaken"/>.</summary>
+    private readonly HashSet<RegionId> previousOwnExpansions = [];
+    /// <summary>Ore regions holding a remembered enemy building at the previous compile, for <see cref="StrategicEventKind.EnemyExpansionSeen"/>.</summary>
+    private readonly HashSet<RegionId> previousEnemyExpansions = [];
     private readonly Dictionary<string, int> enemySuperweaponsSeen = new(StringComparer.Ordinal);
 
     private string? cachedMapId;
@@ -84,7 +87,7 @@ public sealed partial class FeatureCompiler : IFeatureCompiler
             CompileArmy(snapshot);
 
         EnemyFeatures enemy = CompileEnemy(snapshot, out double enemyArmyValueCurrent);
-        MapControlFeatures mapControl = CompileMapControl(snapshot, out IReadOnlyDictionary<RegionId, RegionControl> controlByRegion);
+        MapControlFeatures mapControl = CompileMapControl(snapshot);
         ScoutingFeatures scouting = CompileScouting(snapshot, enemy);
         EconomyFeatures economy = CompileEconomy(snapshot, out double incomePerMinuteCurrent, out double spendingPerMinuteCurrent);
 
@@ -108,7 +111,7 @@ public sealed partial class FeatureCompiler : IFeatureCompiler
             snapshot.Time, snapshot.Credits, incomePerMinuteCurrent, spendingPerMinuteCurrent,
             armyValueCurrent, cumulativeLossesValue, cumulativeKillsValue, enemyArmyValueCurrent));
 
-        DetectStateTransitionEvents(snapshot, enemyWithTrend, armyValueTrend, controlByRegion, events);
+        DetectStateTransitionEvents(snapshot, enemyWithTrend, armyValueTrend, events);
         events.Sort(static (a, b) =>
         {
             int byTime = a.Time.CompareTo(b.Time);
