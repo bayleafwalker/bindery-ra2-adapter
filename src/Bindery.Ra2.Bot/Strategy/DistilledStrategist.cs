@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using System.Globalization;
+using Bindery.Ra2.Bot.Arbitration;
 namespace Bindery.Ra2.Bot.Strategy;
 
 /// <summary>Training and escalation settings for <see cref="DistilledStrategist"/>.</summary>
@@ -113,6 +114,18 @@ public sealed class DistilledStrategist : IStrategist, Runtime.IFrameAwareStrate
         StrategicFeatures features = context.Features;
         Personalities.TryGet(context.Personality, out PersonalityProfile? personality);
         string? preferred = personality is not null && personality.PreferredPlaybook.TryGetValue(features.Faction, out string? p) ? p : null;
+
+        // A personality's defence threshold holds in every deterministic strategist (the selector and the bandit
+        // apply it too). Without a personality the model decides, as its teacher did.
+        double threat = ConditionEvaluator.BaseThreatRatio(features);
+        if (personality is not null && threat >= personality.DefendThreatRatio && context.Playbooks.TryGet("generic-defend", out Playbook defend))
+        {
+            LastEscalationReason = null;
+            StrategicIntent guard = IntentComposer.Compose(defend, features, $"{Id}/{features.SnapshotVersion}", Source, 0.9,
+                StrategyRationale.Explain(defend.Id, string.Create(CultureInfo.InvariantCulture, $"model not consulted: base threat ratio {threat:0.00} is at personality {personality.Id}'s defence threshold {personality.DefendThreatRatio:0.00}"), features));
+            return Task.FromResult<StrategistProposal?>(new StrategistProposal(guard, new ProposalCost(0, 0, 0, 0, null), null));
+        }
+
         double[] x = FeatureVector.Encode(features);
         string? escalate = null;
         (string PlaybookId, double Probability)? best = null;

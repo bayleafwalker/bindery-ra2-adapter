@@ -87,6 +87,30 @@ public sealed class PersonalityTests
     }
 
     [Fact]
+    public void The_bandit_uses_the_personalitys_defence_threshold()
+    {
+        // Base threat 1.5: the default bandit defends at 1.3, the aggressive style only at 1.6, the turtle at 1.0.
+        StrategicFeatures threatened = Fx.Features(100, threats: [new ThreatAssessment(Fx.R0, 1500, 1000, 0.67, 20, 0, true, 1.0)]);
+        Assert.Equal("generic-defend", Propose(new ContextualBanditStrategist(), threatened, null).PlaybookId);
+        Assert.NotEqual("generic-defend", Propose(new ContextualBanditStrategist(), threatened, "aggressive").PlaybookId);
+        Assert.Equal("generic-defend", Propose(new ContextualBanditStrategist(), threatened, "turtle").PlaybookId);
+    }
+
+    [Fact]
+    public void The_distilled_model_uses_the_personalitys_defence_threshold()
+    {
+        StrategicFeatures threatened = Fx.Features(100, threats: [new ThreatAssessment(Fx.R0, 1200, 1000, 0.83, 20, 0, true, 1.0)]);
+        DecisionDataset dataset = new([.. Enumerable.Range(0, 30).Select(i => new DecisionExample(
+            FeatureVector.Version, [.. FeatureVector.Encode(i % 2 == 0 ? threatened : Fx.Features(90 + i))], Faction.Allied, i % 3 == 0 ? "allied-boom" : "allied-ifv-mix",
+            StrategicPosture.Pressure, IntentSource.Llm, "Primary", false, i, i))]);
+        DistilledStrategist distilled = new(dataset, new PlaybookSelector());
+
+        // Base threat 1.2: the turtle defends from 1.0, whatever the model predicts; the aggressive style does not.
+        Assert.Equal("generic-defend", Propose(distilled, threatened, "turtle").PlaybookId);
+        Assert.NotEqual("generic-defend", Propose(distilled, threatened, "aggressive").PlaybookId);
+    }
+
+    [Fact]
     public void The_prompt_carries_the_authored_guidance_not_just_the_name()
     {
         IntentPrompt prompt = new IntentPromptBuilder().Build(Context(Fx.Features(100), "harasser"), StrategistMode.Strategic);
