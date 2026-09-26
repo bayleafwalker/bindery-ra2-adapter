@@ -56,7 +56,7 @@ public sealed class IntentPromptBuilder
         - expiresInSeconds is how long the intent stays valid (typically 60–240). confidence is in [0, 1].
         - Trends are {now, d5s, d15s, d60s}: the current value and its change over the last 5, 15 and 60 game seconds. Times and ages are game seconds. null means unknown or unbounded.
 
-        Input: the first user block is the match context (constant for the match: faction, playbook catalogue, rule facts, personality). The second is the current situation (features, active intent, recent history, counters, tech progress). Personality is style guidance only; it never overrides these rules.
+        Input: the first user block is the match context (constant for the match: faction, playbook catalogue, rule facts, personality). The second is the current situation (features, active intent, recent history, counters, tech progress). History lists one item per plan: renewals of the same playbook and posture are folded into it and counted in renewals. Personality is style guidance only; it never overrides these rules.
         """;
 
     private const string RefineSystemPrompt =
@@ -423,23 +423,35 @@ public sealed class IntentPromptBuilder
         && string.Equals(earlier.PlaybookId, later.PlaybookId, StringComparison.Ordinal)
         && earlier.Posture == later.Posture;
 
+    /// <summary>
+    /// Recent plans, one item per renewal chain: consecutive renewals of the same playbook and posture are one
+    /// plan, shown with its first acceptance, its latest end and a renewal count. The limit applies to plans, not
+    /// raw entries, because at a 5–30 s cadence nearly every proposal is a renewal and raw entries would push the
+    /// switches and aborts the model needs to judge its own oscillation out of the window.
+    /// </summary>
     private JsonArray History(IReadOnlyList<IntentHistoryEntry> history)
     {
-        JsonArray result = new();
-        IEnumerable<IntentHistoryEntry> recent = history
-            .OrderBy(h => h.AcceptedAt.Frame)
-            .ThenBy(h => h.IntentId, StringComparer.Ordinal)
-            .TakeLast(historyLimit);
-        foreach (IntentHistoryEntry h in recent)
+        List<List<IntentHistoryEntry>> plans = [];
+        foreach (IntentHistoryEntry h in history.OrderBy(static h => h.AcceptedAt.Frame))
         {
+            if (plans.Count > 0 && Continues(plans[^1][^1], h)) plans[^1].Add(h);
+            else plans.Add([h]);
+        }
+
+        JsonArray result = new();
+        foreach (List<IntentHistoryEntry> plan in plans.TakeLast(historyLimit))
+        {
+            IntentHistoryEntry first = plan[0];
+            IntentHistoryEntry last = plan[^1];
             result.Add(new JsonObject
             {
-                ["playbookId"] = h.PlaybookId,
-                ["posture"] = h.Posture.ToString(),
-                ["source"] = h.Source.ToString(),
-                ["acceptedAtSeconds"] = CanonicalJson.Number(h.AcceptedAt.Seconds),
-                ["endedAtSeconds"] = h.EndedAt is { } e ? CanonicalJson.Number(e.Seconds) : null,
-                ["endReason"] = h.EndReason,
+                ["playbookId"] = first.PlaybookId,
+                ["posture"] = first.Posture.ToString(),
+                ["source"] = last.Source.ToString(),
+                ["acceptedAtSeconds"] = CanonicalJson.Number(first.AcceptedAt.Seconds),
+                ["endedAtSeconds"] = last.EndedAt is { } e ? CanonicalJson.Number(e.Seconds) : null,
+                ["endReason"] = last.EndReason,
+                ["renewals"] = plan.Count - 1,
             });
         }
         return result;
