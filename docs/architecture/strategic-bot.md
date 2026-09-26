@@ -367,4 +367,19 @@ Gaps an operator review found after integration, and how each was closed.
   19, turtle 33, tech 20, harasser 24 of 50. The fake `llm` styles are less
   distinct (playbook JSD 0.05–0.58): its policy only consults the style after
   its opening push.
+- **Runs after round 1** (fake client throughout; no live model was run).
+  The original command (`--arms all --maps all --opponents
+  ai-balanced,rush,tech --seeds 2 --llm-fake`) still has every arm winning
+  30/30, and the report now says the benchmark is saturated; the `llm` arm plays
+  its own playbooks there (armour timing, 2.6 more activations per 10 min) but
+  the outcome cannot move. Contested (`--arms all --maps all --benchmark
+  contested --seeds 4 --llm-fake`, 100 matches per arm, paired against the
+  selector's 49/100): bandit 73 (score +0.24 [0.13, 0.35], 30/6 pairs,
+  Holm p 0.0008; it learns across the run), `llm-shadow` 49 (plays the
+  selector; shadow agreed on the playbook 1,395/2,900 = 0.48), `llm` 37
+  (−0.12 [−0.21, −0.02]), `llm+fast` 39, distilled 40 (5 escalations in 3,200
+  decisions, $0.0016 per match against the teacher's $0.97). Sample replays of
+  one match per LLM, bandit and distilled arm from that run all gave equal
+  hashes with no missing recordings. The decision logs of 600 matches take
+  272 MB (`--no-decisions` for large runs).
 
