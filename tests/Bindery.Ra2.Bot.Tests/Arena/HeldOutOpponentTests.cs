@@ -100,6 +100,8 @@ public sealed class HeldOutOpponentTests : IDisposable
         Assert.Contains("live-rush", dataset, StringComparison.Ordinal);
         string report = File.ReadAllText(Path.Combine(dir, "report.md"));
         Assert.Contains("## Held-out opponents", report, StringComparison.Ordinal);
+        // The report must not present the selector's held-out rate as untouched: the opponents were calibrated on it.
+        Assert.Contains("partly by construction", report, StringComparison.Ordinal);
         Assert.Contains("| selector | heldout | all |", report, StringComparison.Ordinal);
         Assert.Contains("| selector | training | training |", report, StringComparison.Ordinal);
         Assert.Contains("### Paired differences vs selector, held-out opponents only", report, StringComparison.Ordinal);

@@ -7,15 +7,19 @@ namespace Bindery.Ra2.Bot.Arena;
 /// The arena's opponent split. Training opponents may inform anything: the selector's default playbook (chosen
 /// against the pinned styles), bandit learning, distillation datasets and the tuner. Held-out opponents
 /// (<see cref="HeldOut"/>) are for evaluation only: the arena never credits the bandit with a match against one,
-/// never puts one in a distillation dataset or teacher run, and the tuner refuses them, so a win rate against them
-/// is an out-of-sample result in opponent as well as in map.
+/// never puts one in a distillation dataset or teacher run, and the tuner refuses them, so nothing the bot learns
+/// or is tuned on has seen them. They are not untouched, though: see the remarks.
 /// </summary>
 /// <remarks>
 /// Every held-out opponent is an independent scripted AI style (<see cref="OpponentProfiles.HeldOutStyles"/>), not
 /// the bot's own stack, and was calibrated to win some games: on the contested benchmark, all five maps, the
 /// selector won 24 of 40 against <c>ai-horde</c> (8 seeds) and 11 of 20 against <c>ai-armor</c> (4 seeds), both
-/// on 2026-09-26. The training <c>ai-*</c> styles and frozen pinned styles lose every contested game, and the
-/// <c>live-*</c> styles run the bot's own planner, so neither can serve as held-out evidence.
+/// on 2026-09-26. That calibration (like the contested benchmark's Allied credits) targeted the selector's own win
+/// rate on every map, held-out maps included, so a selector win rate near one half against them is partly by
+/// construction: it is out of sample for learning and tuning, not for calibration, and is evidence about other
+/// arms relative to the selector more than about the selector itself. The training <c>ai-*</c> styles and frozen
+/// pinned styles lose every contested game, and the <c>live-*</c> styles run the bot's own planner, so neither can
+/// serve as held-out evidence.
 /// </remarks>
 public static class OpponentSets
 {

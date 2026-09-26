@@ -212,7 +212,11 @@ Recorded when the eight work packages were merged into `feat/strategic-bot`.
   seeds, 40 matches per arm, `--llm-fake`): selector 24/40 (0.60), bandit 21,
   llm-shadow 24, llm 22, llm+fast 20, distilled 27; the training `ai-*` and
   frozen pinned styles lose every contested game, which is why they cannot
-  serve as the held-out set.
+  serve as the held-out set. That calibration, like the contested benchmark's
+  Allied credits and `ai-armor`'s income handicap, targeted the selector's win
+  rate on all five maps, held-out maps included: the held-out opponents are out
+  of sample for learning and tuning, not for calibration, and a selector win
+  rate near one half against them is partly by construction.
 - **Arena datasets** (`dataset-<arm>.ndjson`) contain training-map decisions
   against training opponents only, so a distilled arm is never trained on the
   maps or opponents it is evaluated on. The distilled arm's teacher always plays
