@@ -85,12 +85,24 @@ public sealed class IntentPromptBuilder
         this.countersPerType = countersPerType;
     }
 
-    /// <summary>The byte-stable system prompt for a mode. It never contains per-call data.</summary>
-    public static string SystemPrompt(StrategistMode mode) =>
-        mode == StrategistMode.Refine ? CommonSystemPrompt + RefineSystemPrompt : CommonSystemPrompt;
+    /// <summary>The byte-stable system prompt for a mode and vocabulary tier. It never contains per-call data.</summary>
+    public static string SystemPrompt(StrategistMode mode, VocabularyTier tier = VocabularyTier.Full)
+    {
+        string common = CommonSystemPrompt + TierSystemPrompt(tier);
+        return mode == StrategistMode.Refine ? common + RefineSystemPrompt : common;
+    }
+
+    /// <summary>Which fields take effect at a tier, stated to the model so it spends its reasoning where it counts.</summary>
+    private static string TierSystemPrompt(VocabularyTier tier) => "\n\nVocabulary tier: " + tier + ". " + tier switch
+    {
+        VocabularyTier.PlaybookOnly => "Only playbookId, confidence, expiresInSeconds, assumptions and rationale take effect; every other field is replaced by the chosen playbook's defaults (objectives are derived from its posture). Still fill every field the schema requires.",
+        VocabularyTier.Parameters => "playbookId and the playbook's parameters take effect, with confidence, expiresInSeconds, assumptions and rationale; posture, objectives, budget, composition, regions and conditions are replaced by the chosen playbook's defaults. Still fill every field the schema requires.",
+        VocabularyTier.ObjectivesAndRegions => "playbookId, parameters, objectives and regionsOfInterest take effect, with confidence, expiresInSeconds, assumptions and rationale; posture, budget, composition and conditions are replaced by the chosen playbook's defaults. Still fill every field the schema requires.",
+        _ => "Every field takes effect.",
+    };
 
     /// <param name="fallbackPersonality">Used when the context carries no personality of its own.</param>
-    public IntentPrompt Build(StrategistContext context, StrategistMode mode, string? fallbackPersonality = null)
+    public IntentPrompt Build(StrategistContext context, StrategistMode mode, string? fallbackPersonality = null, VocabularyTier tier = VocabularyTier.Full)
     {
         JsonObject match = new()
         {
@@ -107,7 +119,7 @@ public sealed class IntentPromptBuilder
             ["history"] = History(context.History),
             ["techProgress"] = TechProgress(context),
         };
-        return new IntentPrompt(SystemPrompt(mode), CanonicalJson.Serialize(match), CanonicalJson.Serialize(situation));
+        return new IntentPrompt(SystemPrompt(mode, tier), CanonicalJson.Serialize(match), CanonicalJson.Serialize(situation));
     }
 
     private static IReadOnlyList<Playbook> FactionPlaybooks(StrategistContext context) =>

@@ -24,6 +24,13 @@ public sealed record ClaudeStrategistOptions
 
     public StrategistMode Mode { get; init; } = StrategistMode.Strategic;
 
+    /// <summary>
+    /// Which intent fields the model's answer may set (<see cref="VocabularyTier"/>); the rest come from the chosen
+    /// playbook. Defaults to the tier adopted in the embedded record (<see cref="VocabularyAdoption.Embedded"/>),
+    /// which is <see cref="VocabularyTier.Parameters"/> until a live held-out test justifies more.
+    /// </summary>
+    public VocabularyTier Vocabulary { get; init; } = VocabularyAdoption.Embedded.AdoptedTier;
+
     /// <summary>Model id; null picks <see cref="DefaultStrategicModel"/> or <see cref="DefaultRefineModel"/> by <see cref="Mode"/>.</summary>
     public string? Model { get; init; }
 

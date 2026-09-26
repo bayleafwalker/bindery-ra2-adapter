@@ -45,6 +45,7 @@ public static class ReportBuilder
         AppendCommands(sb, matches);
         AppendInferenceCost(sb, matches);
         AppendDistillation(sb, matches);
+        AppendTiers(sb, matches, options);
         AppendLeakage(sb, matches, probes);
         return sb.ToString();
     }
@@ -220,6 +221,24 @@ public static class ReportBuilder
             string teacherCost = teacher.Count == 0 ? "n/a (not in this run)" : $"${F(teacher.Average(static t => t.Usd), "0.0000")}";
             sb.AppendLine($"| {group.Key} | {decisions} | {escalations}/{decisions} ({Rate(escalations, decisions)}) | ${F(arm.Average(static a => a.Usd), "0.0000")} | {teacherCost} |");
         }
+        sb.AppendLine();
+    }
+
+    /// <summary>Build step 6: each tier arm against the tier below it, pair by pair, and the adoption rule's verdict.</summary>
+    private static void AppendTiers(StringBuilder sb, IReadOnlyList<MatchRecord> matches, CliOptions options)
+    {
+        HashSet<string> present = [.. matches.Select(static m => m.Arm)];
+        if (present.Count(BotAgentFactory.TierArms.ContainsKey) < 2) return;
+        Dictionary<string, string> below = BotAgentFactory.TierArms
+            .Where(p => p.Value != Claude.VocabularyTier.PlaybookOnly)
+            .ToDictionary(p => p.Key, p => BotAgentFactory.TierArms.Single(q => q.Value == p.Value - 1).Key);
+        PairedReport.Append(sb, matches, options.Baseline, "## Vocabulary tiers (build step 6)",
+            baselineFor: arm => below.TryGetValue(arm, out string? lower) && present.Contains(lower) ? lower : null);
+        Claude.VocabularyAdoption adoption = Program.TierAdoption(matches, live: !options.LlmFake, null);
+        sb.AppendLine($"Adoption rule: {adoption.Rule}");
+        sb.AppendLine();
+        sb.AppendLine($"Adopted tier: {adoption.AdoptedTier}{(options.LlmFake ? " (fake client: these results measure the pipeline, never evidence for adoption)" : string.Empty)}.");
+        foreach (string reason in adoption.Reasons) sb.AppendLine($"- {reason}");
         sb.AppendLine();
     }
 

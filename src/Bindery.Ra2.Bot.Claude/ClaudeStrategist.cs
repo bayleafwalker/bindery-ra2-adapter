@@ -142,7 +142,7 @@ public sealed class ClaudeStrategist : IStrategist
     public ModelRequest BuildRequest(StrategistContext context)
     {
         string model = options.ResolvedModel;
-        IntentPrompt prompt = promptBuilder.Build(context, options.Mode, options.Personality);
+        IntentPrompt prompt = promptBuilder.Build(context, options.Mode, options.Personality, options.Vocabulary);
         return new ModelRequest(
             Model: model,
             SystemPrompt: prompt.SystemPrompt,
@@ -258,6 +258,11 @@ public sealed class ClaudeStrategist : IStrategist
                     raw);
             }
             intent = Refined(active, intent);
+        }
+        else
+        {
+            // Fields above the strategist's vocabulary tier come from the chosen playbook (build step 6).
+            intent = IntentVocabulary.Restrict(intent, options.Vocabulary, context.Playbooks, features).Intent;
         }
 
         lock (gate)

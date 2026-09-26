@@ -22,7 +22,8 @@ public sealed record CliOptions(
     public const string Usage =
         "Usage: arena run --arms a,b --maps training|heldout|all --opponents ai-rush,ai-balanced[:easy|:medium|:hard],rush,turtle,...|all --seeds N --out <dir> " +
         "[--oracle [both|all]] [--llm-fake] [--max-seconds N] [--dataset <decisions.ndjson>] [--llm-latency <game seconds>] [--trace <dir>] " +
-        "[--benchmark standard|contested] [--opponent-income X] [--opponent-credits N] [--combat-noise F] [--allied-income X] [--allied-credits N] [--baseline <arm>] [--no-decisions]\n" +
+        "[--benchmark standard|contested] [--opponent-income X] [--opponent-credits N] [--combat-noise F] [--allied-income X] [--allied-credits N] [--baseline <arm>] [--no-decisions] [--write-adoption <path>]\n" +
+        "       (arms: selector, bandit, llm-shadow, llm, llm+fast, distilled, llm-t0..llm-t3 or tiers, all; any with -oracle)\n" +
         "       arena replay <out>/decisions/<match>.ndjson [--out <replayed.ndjson>]\n" +
         "       arena analyze <out>/decisions/<match>.ndjson [--out <report.md>] [--narrate] [--llm-fake]";
 
@@ -31,6 +32,9 @@ public sealed record CliOptions(
 
     /// <summary>The arm every other arm is compared with, pair by pair, in the report.</summary>
     public string Baseline { get; init; } = "selector";
+
+    /// <summary>Also write the run's <c>vocabulary-adoption.json</c> here (for example the embedded record in the Claude project).</summary>
+    public string? WriteAdoption { get; init; }
 
     /// <summary>Write each arm match's decision log and manifest into <c>&lt;out&gt;/decisions/</c> (for <c>arena replay</c> and <c>arena analyze</c>).</summary>
     public bool WriteDecisions { get; init; } = true;
@@ -91,6 +95,7 @@ public sealed record CliOptions(
         int? alliedCredits = null;
         string baseline = "selector";
         bool writeDecisions = true;
+        string? writeAdoption = null;
 
         for (int i = 1; i < args.Count; i++)
         {
@@ -125,6 +130,7 @@ public sealed record CliOptions(
                 case "--allied-credits": alliedCredits = int.Parse(Next(args, ref i), CultureInfo.InvariantCulture); break;
                 case "--baseline": baseline = Next(args, ref i); break;
                 case "--no-decisions": writeDecisions = false; break;
+                case "--write-adoption": writeAdoption = Next(args, ref i); break;
                 default: throw new ArgumentException($"Unknown argument '{args[i]}'.");
             }
         }
@@ -143,13 +149,19 @@ public sealed record CliOptions(
         }
         opponents ??= benchmark.DefaultOpponents is { } preset ? [.. preset] : ["balanced"];
         if (opponents.Count == 1 && opponents[0] == "all") opponents = [.. BotAgentFactory.AllOpponents];
-        if (arms.Count == 1 && arms[0] == "all") arms = [.. BotAgentFactory.Arms];
+        arms = [.. arms.SelectMany(static a => a switch
+        {
+            "all" => BotAgentFactory.Arms,
+            "tiers" => (IEnumerable<string>)BotAgentFactory.TierArms.Keys,
+            _ => [a],
+        }).Distinct(StringComparer.Ordinal)];
         return new CliOptions(arms, mapSplit, opponents, seeds, outDir, oracle, llmFake, maxSeconds, dataset, llmLatency, traceDir)
         {
             Benchmark = benchmark,
             Baseline = baseline,
             OracleMode = oracleMode,
             WriteDecisions = writeDecisions,
+            WriteAdoption = writeAdoption,
         };
     }
 

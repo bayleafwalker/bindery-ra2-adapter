@@ -94,7 +94,8 @@ a contract change records it in its report instead of editing the file.
 | `selector` | `PlaybookSelector` | baseline |
 | `bandit` | `ContextualBanditStrategist` | learns across matches within a run |
 | `llm-shadow` | `PlaybookSelector` active, `ClaudeStrategist` shadow | step 4 |
-| `llm` | `ClaudeStrategist`, selector fallback | step 5 |
+| `llm` | `ClaudeStrategist` at the adopted vocabulary tier, selector fallback | step 5 |
+| `llm-t0` … `llm-t3` | `ClaudeStrategist` at `PlaybookOnly`, `Parameters`, `ObjectivesAndRegions`, `Full` | step 6; `--arms tiers`; adoption rule in the report and `vocabulary-adoption.json` |
 | `llm+fast` | `llm` plus `ClaudeStrategist(Mode=Refine, claude-haiku-4-5)` at 5 s | comparison only |
 | `distilled` | `DistilledStrategist` over a dataset from `llm` runs, escalating to `ClaudeStrategist` | step 7; escalation rate and cost per match in the report |
 | `*-oracle` | any arm with oracle frames | diagnostic; labelled; `--arms x,x-oracle` or `--oracle both` runs both on the same jobs and reports belief − oracle per metric |
@@ -326,4 +327,25 @@ Gaps an operator review found after integration, and how each was closed.
   and the evidence (`StrategyRationale`: time, base threat, army ratio with the
   estimate and its confidence, refineries, harvesters, scouting). The run report
   shows shadow agreement next to the shadow proposal count.
+- **Vocabulary tiers (build step 6).** The LLM could set every intent field with
+  no measured justification. `ClaudeStrategistOptions.Vocabulary` now names a
+  tier: `PlaybookOnly` (the choice, confidence, expiry, assumptions,
+  rationale), `Parameters` (+ playbook parameters), `ObjectivesAndRegions`
+  (+ objectives, regions of interest), `Full` (+ posture, budget, composition,
+  conditions). `IntentVocabulary.Restrict` replaces fields above the tier with
+  the playbook's defaults and posture-derived objectives (`IntentComposer`, as
+  the deterministic strategists do) before validation, and the system prompt
+  states the tier. The default is the tier adopted in the embedded
+  `vocabulary-adoption.json`, `Parameters` (step 5's authority), since no live
+  held-out comparison exists yet. `VocabularyAdoption.AdoptionRule`: a wider
+  tier is adopted only if the tier below is adopted and, on held-out maps, a
+  live-model paired comparison against it shows more pairs won than lost, sign
+  p < 0.05 and a score interval above 0. Arena arms `llm-t0`…`llm-t3`; the
+  report adds per-pair tables of each tier against the one below and the
+  verdict; the run writes `vocabulary-adoption.json` (`--write-adoption` to
+  update the embedded record). First fake run (contested, all maps, 4 seeds, 100
+  pairs per comparison): t0 39, t1 37, t2 25, t3 32 wins of 100; t2 vs t1 score
+  −0.12 [−0.23, 0], 12/24 pairs better/worse (p 0.065); verdict `Parameters`
+  (fake evidence never counts). Note that the plain `llm` arm now runs at
+  `Parameters`; the `llm` figures earlier in this record were at `Full`.
 

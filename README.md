@@ -201,6 +201,16 @@ approximate `bindery-sim-approx` fixture is committed.
 
 ### LLM arms
 
+What the LLM may decide comes in vocabulary tiers (`VocabularyTier`:
+`PlaybookOnly`, `Parameters`, `ObjectivesAndRegions`, `Full`); fields above a
+strategist's tier are replaced by the playbook's defaults. The default is the
+tier adopted in `src/Bindery.Ra2.Bot.Claude/Data/vocabulary-adoption.json`,
+which is `Parameters` (select and parameterise) until a live held-out run shows
+a wider tier wins: `--arms tiers` runs `llm-t0`…`llm-t3`, the report compares
+each with the tier below pair by pair, and the run writes
+`vocabulary-adoption.json` (`--write-adoption <path>` writes it elsewhere, for
+example over the embedded record). Fake-client runs are never evidence.
+
 The `llm`, `llm-shadow` and `llm+fast` arena arms (`src/Bindery.Ra2.Bot.Claude`)
 need `ANTHROPIC_API_KEY` in the environment, or a resolvable `ant auth`
 profile. Without either, those arms are skipped with a recorded reason; pass

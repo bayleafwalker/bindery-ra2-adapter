@@ -92,7 +92,7 @@ public static class Program
         BotAgentFactory factory = new(rules, playbooks, context);
         foreach (ArmSpec arm in options.ArmSpecs())
         {
-            if (!BotAgentFactory.Arms.Contains(arm.Name)) throw new ArgumentException($"Unknown arm '{arm.Name}'. Arms: {string.Join(", ", BotAgentFactory.Arms)} (any with a -oracle suffix).");
+            if (!BotAgentFactory.IsArm(arm.Name)) throw new ArgumentException($"Unknown arm '{arm.Name}'. Arms: {string.Join(", ", BotAgentFactory.Arms.Concat(BotAgentFactory.TierArms.Keys))} (any with a -oracle suffix).");
         }
         foreach (string opponent in options.Opponents)
         {
@@ -198,9 +198,41 @@ public static class Program
         File.WriteAllText(Path.Combine(options.OutDir, "results.json"), JsonSerializer.Serialize(ordered, indented));
         File.WriteAllText(Path.Combine(options.OutDir, "probes.json"), JsonSerializer.Serialize(new { probes, skipped }, indented));
         File.WriteAllText(Path.Combine(options.OutDir, "report.md"), ReportBuilder.Build(ordered, probes, skipped, options, rules.RulesetId));
+        if (ordered.Count(static m => BotAgentFactory.TierArms.ContainsKey(m.Arm)) > 0)
+        {
+            string adoption = TierAdoption(ordered, live: !options.LlmFake, DateTime.UtcNow.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)).ToJson() + "\n";
+            File.WriteAllText(Path.Combine(options.OutDir, "vocabulary-adoption.json"), adoption);
+            if (options.WriteAdoption is { } target) File.WriteAllText(target, adoption);
+        }
 
         Console.WriteLine($"Wrote {ordered.Count} match results, {probes.Count} leakage probes and report.md to {options.OutDir} in {wall.Elapsed.TotalSeconds:0}s.");
     }
+
+    /// <summary>
+    /// The adoption rule (<see cref="VocabularyAdoption.Decide"/>) applied to a run's tier arms: for each tier arm and
+    /// the tier arm below it, the paired match-score comparison on each split (only held-out counts for adoption).
+    /// <paramref name="live"/> is false for <c>--llm-fake</c> runs, whose evidence never adopts anything.
+    /// </summary>
+    public static VocabularyAdoption TierAdoption(IReadOnlyList<MatchRecord> matches, bool live, string? date)
+    {
+        ArgumentNullException.ThrowIfNull(matches);
+        List<TierEvidence> evidence = [];
+        foreach ((string arm, VocabularyTier tier) in BotAgentFactory.TierArms)
+        {
+            if (tier == VocabularyTier.PlaybookOnly) continue;
+            string below = BotAgentFactory.TierArms.Single(p => p.Value == tier - 1).Key;
+            foreach (string split in new[] { "heldout", "training" })
+            {
+                IReadOnlyList<(MatchRecord Baseline, MatchRecord Arm)> pairs = PairedReport.Pairs(matches, below, arm, split);
+                if (pairs.Count == 0) continue;
+                PairedDifference d = PairedStatistics.Compare("score", [.. pairs.Select(static p => (Score(p.Baseline), Score(p.Arm)))], higherIsBetter: true);
+                evidence.Add(new TierEvidence(tier, tier - 1, split, d.Pairs, d.BaselineMean, d.ArmMean, d.MeanDifference, d.CiLow, d.CiHigh, d.Better, d.Worse, d.Ties, d.SignTestP, live));
+            }
+        }
+        return VocabularyAdoption.Decide(evidence, date);
+    }
+
+    private static double Score(MatchRecord m) => m.Winner switch { 0 => 1.0, null => 0.5, _ => 0.0 };
 
     /// <summary>
     /// The arm whose decisions teach the distilled arm: the run's own belief-frame <c>llm</c> arm when there is one

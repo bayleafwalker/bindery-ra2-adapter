@@ -96,6 +96,21 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
     public static IReadOnlyList<string> Arms { get; } = ["selector", "bandit", "llm-shadow", "llm", "llm+fast", "distilled"];
 
     /// <summary>
+    /// One <c>llm</c> arm per vocabulary tier (build step 6), for the paired comparisons the adoption rule reads;
+    /// <c>--arms tiers</c> runs all four. The plain <c>llm</c> arm uses the adopted tier.
+    /// </summary>
+    public static IReadOnlyDictionary<string, VocabularyTier> TierArms { get; } = new SortedDictionary<string, VocabularyTier>(StringComparer.Ordinal)
+    {
+        ["llm-t0"] = VocabularyTier.PlaybookOnly,
+        ["llm-t1"] = VocabularyTier.Parameters,
+        ["llm-t2"] = VocabularyTier.ObjectivesAndRegions,
+        ["llm-t3"] = VocabularyTier.Full,
+    };
+
+    /// <summary>True for an arm name the arena can run (a <see cref="Arms"/> entry or a <see cref="TierArms"/> entry).</summary>
+    public static bool IsArm(string name) => Arms.Contains(name) || TierArms.ContainsKey(name);
+
+    /// <summary>
     /// Every opponent name <c>--opponents all</c> expands to: the independent scripted AI styles at hard difficulty
     /// first, then the pinned-playbook styles (which run the bot's own planner and are kept for comparison).
     /// </summary>
@@ -189,6 +204,10 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
                 case "llm":
                     primary = Llm(StrategistMode.Strategic, claude, labels);
                     break;
+                case var tierArm when TierArms.TryGetValue(tierArm, out VocabularyTier tier):
+                    primary = Llm(StrategistMode.Strategic, claude, labels, tier);
+                    labels.Add($"vocabulary:{tier}");
+                    break;
                 case "llm+fast":
                     IStrategist slow = Unwrapped(StrategistMode.Strategic, claude);
                     IStrategist fast = Unwrapped(StrategistMode.Refine, claude);
@@ -239,16 +258,17 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
         return Math.Clamp(result + 0.5 * margin, -1, 1);
     }
 
-    private IStrategist Llm(StrategistMode mode, List<ClaudeStrategist> claude, List<string> labels)
+    private IStrategist Llm(StrategistMode mode, List<ClaudeStrategist> claude, List<string> labels, VocabularyTier? tier = null)
     {
         Label(labels);
-        return Latency(Unwrapped(mode, claude));
+        return Latency(Unwrapped(mode, claude, tier));
     }
 
-    private IStrategist Unwrapped(StrategistMode mode, List<ClaudeStrategist> claude)
+    private IStrategist Unwrapped(StrategistMode mode, List<ClaudeStrategist> claude, VocabularyTier? tier = null)
     {
         IMessageClient client = context.CreateClient() ?? new UnavailableClient(context.LlmSkipReason ?? "skipped: no credential");
         ClaudeStrategistOptions options = mode == StrategistMode.Refine ? ClaudeStrategistOptions.ForRefine() : new ClaudeStrategistOptions();
+        if (tier is { } t) options = options with { Vocabulary = t };
         ClaudeStrategist strategist = new(client, options);
         claude.Add(strategist);
         return strategist;
