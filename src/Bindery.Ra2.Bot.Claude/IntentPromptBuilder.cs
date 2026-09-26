@@ -48,7 +48,7 @@ public sealed class IntentPromptBuilder
 
         How to reason:
         - Base every claim on the features given. Do not assume enemy units, tech or positions that the features do not show. Enemy estimates carry evidence ages (seconds) and confidence in [0, 1]; old or low-confidence evidence is uncertainty, not fact. When scouting is stale or coverage is low, prefer plans that stay safe under that uncertainty, or add a Scout objective, and say so in assumptions.
-        - Rule facts (costs, build seconds, prerequisite paths from an empty base) are authoritative; use them for timing and affordability rather than memory of the game. The situation's techProgress says what each tech goal still needs from the buildings you own now, and counters lists your most effective unit types against each enemy unit type you have seen (effectiveness is a damage multiplier, 1 = neutral); use them instead of remembering counters.
+        - Rule facts (costs, build seconds, prerequisite paths from an empty base) are authoritative; use them for timing and affordability rather than memory of the game. The situation's techProgress says what each tech goal still needs from the buildings you own now, and counters gives, for each enemy unit or building type you have seen, its rule row (cost, armor, weapon, what it unlocks) and your most effective unit types against it (effectiveness is a damage multiplier, 1 = neutral); use them instead of remembering counters.
         - Arbitration: the runtime accepts or refuses your proposal by these rules, with the numbers in the match context's arbitration block:
           - When activeIntent.placeholder is true, the active intent is a stand-in the runtime installed while it had no plan of yours (the deterministic fallback or the emergency default): any valid proposal replaces it at once, with no commitment window, so choose freely.
           - A proposal with the same playbookId and the same posture as the active intent is a renewal: always accepted; it updates parameters and expiry and does not restart the commitment clock. Changing only the posture is not a renewal.
@@ -279,6 +279,7 @@ public sealed class IntentPromptBuilder
                     ["cost"] = rule.Cost,
                     ["buildSeconds"] = CanonicalJson.Number(rule.BuildSeconds),
                     ["strength"] = rule.Strength,
+                    ["armor"] = rule.Armor.ToString(),
                     ["weapon"] = rule.Weapon.ToString(),
                     ["range"] = CanonicalJson.Number(rule.Range),
                     ["speed"] = CanonicalJson.Number(rule.Speed),
@@ -297,9 +298,11 @@ public sealed class IntentPromptBuilder
     }
 
     /// <summary>
-    /// For each enemy unit type the player has seen (from <see cref="EnemyFeatures.KnownTech"/>, so fog-safe), the
-    /// faction's own armed unit types that can hit it, ranked by the rules' effectiveness multiplier, then by
-    /// effective damage per credit. Whether each is buildable now uses the owned buildings when the context has them.
+    /// For each enemy type the player has seen (from <see cref="EnemyFeatures.KnownTech"/>, so fog-safe), units and
+    /// buildings alike: its rule row (cost, armor, strength, weapon, what it unlocks) and the faction's own armed
+    /// unit types that can hit it, ranked by the rules' effectiveness multiplier, then by effective damage per
+    /// credit. A scouted war factory or Tesla Coil must be explained by the rules, never by the model's memory.
+    /// Whether each counter is buildable now uses the owned buildings when the context has them.
     /// </summary>
     private JsonArray Counters(StrategistContext context)
     {
@@ -313,7 +316,7 @@ public sealed class IntentPromptBuilder
         JsonArray result = new();
         foreach (string enemyType in context.Features.Enemy.KnownTech.OrderBy(static t => t, StringComparer.Ordinal))
         {
-            if (!rules.TryGet(enemyType, out UnitRule enemy) || enemy.Kind == EntityKind.Building || enemy.Damage <= 0) continue;
+            if (!rules.TryGet(enemyType, out UnitRule enemy)) continue;
             JsonArray best = new();
             IEnumerable<(UnitRule Rule, double Effectiveness)> ranked = candidates
                 .Where(c => CanHit(c, enemy))
@@ -342,11 +345,32 @@ public sealed class IntentPromptBuilder
                 ["enemyTypeId"] = enemy.TypeId,
                 ["enemyRole"] = enemy.Role.ToString(),
                 ["enemyKind"] = enemy.Kind.ToString(),
+                ["name"] = enemy.Name,
+                ["cost"] = enemy.Cost,
+                ["armor"] = enemy.Armor.ToString(),
+                ["strength"] = enemy.Strength,
+                ["weapon"] = enemy.Weapon.ToString(),
+                ["range"] = CanonicalJson.Number(enemy.Range),
+                ["antiAir"] = enemy.AntiAir,
+                ["unlocks"] = Strings(Unlocks(rules, enemy)),
                 ["best"] = best,
             });
         }
         return result;
     }
+
+    /// <summary>
+    /// The types that list <paramref name="building"/> among their prerequisites, for any faction that can own it:
+    /// what a scouted structure lets the enemy build next. Empty for units.
+    /// </summary>
+    private static IReadOnlyList<string> Unlocks(IRulesDatabase rules, UnitRule building) =>
+        building.Kind != EntityKind.Building
+            ? []
+            : [.. rules.All
+                .Where(r => r.Factions.Any(building.Factions.Contains) && r.Prerequisites.Any(group => group.Contains(building.TypeId, StringComparer.Ordinal)))
+                .Select(static r => r.TypeId)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(static t => t, StringComparer.Ordinal)];
 
     /// <summary>What can hit what, as the rules define it: anti-air weapons only hit aircraft; aircraft need an anti-air-capable or general weapon.</summary>
     private static bool CanHit(UnitRule attacker, UnitRule target)

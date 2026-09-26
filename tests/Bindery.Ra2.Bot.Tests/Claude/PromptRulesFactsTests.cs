@@ -27,6 +27,13 @@ public sealed class PromptRulesFactsTests
             null,
             owned);
 
+    private static JsonElement Match(StrategistContext context)
+    {
+        IntentPrompt prompt = new IntentPromptBuilder().Build(context, StrategistMode.Strategic);
+        using JsonDocument document = JsonDocument.Parse(prompt.MatchContext);
+        return document.RootElement.Clone();
+    }
+
     private static JsonElement Situation(StrategistContext context)
     {
         IntentPrompt prompt = new IntentPromptBuilder().Build(context, StrategistMode.Strategic);
@@ -53,6 +60,37 @@ public sealed class PromptRulesFactsTests
         Assert.All(best, b => Assert.Contains(Faction.Allied, Rules.Get(b.GetProperty("typeId").GetString()!).Factions));
         // Ranked: effectiveness never increases down the list.
         for (int i = 1; i < best.Count; i++) Assert.True(best[i].GetProperty("effectiveness").GetDouble() <= best[i - 1].GetProperty("effectiveness").GetDouble());
+    }
+
+    /// <summary>
+    /// The proposal forbids asking the model to remember costs, prerequisites or counters. A scouted enemy war
+    /// factory (what it costs, what it unlocks) or Tesla Coil (armed, and what beats it) used to get no row at all:
+    /// the counters block skipped every building and unarmed type.
+    /// </summary>
+    [Fact]
+    public void Every_seen_enemy_type_gets_a_rule_row_including_buildings()
+    {
+        JsonElement situation = Situation(Context(new HashSet<string>(StringComparer.Ordinal) { "HTNK", "NAWEAP", "NATSLA" }, new HashSet<string>(StringComparer.Ordinal) { "GAYARD" }));
+
+        List<JsonElement> rows = [.. situation.GetProperty("counters").EnumerateArray()];
+        Assert.Equal(["HTNK", "NATSLA", "NAWEAP"], rows.Select(static c => c.GetProperty("enemyTypeId").GetString()!).ToList());
+
+        JsonElement factory = rows.Single(static c => c.GetProperty("enemyTypeId").GetString() == "NAWEAP");
+        Assert.Equal("Building", factory.GetProperty("enemyKind").GetString());
+        Assert.Equal(Rules.Get("NAWEAP").Cost, factory.GetProperty("cost").GetInt32());
+        List<string> unlocks = [.. factory.GetProperty("unlocks").EnumerateArray().Select(static e => e.GetString()!)];
+        Assert.Contains("HTNK", unlocks);
+
+        JsonElement tesla = rows.Single(static c => c.GetProperty("enemyTypeId").GetString() == "NATSLA");
+        Assert.Equal(Rules.Get("NATSLA").Armor.ToString(), tesla.GetProperty("armor").GetString());
+        Assert.NotEmpty(tesla.GetProperty("best").EnumerateArray());
+    }
+
+    [Fact]
+    public void Own_unit_rows_state_their_armor()
+    {
+        JsonElement units = Match(Context(null, null)).GetProperty("ruleFacts").GetProperty("units");
+        Assert.All(units.EnumerateArray(), u => Assert.Equal(Rules.Get(u.GetProperty("typeId").GetString()!).Armor.ToString(), u.GetProperty("armor").GetString()));
     }
 
     [Fact]
