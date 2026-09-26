@@ -34,6 +34,9 @@ public sealed record PlaybookSelectorOptions(
 /// simulator's style-versus-style matrix (see the arena notes in the spec).</item>
 /// </list>
 /// Playbooks missing from the library, or not serving the faction, are skipped in favour of the next rule.
+/// <para>An authored personality (<see cref="StrategistContext.Personality"/>, see <see cref="Personalities"/>)
+/// replaces the defence threshold with its own, inserts its preferred playbook after the anti-air rule (so the
+/// style shows whenever nothing urgent forces another choice), and scales the playbook's parameter defaults.</para>
 /// </summary>
 public sealed class PlaybookSelector : IStrategist
 {
@@ -52,16 +55,18 @@ public sealed class PlaybookSelector : IStrategist
     public Task<StrategistProposal?> ProposeAsync(StrategistContext context, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(context);
-        (Playbook? playbook, string reason, double confidence) = Choose(context.Features, context.Playbooks, context.Rules);
+        Personalities.TryGet(context.Personality, out PersonalityProfile? personality);
+        (Playbook? playbook, string reason, double confidence) = Choose(context.Features, context.Playbooks, context.Rules, personality);
         if (playbook is null) return Task.FromResult<StrategistProposal?>(null);
         StrategicIntent intent = IntentComposer.Compose(
             playbook, context.Features, $"{Id}/{context.Features.SnapshotVersion}", Source, confidence,
-            StrategyRationale.Explain(playbook.Id, reason, context.Features), options.LifetimeSeconds);
+            StrategyRationale.Explain(playbook.Id, personality is null ? reason : $"{reason} (personality {personality.Id})", context.Features),
+            options.LifetimeSeconds, personality?.ScaledParameters(playbook));
         return Task.FromResult<StrategistProposal?>(new StrategistProposal(intent, new ProposalCost(0, 0, 0, 0, null), null));
     }
 
     /// <summary>The rule list, exposed for tests and for strategists that fall back to it.</summary>
-    public (Playbook? Playbook, string Reason, double Confidence) Choose(StrategicFeatures features, IPlaybookLibrary playbooks, IRulesDatabase rules)
+    public (Playbook? Playbook, string Reason, double Confidence) Choose(StrategicFeatures features, IPlaybookLibrary playbooks, IRulesDatabase rules, PersonalityProfile? personality = null)
     {
         ArgumentNullException.ThrowIfNull(features);
         ArgumentNullException.ThrowIfNull(playbooks);
@@ -70,7 +75,7 @@ public sealed class PlaybookSelector : IStrategist
         bool allied = faction == Faction.Allied;
 
         double threat = ConditionEvaluator.BaseThreatRatio(features);
-        if (threat >= options.DefendThreatRatio && Pick(playbooks, faction, "generic-defend") is { } defend)
+        if (threat >= (personality?.DefendThreatRatio ?? options.DefendThreatRatio) && Pick(playbooks, faction, "generic-defend") is { } defend)
         {
             return (defend, $"base threat ratio {threat:0.00}", 0.9);
         }
@@ -87,6 +92,11 @@ public sealed class PlaybookSelector : IStrategist
         if (air >= options.AirThreatShare && Pick(playbooks, faction, allied ? "allied-harass" : "soviet-flak-mix") is { } antiAir)
         {
             return (antiAir, $"enemy air presence {air:0.00}", 0.65);
+        }
+
+        if (personality is not null && personality.PreferredPlaybook.TryGetValue(faction, out string? preferredId) && Pick(playbooks, faction, preferredId) is { } preferred)
+        {
+            return (preferred, $"personality {personality.Id} prefers it", 0.65);
         }
 
         double enemyTotal = features.Enemy.CompositionByRole.Values.Where(static v => v > 0).Sum();

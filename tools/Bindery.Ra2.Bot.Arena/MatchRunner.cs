@@ -34,6 +34,12 @@ public sealed record PlayerMatchMetrics(
     IReadOnlyList<string> Labels,
     double? FirstAttackSeconds = null)
 {
+    /// <summary>Seconds each playbook was active (the arm's intent timeline).</summary>
+    public IReadOnlyDictionary<string, double> PlaybookSeconds { get; init; } = new Dictionary<string, double>();
+
+    /// <summary>Seconds each posture was active.</summary>
+    public IReadOnlyDictionary<string, double> PostureSeconds { get; init; } = new Dictionary<string, double>();
+
     /// <summary>Shadow proposals whose request also got a primary proposal (see <see cref="Analysis.ShadowAgreement"/>).</summary>
     public int ShadowCompared { get; init; }
 
@@ -243,6 +249,8 @@ public static class MatchRunner
             DistilledEscalations = stats.DistilledEscalations,
             ShadowCompared = stats.ShadowCompared,
             ShadowAgreed = stats.ShadowAgreed,
+            PlaybookSeconds = new SortedDictionary<string, double>(stats.PlaybookSeconds, StringComparer.Ordinal),
+            PostureSeconds = new SortedDictionary<string, double>(stats.PostureSeconds, StringComparer.Ordinal),
         };
     }
 }

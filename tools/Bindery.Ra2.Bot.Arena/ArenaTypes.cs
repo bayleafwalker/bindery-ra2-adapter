@@ -11,7 +11,10 @@ namespace Bindery.Ra2.Bot.Arena;
 /// <param name="LlmFake">True when <c>--llm-fake</c> substitutes a deterministic client for the Anthropic API.</param>
 public sealed record ArmSpec(string Name, bool Oracle, bool LlmFake)
 {
-    public override string ToString() => Oracle ? $"{Name}-oracle" : Name;
+    /// <summary>An authored play style (<see cref="Bindery.Ra2.Bot.Strategy.Personalities"/>) the arm's strategists play, or null.</summary>
+    public string? Personality { get; init; }
+
+    public override string ToString() => (Oracle ? $"{Name}-oracle" : Name) + (Personality is null ? string.Empty : $"@{Personality}");
 
     /// <summary>Arms that call the LLM: the LLM arms, and <c>distilled</c>, which escalates unusual states to it.</summary>
     public bool UsesLlm => Name is "llm" or "llm-shadow" or "llm+fast" or "distilled" || BotAgentFactory.TierArms.ContainsKey(Name);
@@ -39,6 +42,11 @@ public sealed record ArenaAgentStats
     public string? Model { get; set; }
     public double Usd { get; set; }
     public string? DecisionLogHash { get; set; }
+
+    /// <summary>Seconds each playbook and each posture was the active intent's (from the decision log).</summary>
+    public Dictionary<string, double> PlaybookSeconds { get; } = new(StringComparer.Ordinal);
+
+    public Dictionary<string, double> PostureSeconds { get; } = new(StringComparer.Ordinal);
 
     /// <summary>Shadow proposals compared with the primary's answer to the same request, and how many named the same playbook.</summary>
     public int ShadowCompared { get; set; }

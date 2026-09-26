@@ -201,6 +201,14 @@ approximate `bindery-sim-approx` fixture is committed.
 
 ### LLM arms
 
+`--personality aggressive,turtle,tech,harasser[,none]` runs every arm under
+each authored play style (`src/Bindery.Ra2.Bot/Strategy/Personalities.cs`: prompt
+guidance for the LLM, and for the deterministic strategists a preferred playbook
+per faction, parameter scaling and a defence threshold); arms are labelled
+`selector@turtle` and the report's Play styles section gives each style's
+playbook and posture shares, time to first attack, and the pairwise
+Jensen–Shannon divergence between styles.
+
 What the LLM may decide comes in vocabulary tiers (`VocabularyTier`:
 `PlaybookOnly`, `Parameters`, `ObjectivesAndRegions`, `Full`); fields above a
 strategist's tier are replaced by the playbook's defaults. The default is the

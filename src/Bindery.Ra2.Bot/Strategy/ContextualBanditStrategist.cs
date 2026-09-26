@@ -53,8 +53,10 @@ public sealed class ContextualBanditStrategist : IStrategist, IOutcomeLearner
         IReadOnlyList<Playbook> candidates = context.Playbooks.For(features.Faction).OrderBy(static p => p.Id, StringComparer.Ordinal).ToList();
         if (candidates.Count == 0) return Task.FromResult<StrategistProposal?>(null);
 
+        Personalities.TryGet(context.Personality, out PersonalityProfile? personality);
+        string? preferred = personality is not null && personality.PreferredPlaybook.TryGetValue(features.Faction, out string? p) ? p : null;
         double threat = ConditionEvaluator.BaseThreatRatio(features);
-        if (threat >= options.DefendThreatRatio && context.Playbooks.TryGet("generic-defend", out Playbook defend))
+        if (threat >= (personality?.DefendThreatRatio ?? options.DefendThreatRatio) && context.Playbooks.TryGet("generic-defend", out Playbook defend))
         {
             StrategicIntent guard = IntentComposer.Compose(defend, features, $"{Id}/{features.SnapshotVersion}", Source, 0.9,
                 StrategyRationale.Explain(defend.Id, $"LinUCB not consulted: base threat ratio {threat:0.00} is at the defence guard", features));
@@ -69,7 +71,8 @@ public sealed class ContextualBanditStrategist : IStrategist, IOutcomeLearner
             foreach (Playbook playbook in candidates)
             {
                 (double mean, double width) = ArmFor(playbook.Id).Score(x);
-                double score = mean + options.Alpha * width;
+                // A personality leans the choice toward its playbook without stopping the learner from overruling it.
+                double score = mean + options.Alpha * width + (playbook.Id == preferred ? personality!.BanditBonus : 0);
                 if (score > bestScore + 1e-12)
                 {
                     best = playbook;
@@ -84,7 +87,9 @@ public sealed class ContextualBanditStrategist : IStrategist, IOutcomeLearner
         double confidence = Math.Clamp(0.5 + 0.5 * Math.Tanh(bestMean) - 0.2 * Math.Min(1, bestWidth), 0.05, 0.95);
         StrategicIntent intent = IntentComposer.Compose(
             best!, features, $"{Id}/{features.SnapshotVersion}", Source, confidence,
-            StrategyRationale.Explain(best!.Id, $"LinUCB: highest upper bound, mean {bestMean:0.000} + {options.Alpha:0.00} × width {bestWidth:0.000} over {candidates.Count} playbooks", features));
+            StrategyRationale.Explain(best!.Id, $"LinUCB: highest upper bound, mean {bestMean:0.000} + {options.Alpha:0.00} × width {bestWidth:0.000} over {candidates.Count} playbooks"
+                + (personality is null ? string.Empty : $" (personality {personality.Id}, +{personality.BanditBonus:0.00} to {preferred})"), features),
+            parameters: personality?.ScaledParameters(best!));
         return Task.FromResult<StrategistProposal?>(new StrategistProposal(intent, new ProposalCost(0, 0, 0, 0, null), null));
     }
 

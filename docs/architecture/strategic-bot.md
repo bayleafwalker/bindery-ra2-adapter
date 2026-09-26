@@ -348,4 +348,23 @@ Gaps an operator review found after integration, and how each was closed.
   −0.12 [−0.23, 0], 12/24 pairs better/worse (p 0.065); verdict `Parameters`
   (fake evidence never counts). Note that the plain `llm` arm now runs at
   `Parameters`; the `llm` figures earlier in this record were at `Full`.
+- **Personalities.** `BotOptions.Personality` reached only the LLM prompt. Four
+  authored styles (`Personalities`: aggressive, turtle, tech, harasser) each
+  carry prompt guidance (the prompt now sends id, guidance and the faction's
+  preferred playbook instead of the bare name), a preferred playbook per
+  faction, parameter scaling and a defence threshold. The selector plays the
+  preferred playbook whenever no defence, outnumbered or anti-air rule forces
+  another and scales its parameters; the bandit adds a score bonus to it; the
+  distilled model adds a logit bias to it when it is a trained class; rationales
+  name the style. `--personality` multiplies arms by styles (`selector@turtle`)
+  and the report's Play styles section gives playbook and posture shares, time
+  to first attack and pairwise Jensen–Shannon divergences. First run
+  (contested, all maps, 2 seeds, 50 matches per arm and style, fake client):
+  selector styles differ in playbook time by JSD 0.74–0.82 against each other
+  and the default; postures separate turtle and tech from the rest (JSD
+  0.73–0.82) while aggressive and harasser remain mostly Pressure (0.01–0.19);
+  the turtle style attacks first 61–80 s later; wins: default 25, aggressive
+  19, turtle 33, tech 20, harasser 24 of 50. The fake `llm` styles are less
+  distinct (playbook JSD 0.05–0.58): its policy only consults the style after
+  its opening push.
 

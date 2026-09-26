@@ -110,6 +110,8 @@ public sealed class DistilledStrategist : IStrategist, Runtime.IFrameAwareStrate
         ArgumentNullException.ThrowIfNull(context);
         Decisions++;
         StrategicFeatures features = context.Features;
+        Personalities.TryGet(context.Personality, out PersonalityProfile? personality);
+        string? preferred = personality is not null && personality.PreferredPlaybook.TryGetValue(features.Faction, out string? p) ? p : null;
         double[] x = FeatureVector.Encode(features);
         string? escalate = null;
         (string PlaybookId, double Probability)? best = null;
@@ -127,7 +129,7 @@ public sealed class DistilledStrategist : IStrategist, Runtime.IFrameAwareStrate
             }
             else
             {
-                best = Predict(x, features.Faction, context.Playbooks);
+                best = Predict(x, features.Faction, context.Playbooks, preferred, personality?.DistilledLogitBias ?? 0);
                 if (best is null) escalate = "no trained playbook serves this faction";
                 else if (best.Value.Probability < options.MinProbability) escalate = $"low confidence {best.Value.Probability:0.00}";
             }
@@ -143,7 +145,9 @@ public sealed class DistilledStrategist : IStrategist, Runtime.IFrameAwareStrate
         LastEscalationReason = null;
         StrategicIntent intent = IntentComposer.Compose(
             playbook, features, $"{Id}/{features.SnapshotVersion}", Source, best.Value.Probability,
-            StrategyRationale.Explain(playbook.Id, $"distilled: p={best.Value.Probability:0.00} over {classes.Length} playbooks from {trainedOn} examples", features));
+            StrategyRationale.Explain(playbook.Id, $"distilled: p={best.Value.Probability:0.00} over {classes.Length} playbooks from {trainedOn} examples"
+                + (personality is null ? string.Empty : $" (personality {personality.Id} leans toward {preferred})"), features),
+            parameters: personality?.ScaledParameters(playbook));
         return Task.FromResult<StrategistProposal?>(new StrategistProposal(intent, new ProposalCost(0, 0, 0, 0, null), null));
     }
 
@@ -170,13 +174,17 @@ public sealed class DistilledStrategist : IStrategist, Runtime.IFrameAwareStrate
         return Softmax(Logits(Standardise(x)), Enumerable.Repeat(true, classes.Length).ToArray());
     }
 
-    private (string, double)? Predict(double[] x, Faction faction, IPlaybookLibrary playbooks)
+    /// <param name="preferred">A personality's playbook; its logit gets <paramref name="bias"/> when it is a trained class.</param>
+    private (string, double)? Predict(double[] x, Faction faction, IPlaybookLibrary playbooks, string? preferred = null, double bias = 0)
     {
         bool[] allowed = classes
             .Select(c => playbooks.TryGet(c, out Playbook p) && (p.Factions.Count == 0 || p.Factions.Contains(faction)))
             .ToArray();
         if (!allowed.Any(static a => a)) return null;
-        double[] probabilities = Softmax(Logits(Standardise(x)), allowed);
+        double[] logits = Logits(Standardise(x));
+        int preferredIndex = preferred is null ? -1 : Array.IndexOf(classes, preferred);
+        if (preferredIndex >= 0) logits[preferredIndex] += bias;
+        double[] probabilities = Softmax(logits, allowed);
         int best = -1;
         for (int k = 0; k < classes.Length; k++)
         {

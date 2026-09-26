@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using System.Text.Json.Nodes;
+using Bindery.Ra2.Bot.Strategy;
 
 namespace Bindery.Ra2.Bot.Claude;
 
@@ -108,7 +109,7 @@ public sealed class IntentPromptBuilder
         {
             ["catalogue"] = Catalogue(context),
             ["faction"] = context.Features.Faction.ToString(),
-            ["personality"] = context.Personality ?? fallbackPersonality,
+            ["personality"] = Personality(context.Personality ?? fallbackPersonality, context.Features.Faction),
             ["ruleFacts"] = RuleFacts(context),
         };
         JsonObject situation = new()
@@ -120,6 +121,22 @@ public sealed class IntentPromptBuilder
             ["techProgress"] = TechProgress(context),
         };
         return new IntentPrompt(SystemPrompt(mode, tier), CanonicalJson.Serialize(match), CanonicalJson.Serialize(situation));
+    }
+
+    /// <summary>
+    /// An authored personality as its guidance and preferred playbook for the faction (the same profile the
+    /// deterministic strategists lean on); any other text as given; null when there is none.
+    /// </summary>
+    private static JsonNode? Personality(string? personality, Faction faction)
+    {
+        if (personality is null) return null;
+        if (!Personalities.TryGet(personality, out PersonalityProfile profile)) return JsonValue.Create(personality);
+        return new JsonObject
+        {
+            ["id"] = profile.Id,
+            ["guidance"] = profile.PromptGuidance,
+            ["preferredPlaybook"] = profile.PreferredPlaybook.TryGetValue(faction, out string? playbook) ? playbook : null,
+        };
     }
 
     private static IReadOnlyList<Playbook> FactionPlaybooks(StrategistContext context) =>

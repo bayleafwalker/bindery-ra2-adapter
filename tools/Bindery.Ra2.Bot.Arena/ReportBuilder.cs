@@ -35,17 +35,18 @@ public static class ReportBuilder
         AppendSaturation(sb, matches, options.Baseline);
         AppendPerOpponent(sb, matches);
         PairedReport.Append(sb, matches, options.Baseline, $"## Paired differences vs {options.Baseline}",
-            baselineFor: arm => arm == options.Baseline || arm.EndsWith(CliOptions.OracleSuffix, StringComparison.Ordinal) ? null : options.Baseline);
+            baselineFor: arm => arm == options.Baseline || IsOracle(arm) ? null : options.Baseline);
         // The perception-bottleneck diagnostic: each arm against its own oracle twin on the same jobs.
         HashSet<string> armNames = [.. matches.Select(static m => m.Arm)];
         PairedReport.Append(sb, matches, options.Baseline, "## Perception bottleneck (belief − oracle)",
-            baselineFor: arm => !arm.EndsWith(CliOptions.OracleSuffix, StringComparison.Ordinal) && armNames.Contains(arm + CliOptions.OracleSuffix) ? arm + CliOptions.OracleSuffix : null);
+            baselineFor: arm => !IsOracle(arm) && armNames.Contains(OracleTwin(arm)) ? OracleTwin(arm) : null);
         AppendGame(sb, matches);
         AppendStrategy(sb, matches);
         AppendCommands(sb, matches);
         AppendInferenceCost(sb, matches);
         AppendDistillation(sb, matches);
         AppendTiers(sb, matches, options);
+        AppendStyles(sb, matches);
         AppendLeakage(sb, matches, probes);
         return sb.ToString();
     }
@@ -222,6 +223,97 @@ public static class ReportBuilder
             sb.AppendLine($"| {group.Key} | {decisions} | {escalations}/{decisions} ({Rate(escalations, decisions)}) | ${F(arm.Average(static a => a.Usd), "0.0000")} | {teacherCost} |");
         }
         sb.AppendLine();
+    }
+
+    /// <summary>
+    /// Whether personalities are recognisable: per arm and style, where its time went (playbook and posture shares of
+    /// active-intent time, pooled over matches) and when it first attacked; per pair of styles of the same arm, the
+    /// Jensen–Shannon divergence (base 2: 0 same, 1 disjoint) of the two playbook and posture distributions and the
+    /// difference in mean time to first attack.
+    /// </summary>
+    private static void AppendStyles(StringBuilder sb, IReadOnlyList<MatchRecord> matches)
+    {
+        List<IGrouping<string, MatchRecord>> styled = [.. matches.GroupBy(static m => m.Arm).OrderBy(static g => g.Key, StringComparer.Ordinal)];
+        if (!styled.Any(static g => g.Key.Contains('@', StringComparison.Ordinal))) return;
+        sb.AppendLine("## Play styles");
+        sb.AppendLine();
+        sb.AppendLine("Shares are of active-intent seconds pooled over the arm's matches (top three). First attack: mean seconds to the first combat unit in a region holding an enemy structure (matches where it happened / matches).");
+        sb.AppendLine();
+        sb.AppendLine("| Arm | Matches | Playbooks | Postures | First attack s |");
+        sb.AppendLine("|---|---|---|---|---|");
+        Dictionary<string, (Dictionary<string, double> Playbooks, Dictionary<string, double> Postures, double? FirstAttack)> profile = [];
+        foreach (IGrouping<string, MatchRecord> group in styled)
+        {
+            List<PlayerMatchMetrics> arm = [.. group.Select(static m => m.Players["arm"])];
+            Dictionary<string, double> playbooks = Pool(arm.Select(static a => a.PlaybookSeconds));
+            Dictionary<string, double> postures = Pool(arm.Select(static a => a.PostureSeconds));
+            List<double> attacks = [.. arm.Where(static a => a.FirstAttackSeconds is not null).Select(static a => a.FirstAttackSeconds!.Value)];
+            profile[group.Key] = (playbooks, postures, attacks.Count == 0 ? null : attacks.Average());
+            sb.AppendLine($"| {group.Key} | {arm.Count} | {Top(playbooks)} | {Top(postures)} | {FirstAttack(arm)} |");
+        }
+        sb.AppendLine();
+        sb.AppendLine("| Arm | Style | Style | Playbook JSD | Posture JSD | First attack difference s |");
+        sb.AppendLine("|---|---|---|---|---|---|");
+        foreach (IGrouping<string, string> family in profile.Keys.GroupBy(static k => k.Split('@')[0], StringComparer.Ordinal).OrderBy(static g => g.Key, StringComparer.Ordinal))
+        {
+            List<string> members = [.. family.OrderBy(static k => k, StringComparer.Ordinal)];
+            for (int i = 0; i < members.Count; i++)
+            {
+                for (int j = i + 1; j < members.Count; j++)
+                {
+                    var a = profile[members[i]];
+                    var b = profile[members[j]];
+                    string attack = a.FirstAttack is { } fa && b.FirstAttack is { } fb ? F(Math.Abs(fb - fa), "0") : "n/a";
+                    sb.AppendLine($"| {family.Key} | {StyleOf(members[i])} | {StyleOf(members[j])} | {F(JensenShannon(a.Playbooks, b.Playbooks), "0.000")} | {F(JensenShannon(a.Postures, b.Postures), "0.000")} | {attack} |");
+                }
+            }
+        }
+        sb.AppendLine();
+    }
+
+    /// <summary>True for an oracle arm label (<c>x-oracle</c>, <c>x-oracle@style</c>).</summary>
+    private static bool IsOracle(string arm) => arm.Split('@')[0].EndsWith(CliOptions.OracleSuffix, StringComparison.Ordinal);
+
+    /// <summary>The oracle arm label for a belief arm label (<c>x@style</c> → <c>x-oracle@style</c>).</summary>
+    private static string OracleTwin(string arm)
+    {
+        int at = arm.IndexOf('@', StringComparison.Ordinal);
+        return at < 0 ? arm + CliOptions.OracleSuffix : arm[..at] + CliOptions.OracleSuffix + arm[at..];
+    }
+
+    private static string StyleOf(string arm) => arm.Contains('@', StringComparison.Ordinal) ? arm[(arm.IndexOf('@', StringComparison.Ordinal) + 1)..] : "none";
+
+    private static Dictionary<string, double> Pool(IEnumerable<IReadOnlyDictionary<string, double>> parts)
+    {
+        Dictionary<string, double> total = new(StringComparer.Ordinal);
+        foreach (IReadOnlyDictionary<string, double> part in parts)
+        {
+            foreach ((string key, double value) in part) total[key] = total.GetValueOrDefault(key) + value;
+        }
+        return total;
+    }
+
+    private static string Top(Dictionary<string, double> seconds)
+    {
+        double sum = seconds.Values.Sum();
+        if (sum <= 0) return "n/a";
+        return string.Join(", ", seconds.OrderByDescending(static p => p.Value).ThenBy(static p => p.Key, StringComparer.Ordinal).Take(3)
+            .Select(p => $"{p.Key} {F(100 * p.Value / sum, "0")}%"));
+    }
+
+    /// <summary>Jensen–Shannon divergence in bits between two unnormalised distributions; 0 when either is empty.</summary>
+    public static double JensenShannon(IReadOnlyDictionary<string, double> a, IReadOnlyDictionary<string, double> b)
+    {
+        double sa = a.Values.Sum(), sb = b.Values.Sum();
+        if (sa <= 0 || sb <= 0) return 0;
+        double divergence = 0;
+        foreach (string key in a.Keys.Union(b.Keys, StringComparer.Ordinal))
+        {
+            double p = a.GetValueOrDefault(key) / sa, q = b.GetValueOrDefault(key) / sb, m = (p + q) / 2;
+            if (p > 0) divergence += 0.5 * p * Math.Log2(p / m);
+            if (q > 0) divergence += 0.5 * q * Math.Log2(q / m);
+        }
+        return Math.Clamp(divergence, 0, 1);
     }
 
     /// <summary>Build step 6: each tier arm against the tier below it, pair by pair, and the adoption rule's verdict.</summary>

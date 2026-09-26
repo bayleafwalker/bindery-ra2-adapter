@@ -104,9 +104,11 @@ public sealed class BotArenaAgent : IArenaAgent
             }
         }
         CountDistillation();
-        Analysis.ShadowAgreement shadow = Analysis.PostGameReport.Build(log.Records).Shadow;
-        Stats.ShadowCompared = shadow.Compared;
-        Stats.ShadowAgreed = shadow.Agreed;
+        Analysis.PostGameReport analysis = Analysis.PostGameReport.Build(log.Records);
+        Stats.ShadowCompared = analysis.Shadow.Compared;
+        Stats.ShadowAgreed = analysis.Shadow.Agreed;
+        foreach ((string playbook, double seconds) in analysis.PlaybookSeconds) Stats.PlaybookSeconds[playbook] = seconds;
+        foreach ((string posture, double seconds) in analysis.PostureSeconds) Stats.PostureSeconds[posture] = seconds;
         // Failed requests still cost tokens; the Claude strategist reports them through LastFailure only.
         Stats.DecisionLogHash = log.ComputeHash();
         onFinish?.Invoke(won, ownAssetValue, enemyAssetValue, this);

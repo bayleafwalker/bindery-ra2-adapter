@@ -175,6 +175,12 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
         List<string> labels = [];
         if (arm.Oracle) labels.Add("oracle");
         BotOptions options = StandardBot.SimulatorOptions;
+        if (arm.Personality is { } personality)
+        {
+            // The style reaches every strategist through the context (deterministic biases and LLM guidance alike).
+            options = options with { Personality = personality };
+            labels.Add($"personality:{personality}");
+        }
         IStrategist fallback = new PlaybookSelector(id: "selector-fallback");
         IStrategist? shadow = null;
         IStrategist primary;
