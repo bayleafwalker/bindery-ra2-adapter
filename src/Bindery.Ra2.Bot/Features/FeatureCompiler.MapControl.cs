@@ -31,9 +31,14 @@ public sealed partial class FeatureCompiler
         // An ore field is taken by the enemy only when it holds an enemy building; a unit passing through makes
         // the region Enemy-controlled for the moment but does not take the field away as an expansion.
         HashSet<RegionId> enemyHeld = EnemyBuildingRegions(snapshot);
+        // A field already served by our own refinery is not an expansion: the home field sorts first (distance
+        // zero), so without this the composer's Expand objective named it and the new refinery crowded it.
+        HashSet<RegionId> ownServed = [.. snapshot.Own
+            .Where(static e => e.Kind == EntityKind.Building && e.Role == UnitRole.Economy)
+            .Select(static e => e.Region)];
         List<Region> oreRegions = [.. snapshot.Map.Regions.Where(static r => r.HasOre)];
         List<RegionId> expansionCandidates = [.. oreRegions
-            .Where(r => !enemyHeld.Contains(r.Id))
+            .Where(r => !enemyHeld.Contains(r.Id) && !ownServed.Contains(r.Id))
             .Select(r => (Region: r, Distance: DistanceFromBase(snapshot, r.Id)))
             .OrderBy(static t => t.Distance)
             .ThenBy(static t => t.Region.Id.Value)

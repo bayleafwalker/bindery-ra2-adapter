@@ -652,21 +652,24 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
     }
 
     /// <summary>
-    /// The ore field a new refinery should serve: the highest-priority Expand objective's field, else the field
-    /// nearest the base with no own refinery within <see cref="RefineryReachCells"/>, else the field nearest the base.
+    /// The ore field a new refinery should serve: the highest-priority Expand objective's field that no own refinery
+    /// within <see cref="RefineryReachCells"/> serves yet, else the field nearest the base with no such refinery, else
+    /// the field nearest the base. An objective naming an already served field (a strategist naming the home field)
+    /// would otherwise pull every extra refinery back onto it.
     /// </summary>
     private static OreField? RefineryField(BeliefSnapshot belief, StrategicIntent intent, List<OwnEntity> buildings, Cell centroid)
     {
+        List<Cell> refineries = buildings.Where(static b => b.Role == UnitRole.Economy).Select(static b => b.Position).ToList();
+        bool Unserved(OreField o) => !refineries.Any(r => r.DistanceTo(o.Center) <= RefineryReachCells);
         foreach (Objective expand in intent.Objectives.Where(static o => o.Kind == ObjectiveKind.Expand && o.Region is not null).OrderBy(static o => o.Priority))
         {
-            OreField? wanted = belief.Map.OreFields.Where(o => o.Region == expand.Region)
+            OreField? wanted = belief.Map.OreFields.Where(o => o.Region == expand.Region && Unserved(o))
                 .OrderBy(o => o.Center.DistanceTo(centroid)).ThenBy(static o => o.Region.Value).FirstOrDefault();
             if (wanted is not null) return wanted;
         }
-        List<Cell> refineries = buildings.Where(static b => b.Role == UnitRole.Economy).Select(static b => b.Position).ToList();
         IOrderedEnumerable<OreField> byDistance = belief.Map.OreFields
             .OrderBy(o => o.Center.DistanceTo(centroid)).ThenBy(static o => o.Region.Value);
-        return byDistance.FirstOrDefault(o => !refineries.Any(r => r.DistanceTo(o.Center) <= RefineryReachCells)) ?? byDistance.FirstOrDefault();
+        return byDistance.FirstOrDefault(Unserved) ?? byDistance.FirstOrDefault();
     }
 
     /// <summary>A refinery within this many cells of a field's centre already serves that field.</summary>

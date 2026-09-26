@@ -168,6 +168,23 @@ public sealed class FeatureCompilerReviewTests
         Assert.InRange(f.Economy.IncomePerMinute.Current, -60, 60);
     }
 
+    /// <summary>
+    /// Expansion candidates are ore fields we could still take. The home field, already served by our refinery,
+    /// used to sort first (distance zero), so the composer's Expand objective named it and the new refinery crowded
+    /// the home field instead of taking new ore.
+    /// </summary>
+    [Fact]
+    public void ExpansionCandidates_ExcludeOreRegionsWeAlreadyHoldARefineryIn()
+    {
+        HashSet<RegionId> visible = [TestMaps.Home, TestMaps.Middle];
+        (BeliefModel belief, FeatureCompiler compiler) = New();
+        StrategicFeatures without = compiler.Compile(belief.Apply(Frame(0, 5000, [ConYardAtHome()], visible)));
+        Assert.Contains(TestMaps.Middle, without.MapControl.ExpansionCandidates);
+
+        StrategicFeatures with = compiler.Compile(belief.Apply(Frame(1, 5000, [ConYardAtHome(), Own(2, "refinery", MiddleCell)], visible)));
+        Assert.DoesNotContain(TestMaps.Middle, with.MapControl.ExpansionCandidates);
+    }
+
     /// <summary>A queue with one factory builds one item at a time; the items waiting behind it cost nothing yet.</summary>
     [Fact]
     public void Spending_CountsOnlyAsManyItemsAsTheQueueHasFactories()

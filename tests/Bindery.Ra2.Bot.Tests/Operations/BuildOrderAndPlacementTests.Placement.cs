@@ -62,6 +62,31 @@ public sealed partial class BuildOrderAndPlacementTests
         Cell far = new(10, 40);
         double nearestOwn = belief.Own.Where(static e => e.Kind == EntityKind.Building).Min(e => e.Position.DistanceTo(far));
         Assert.True(cell.DistanceTo(far) < nearestOwn, $"refinery at {cell} is no nearer the far field than the base ({nearestOwn:0.0})");
+
+        // Without the objective the fallback picks the nearest unserved field (Mid), whose side of the base is also
+        // nearer FarOre than the base; the objective must do better than that fallback, or it has no effect.
+        Cell fallback = Assert.Single(Planner().Plan(belief, Economy(belief, 1, 3), Fixture.Intent(), new FakeLeaseManager())
+            .ProductionCommands.OfType<PlaceBuildingCommand>()).Cell;
+        Assert.True(cell.DistanceTo(far) < fallback.DistanceTo(far), $"expand placed {cell}, the no-objective fallback {fallback}");
+    }
+
+    /// <summary>
+    /// An Expand objective naming a field we already serve (the composer's nearest candidate is often the home
+    /// field) must not pull the new refinery back onto it: the refinery goes to the nearest unserved field instead.
+    /// </summary>
+    [Fact]
+    public void An_expand_objective_naming_an_already_served_field_does_not_crowd_it()
+    {
+        ProductionQueueState ready = new(QueueKind.Building, [new QueueItem("ref", 1.0, true, false)], 1);
+        BeliefSnapshot belief = Base(300, 0, [ready]);
+        StrategicIntent intent = Fixture.Intent(objectives: [new Objective(ObjectiveKind.Expand, Fixture.Home, null, 3)]);
+
+        OperationalPlan plan = Planner().Plan(belief, Economy(belief, 1, 3), intent, new FakeLeaseManager());
+
+        Cell cell = Assert.Single(plan.ProductionCommands.OfType<PlaceBuildingCommand>()).Cell;
+        Cell mid = new(30, 30);
+        double nearestOwn = belief.Own.Where(static e => e.Kind == EntityKind.Building).Min(e => e.Position.DistanceTo(mid));
+        Assert.True(cell.DistanceTo(mid) < nearestOwn, $"refinery at {cell} is no nearer the unserved Mid field than the base ({nearestOwn:0.0})");
     }
 
     [Fact]
