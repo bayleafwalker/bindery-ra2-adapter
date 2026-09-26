@@ -322,6 +322,7 @@ public sealed class IntentPromptBuilder
                 ["enemyEtaSeconds"] = CanonicalJson.Number(t.EnemyEtaSeconds),
                 ["reinforcementSeconds"] = CanonicalJson.Number(t.ReinforcementSeconds),
                 ["confidence"] = CanonicalJson.Number(t.Confidence),
+                ["likelyAttackPath"] = new JsonArray([.. (t.LikelyAttackPath ?? []).Select(static r => (JsonNode)r.Value)]),
             });
         }
 

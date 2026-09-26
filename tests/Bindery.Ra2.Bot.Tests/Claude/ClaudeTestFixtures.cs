@@ -199,7 +199,7 @@ internal static class ClaudeFixtures
                 0.55,
                 new Dictionary<RegionId, double> { [new RegionId(3)] = 40, [new RegionId(1)] = 0 },
                 ["enemy tech level"]),
-            Threats: [new ThreatAssessment(new RegionId(1), 1200, 3000, 2.5, 35, 10, true, 0.7)],
+            Threats: [new ThreatAssessment(new RegionId(1), 1200, 3000, 2.5, 35, 10, true, 0.7, [new RegionId(3), new RegionId(2), new RegionId(1)])],
             Events: [new StrategicEvent(StrategicEventKind.NewEnemyTech, GameTime.FromSeconds(seconds - 20), 0.6, "HTNK seen", new RegionId(3))]);
 
     public static StrategicIntent ActiveIntent(string playbookId = "allied-boom", double issuedAt = 280) =>

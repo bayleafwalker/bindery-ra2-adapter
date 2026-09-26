@@ -1,22 +1,35 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 namespace Bindery.Ra2.Bot.Tests.Tactics;
 
-/// <summary>Small private fake of <see cref="IRulesDatabase"/> for Tactics tests only.</summary>
-internal sealed class FakeRulesDatabase(Dictionary<(string, string), double>? effectiveness = null) : IRulesDatabase
+/// <summary>
+/// Small private fake of <see cref="IRulesDatabase"/> for Tactics tests only.
+/// Types listed in <paramref name="armedTypes"/> resolve to an armed
+/// <see cref="UnitRule"/>; every other type is unknown. Tests of force-ratio
+/// logic must name the enemy type as armed, because the squad controller only
+/// counts armed enemies as opposing force (an all-unknown fake makes every
+/// local force ratio +infinity and silently disables retreat).
+/// </summary>
+internal sealed class FakeRulesDatabase(
+    Dictionary<(string, string), double>? effectiveness = null,
+    IEnumerable<string>? armedTypes = null) : IRulesDatabase
 {
     private readonly Dictionary<(string, string), double> effectiveness = effectiveness ?? [];
+    private readonly SortedDictionary<string, UnitRule> byTypeId = new(
+        (armedTypes ?? []).ToDictionary(static t => t, Armed, StringComparer.Ordinal),
+        StringComparer.Ordinal);
 
     public string RulesetId => "test-fixture";
 
-    public IReadOnlyCollection<UnitRule> All => [];
+    public IReadOnlyCollection<UnitRule> All => byTypeId.Values;
 
-    public bool TryGet(string typeId, out UnitRule rule)
-    {
-        rule = null!;
-        return false;
-    }
+    public bool TryGet(string typeId, out UnitRule rule) => byTypeId.TryGetValue(typeId, out rule!);
 
-    public UnitRule Get(string typeId) => throw new KeyNotFoundException(typeId);
+    public UnitRule Get(string typeId) => byTypeId.TryGetValue(typeId, out UnitRule? rule) ? rule : throw new KeyNotFoundException(typeId);
+
+    /// <summary>An armed vehicle rule (non-zero damage, anti-armor weapon) for <paramref name="typeId"/>.</summary>
+    public static UnitRule Armed(string typeId) => new(
+        typeId, typeId, [Faction.Soviet], EntityKind.Vehicle, UnitRole.AntiArmor, QueueKind.Vehicle, 800, 10.0, 0, [],
+        1, 500, ArmorClass.Heavy, 25, WeaponClass.AntiArmor, 5, 4.0, 5, AntiAir: false, Deployable: false);
 
     public bool CanBuild(Faction faction, IReadOnlySet<string> ownedBuildingTypes, string typeId) => true;
 

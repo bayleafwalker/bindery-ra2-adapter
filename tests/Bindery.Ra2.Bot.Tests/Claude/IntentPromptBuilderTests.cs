@@ -29,6 +29,16 @@ public sealed class IntentPromptBuilderTests
     }
 
     [Fact]
+    public void Prompt_threats_carry_the_likely_attack_path()
+    {
+        IntentPrompt prompt = new IntentPromptBuilder().Build(ClaudeFixtures.Context(), StrategistMode.Strategic);
+
+        using JsonDocument situation = JsonDocument.Parse(prompt.Situation);
+        JsonElement threat = Assert.Single(situation.RootElement.GetProperty("features").GetProperty("threats").EnumerateArray().ToList());
+        Assert.Equal([3, 2, 1], threat.GetProperty("likelyAttackPath").EnumerateArray().Select(static r => r.GetInt32()));
+    }
+
+    [Fact]
     public void Prompt_does_not_leak_rules_for_enemy_tech_the_player_has_not_seen()
     {
         // The rules database knows the Soviet Iron Curtain, but the Allied player

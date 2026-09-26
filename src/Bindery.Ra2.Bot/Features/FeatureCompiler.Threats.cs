@@ -34,6 +34,13 @@ public sealed partial class FeatureCompiler
                 ? UnknownSeconds
                 : Math.Min(UnknownSeconds, threatening.Min(c => graph.TravelSeconds(c.LastSeenRegion, region, options.SlowestTypicalSpeed)));
 
+            // Ties on ETA break by contact id so the chosen path is deterministic.
+            EnemyContact? nearest = threatening
+                .OrderBy(c => graph.TravelSeconds(c.LastSeenRegion, region, options.SlowestTypicalSpeed))
+                .ThenBy(static c => c.Id.Value)
+                .FirstOrDefault();
+            IReadOnlyList<RegionId> attackPath = nearest is null ? [] : graph.Path(nearest.LastSeenRegion, region);
+
             double reinforcement = clusters.Count == 0
                 ? UnknownSeconds
                 : Math.Min(UnknownSeconds, clusters.Min(c => c.Region == region ? 0.0 : graph.TravelSeconds(c.Region, region, options.SlowestTypicalSpeed)));
@@ -46,7 +53,7 @@ public sealed partial class FeatureCompiler
 
             result.Add(new ThreatAssessment(
                 region, enemyValue, ownArmyValue, localForceRatio, enemyEta, reinforcement,
-                baseRegionSet.Contains(region), confidence));
+                baseRegionSet.Contains(region), confidence, attackPath));
         }
         return result;
     }

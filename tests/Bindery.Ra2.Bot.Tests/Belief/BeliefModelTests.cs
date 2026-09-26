@@ -96,7 +96,27 @@ public sealed class BeliefModelTests
 
         EnemyContact contact = Assert.Single(after.Enemies);
         Assert.False(contact.ConfirmedDestroyed);
-        Assert.True(contact.Confidence < 1.0);
+        // Vacancy evidence: 10 s against the 10 s vacancy half-life, not the 60 s ordinary half-life.
+        Assert.Equal(0.5, contact.Confidence, precision: 6);
+    }
+
+    /// <summary>
+    /// Contrast case for vacancy decay: the same 10 s absence with the
+    /// last-seen region out of sight is no evidence the unit left, so only
+    /// the slower ordinary half-life applies.
+    /// </summary>
+    [Fact]
+    public void AbsentFromUnseenRegion_DecaysOnTheOrdinaryHalfLife_NotTheVacancyHalfLife()
+    {
+        BeliefModel model = NewModel(confidenceHalfLife: 60.0, vacancyHalfLife: 10.0, floor: 0.01);
+        ObservedEntity enemy = new(new EntityId(3), EnemyPlayer, "rifleman", new Cell(90, 90), 100, 100);
+
+        model.Apply(Frame(0, [enemy], visible: new HashSet<RegionId> { TestMaps.EnemyStart }));
+        BeliefSnapshot after = model.Apply(Frame(10, [], visible: new HashSet<RegionId> { TestMaps.Home }));
+
+        EnemyContact contact = Assert.Single(after.Enemies);
+        Assert.False(contact.ConfirmedDestroyed);
+        Assert.Equal(Math.Pow(0.5, 10.0 / 60.0), contact.Confidence, precision: 6);
     }
 
     [Fact]

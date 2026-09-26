@@ -59,6 +59,12 @@ public sealed record ScoutingFeatures(
 /// Seconds-valued features use 9999 for "unreachable" or "never observed" (as
 /// <see cref="EconomyFeatures.CashRunwaySeconds"/> caps at 9999), so every feature is finite.
 /// </remarks>
+/// <param name="LikelyAttackPath">
+/// Ground route, as regions from the threatening contact's last-seen region to
+/// <see cref="Region"/> inclusive, taken by the contact with the smallest ETA:
+/// the approach a defender would hold. Empty when nothing threatens the region
+/// or it has no ground route; null only in hand-built fixtures that predate it.
+/// </param>
 public sealed record ThreatAssessment(
     RegionId Region,
     double EnemyValue,
@@ -67,7 +73,8 @@ public sealed record ThreatAssessment(
     double EnemyEtaSeconds,
     double ReinforcementSeconds,
     bool IsBase,
-    double Confidence);
+    double Confidence,
+    IReadOnlyList<RegionId>? LikelyAttackPath = null);
 
 public enum StrategicEventKind
 {

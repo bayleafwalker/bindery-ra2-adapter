@@ -3,8 +3,10 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Bindery.Ra2.Bot.Belief;
 using Bindery.Ra2.Bot.Features;
+using Bindery.Ra2.Bot.Sim;
 using Bindery.Ra2.Bot.Tests.Belief;
 using Xunit;
+using SimTests = Bindery.Ra2.Bot.Tests.Sim;
 
 namespace Bindery.Ra2.Bot.Tests.Features;
 
@@ -35,50 +37,89 @@ public sealed class FeatureCompilerTests
     private static ObservedEntity OwnBuilding(uint id) => new(new EntityId(id), Self, "conyard", TestMaps.Simple().Regions[0].Center, 1000, 1000);
 
     /// <summary>
-    /// Required fog invariant test (spec invariant 1): two matches whose
-    /// hidden enemy state differs — one has an enemy army camped in
-    /// <c>EnemyStart</c>, the other has none there at all — but whose
-    /// <see cref="ObservationFrame"/> sequences are, and must be, identical
-    /// because that region is never in <see cref="ObservationFrame.VisibleRegions"/>
-    /// and the hidden unit is therefore never in <see cref="ObservationFrame.Entities"/>
-    /// either (a belief-mode adapter never populates what the player cannot
-    /// see). Belief and features can only ever be a pure function of the
-    /// frames they are handed, so the two runs must compile to
-    /// byte-identical <see cref="StrategicFeatures"/>. This is the concrete
-    /// counterpart of the spec's "mutate hidden state, diff the context
-    /// hash" arena probe, exercised at the unit level for this package.
+    /// Required fog invariant test (spec invariant 1). Two simulated matches
+    /// with the same seed differ only in hidden enemy state: in match A the
+    /// enemy has extra credits, a queued item, and an army and a war factory
+    /// silently placed in its never-visible start region; match B has none of
+    /// that. Each match's belief-mode frames go through its own belief model
+    /// and feature compiler, so a leak anywhere from the simulator's fog
+    /// filter through Belief to Features makes the two compiled
+    /// <see cref="StrategicFeatures"/> differ. A leak that is the same in
+    /// both runs (e.g. features inventing enemy tech from the rules or the
+    /// enemy's faction) cannot show up in a diff, so the test also checks
+    /// that <see cref="EnemyFeatures.KnownTech"/> only ever names enemy types
+    /// that actually appeared in a belief-mode frame.
     /// </summary>
     [Fact]
     public void CompiledFeatures_AreIdentical_WhenHiddenEnemyStateDiffers()
     {
-        FakeRulesDatabase rules = Rules();
+        PlayerId observer = new(0);
+        PlayerId enemy = new(1);
+        SimTests.TestRules rules = new();
+        SkirmishSimulation simA = new(SimTests.TestMaps.TwoPlayerCombat(), rules, SimTests.SimTestHelpers.TwoPlayers(seed: 3, maxSeconds: 60));
+        SkirmishSimulation simB = new(SimTests.TestMaps.TwoPlayerCombat(), rules, SimTests.SimTestHelpers.TwoPlayers(seed: 3, maxSeconds: 60));
+        simA.Step();
+        simB.Step();
+
+        RegionId enemyStart = simA.StartRegionOf(enemy);
+        Assert.DoesNotContain(enemyStart, simA.VisibleRegionsForProbe(observer));
+        SimLeakageProbe.PerturbHidden(simA, observer);
+        simA.DebugSpawnSilently(enemy, SimTests.TestRules.Strong, enemyStart);
+        simA.DebugSpawnSilently(enemy, SimTests.TestRules.WarFactory, enemyStart);
+        Assert.NotEqual(simA.ComputeStateHash(), simB.ComputeStateHash());
+
         BeliefModel beliefA = new(rules, new BeliefOptions());
         BeliefModel beliefB = new(rules, new BeliefOptions());
         FeatureCompiler compilerA = new(rules, new FeatureOptions());
         FeatureCompiler compilerB = new(rules, new FeatureOptions());
+        HashSet<string> enemyTypesInFrames = new(StringComparer.Ordinal);
 
-        ObservedEntity ownBuilding = OwnBuilding(1);
-
-        // Both matches feed belief the same fog-correct observation stream:
-        // the unseen enemy garrison (whether it exists, in match A, or not,
-        // in match B) never appears, since EnemyStart is never visible.
-        static ObservationFrame FrameAt(double t, int credits) => new(
-            GameTime.FromSeconds(t), ObservationMode.Belief, Self, Faction.Allied, credits,
-            new PowerState(100, 50), [OwnBuilding(1)], [], [], new HashSet<RegionId> { TestMaps.Home },
-            TestMaps.Simple());
-
-        StrategicFeatures? lastA = null, lastB = null;
-        for (int i = 0; i < 5; i++)
+        int compared = 0;
+        for (int frame = 0; frame < GameTime.FramesPerSecond * 10; frame++)
         {
-            double t = i * 5.0;
-            int credits = 5000 + i * 10;
-            lastA = compilerA.Compile(beliefA.Apply(FrameAt(t, credits)));
-            lastB = compilerB.Compile(beliefB.Apply(FrameAt(t, credits)));
+            simA.Step();
+            simB.Step();
+            ObservationFrame frameA = simA.Observe(observer, ObservationMode.Belief);
+            ObservationFrame frameB = simB.Observe(observer, ObservationMode.Belief);
+            foreach (ObservedEntity e in frameA.Entities.Where(e => e.Owner != observer)) enemyTypesInFrames.Add(e.TypeId);
+
+            StrategicFeatures featuresA = compilerA.Compile(beliefA.Apply(frameA));
+            StrategicFeatures featuresB = compilerB.Compile(beliefB.Apply(frameB));
+
+            Assert.Equal(
+                JsonSerializer.Serialize(featuresB, BotJson.Options),
+                JsonSerializer.Serialize(featuresA, BotJson.Options));
+            Assert.Subset(enemyTypesInFrames, new HashSet<string>(featuresA.Enemy.KnownTech, StringComparer.Ordinal));
+            compared++;
         }
 
-        JsonElement jsonA = JsonSerializer.SerializeToElement(lastA, BotJson.Options);
-        JsonElement jsonB = JsonSerializer.SerializeToElement(lastB, BotJson.Options);
-        Assert.Equal(jsonA.GetRawText(), jsonB.GetRawText());
+        Assert.Equal(GameTime.FramesPerSecond * 10, compared);
+        // The hidden army and war factory were never seen, so the enemy's tech is still unknown.
+        Assert.DoesNotContain(SimTests.TestRules.WarFactory, enemyTypesInFrames);
+        Assert.DoesNotContain(SimTests.TestRules.Strong, enemyTypesInFrames);
+    }
+
+    [Fact]
+    public void KnownTech_IsEmptyBeforeAnySighting_AndExactlyTheSeenTypeAfterOne()
+    {
+        // Enemy-faction types in the rules must not become known tech just by existing.
+        UnitRule rhino = FakeRulesDatabase.Rule("rhino", Faction.Soviet, EntityKind.Vehicle, UnitRole.AntiArmor, QueueKind.Vehicle, 900);
+        UnitRule sovietFactory = FakeRulesDatabase.Rule("sovietfactory", Faction.Soviet, EntityKind.Building, UnitRole.Production, QueueKind.Vehicle, 2000);
+        FakeRulesDatabase rules = new([Rifleman, Harvester, ConYard, War, rhino, sovietFactory]);
+        BeliefModel belief = new(rules, new BeliefOptions());
+        FeatureCompiler compiler = new(rules, new FeatureOptions());
+        ObservedEntity ownBuilding = OwnBuilding(1);
+        ObservedEntity enemyFactory = new(new EntityId(50), EnemyPlayer, "warfactory", TestMaps.Simple().Regions[0].Center, 1000, 1000);
+
+        StrategicFeatures before = compiler.Compile(belief.Apply(Frame(0, 5000, [ownBuilding])));
+        Assert.Empty(before.Enemy.KnownTech);
+
+        StrategicFeatures seen = compiler.Compile(belief.Apply(Frame(5, 5000, [ownBuilding, enemyFactory])));
+        Assert.Equal(["warfactory"], seen.Enemy.KnownTech.OrderBy(static t => t, StringComparer.Ordinal));
+
+        // Memory: out of sight again, the tech stays known and nothing else is added.
+        StrategicFeatures later = compiler.Compile(belief.Apply(Frame(10, 5000, [ownBuilding])));
+        Assert.Equal(["warfactory"], later.Enemy.KnownTech.OrderBy(static t => t, StringComparer.Ordinal));
     }
 
     [Fact]
@@ -155,6 +196,27 @@ public sealed class FeatureCompilerTests
         Assert.True(threat.IsBase);
         Assert.Equal(10.0, threat.LocalForceRatio);
         Assert.Equal(FeatureCompiler.UnknownSeconds, threat.EnemyEtaSeconds);
+    }
+
+    /// <summary>
+    /// The strategist needs the approach an attack will take (proposal: "likely
+    /// attack paths"), not just its ETA, to pick a defensive choke.
+    /// </summary>
+    [Fact]
+    public void ThreatAssessment_CarriesTheGroundPathFromTheNearestThreatToTheRegion()
+    {
+        FakeRulesDatabase rules = Rules();
+        BeliefModel belief = new(rules, new BeliefOptions());
+        FeatureCompiler compiler = new(rules, new FeatureOptions(ThreatSearchCells: 100));
+        ObservedEntity rifle = new(new EntityId(40), EnemyPlayer, "rifleman", TestMaps.Simple().Regions[2].Center, 100, 100);
+
+        StrategicFeatures quiet = compiler.Compile(belief.Apply(Frame(0, 5000, [OwnBuilding(1)])));
+        Assert.Empty(Assert.Single(quiet.Threats).LikelyAttackPath!);
+
+        StrategicFeatures threatened = compiler.Compile(belief.Apply(Frame(
+            1, 5000, [OwnBuilding(1), rifle], visible: new HashSet<RegionId> { TestMaps.Home, TestMaps.EnemyStart })));
+        ThreatAssessment threat = Assert.Single(threatened.Threats);
+        Assert.Equal([TestMaps.EnemyStart, TestMaps.Middle, TestMaps.Home], threat.LikelyAttackPath!);
     }
 
     [Fact]

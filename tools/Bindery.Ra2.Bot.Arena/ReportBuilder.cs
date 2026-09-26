@@ -20,6 +20,9 @@ public static class ReportBuilder
         sb.AppendLine();
         sb.AppendLine($"Results are from the bindery region simulator with the approximate `{rulesetId}` rules, not retail RA2; they are directional.");
         sb.AppendLine($"Every side is a full `BotRuntime`; opponents are pinned-playbook styles. The arm plays Allied on odd seeds and Soviet on even seeds. Match limit {F(options.MaxSeconds, "0")} s (a timeout is won on final asset value).");
+        // Disclosed because the held-out split holds out maps only: these same opponents chose the selector's
+        // default playbook, so a selector (or distilled) win rate against them is partly in-sample.
+        sb.AppendLine("Opponents are not held out: the selector's default playbook was chosen from a style-versus-style matrix against these same pinned-playbook opponents (training maps only), so selector and distilled-arm win rates against them are partly in-sample. The held-out split holds out maps, not opponents.");
         List<string> labels = matches.SelectMany(static m => m.Players["arm"].Labels).Distinct(StringComparer.Ordinal).OrderBy(static l => l, StringComparer.Ordinal).ToList();
         if (labels.Count > 0) sb.AppendLine($"Labels in this run: {string.Join(", ", labels.Select(static l => $"`{l}`"))}.");
         sb.AppendLine();
