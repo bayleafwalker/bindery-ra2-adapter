@@ -123,4 +123,48 @@ public sealed class BudgetLedgerTests
         Assert.Throws<ArgumentException>(() => ledger.Reserve("navy", "ops", 1));
         Assert.Equal(BudgetPools.Army, BudgetPools.Normalise("ARMY"));
     }
+    /// <summary>
+    /// Accrual mode carries balances across periods, so when credits fall the balances must be cut to the new
+    /// capacity, or the caps (and the reservations they allow) outlive money that is gone (invariant 4).
+    /// </summary>
+    [Fact]
+    public void Accrual_ledger_cuts_balances_when_capacity_falls()
+    {
+        BudgetLedger ledger = new(new LedgerOptions(1.0, AccrueByShare: true));
+        ledger.BeginPeriod(Fx.T(0), 2000, 0, Even);
+        ledger.BeginPeriod(Fx.T(1), 100, 0, Even);
+        Assert.Equal(100, BudgetPools.All.Sum(ledger.Balance));
+        Assert.Equal(100, ledger.Reserve(BudgetPools.Army, "ops", 2000) + ledger.Reserve(BudgetPools.Economy, "ops", 2000)
+            + ledger.Reserve(BudgetPools.Tech, "ops", 2000) + ledger.Reserve(BudgetPools.Defense, "ops", 2000));
+    }
+
+    [Fact]
+    public void Accrual_ledger_never_over_reserves_across_periods()
+    {
+        Random random = new(4242);
+        string[] controllers = ["ops", "tactics"];
+        BudgetLedger ledger = new(new LedgerOptions(1.0, AccrueByShare: true));
+        for (int period = 0; period < 200; period++)
+        {
+            int credits = random.Next(-200, 4000);
+            double income = random.Next(0, 1200);
+            ledger.BeginPeriod(Fx.T(period), credits, income,
+                new BudgetShares(random.NextDouble(), random.NextDouble(), random.NextDouble(), random.NextDouble()));
+            Assert.True(BudgetPools.All.Sum(ledger.PoolCapacity) <= ledger.Capacity, $"period {period}: caps exceed capacity {ledger.Capacity}");
+            for (int step = 0; step < 20; step++)
+            {
+                string pool = BudgetPools.All[random.Next(4)];
+                string controller = controllers[random.Next(controllers.Length)];
+                int amount = random.Next(0, 1500);
+                switch (random.Next(3))
+                {
+                    case 0: ledger.Reserve(pool, controller, amount); break;
+                    case 1: ledger.Spend(pool, controller, amount); break;
+                    default: ledger.TrySpendAny(controller, pool, amount); break;
+                }
+                Assert.True(ledger.TotalReserved + ledger.TotalSpent <= ledger.Capacity,
+                    $"period {period} step {step}: reserved {ledger.TotalReserved} + spent {ledger.TotalSpent} > {ledger.Capacity}");
+            }
+        }
+    }
 }
