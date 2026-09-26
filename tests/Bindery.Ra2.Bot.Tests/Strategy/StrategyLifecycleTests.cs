@@ -48,13 +48,16 @@ public sealed class StrategyLifecycleTests
         Assert.Single(slow.Calls);
         Assert.StartsWith("fb-", arbiter.Active?.IntentId);
 
-        // The attack arrives while the slow request is in flight: its answer is discarded, and the request the
-        // event triggered starts on the next frame, whose own features carry no event any more.
+        // The attack arrives while the slow request is in flight: that request can no longer be applied, so it is
+        // superseded at once and the request the event triggered starts on the same frame. It must go to the slow
+        // strategist, never to the fast one refining a placeholder.
         Tick(scheduler, 2, [new StrategicEvent(StrategicEventKind.BaseUnderAttack, Fx.T(2), 0.9, "base")]);
-        slow.CompleteLast("overtaken", "allied-boom", StrategicPosture.Boom);
+        Assert.Single(log.OfKind(DecisionRecordKinds.ProposalFailed));
+        Assert.Equal(2, slow.Calls.Count);
+        slow.CompleteLast("answer", "allied-boom", StrategicPosture.Boom);
         Tick(scheduler, 3);
 
-        Assert.Single(log.OfKind(DecisionRecordKinds.LateDiscarded));
+        Assert.Empty(log.OfKind(DecisionRecordKinds.LateDiscarded));
         Assert.Equal(2, slow.Calls.Count);
         Assert.Empty(fast.Contexts);
     }
