@@ -48,12 +48,13 @@ public sealed class BenchmarkTests
     }
 
     [Fact]
-    public void Contested_benchmark_defaults_to_live_mirror_opponents_with_a_faction_handicap_and_noise()
+    public void Contested_benchmark_defaults_to_live_mirror_and_held_out_opponents_with_a_faction_handicap_and_noise()
     {
         CliOptions options = CliOptions.Parse(["run", "--benchmark", "contested"]);
 
         Assert.Equal(BenchmarkSettings.Contested, options.Benchmark);
-        Assert.All(options.Opponents, static o => Assert.StartsWith(BotAgentFactory.LivePrefix, o, StringComparison.Ordinal));
+        Assert.All(options.Opponents, static o => Assert.True(o.StartsWith(BotAgentFactory.LivePrefix, StringComparison.Ordinal) || OpponentSets.IsHeldOut(o), o));
+        Assert.Equal(5, options.Opponents.Count(static o => o.StartsWith(BotAgentFactory.LivePrefix, StringComparison.Ordinal)));
         SimSettings allied = options.Benchmark.ToSimSettings(1, 600, new PlayerId(0), Faction.Allied, new PlayerId(1), Faction.Soviet);
         Assert.Equal(20_000, allied.Players[0].StartingCredits);
         Assert.Null(allied.Players[1].StartingCredits);

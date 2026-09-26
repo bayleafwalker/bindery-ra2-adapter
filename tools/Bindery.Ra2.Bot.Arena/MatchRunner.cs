@@ -87,7 +87,7 @@ public static class MatchRunner
     {
         Faction armFaction = ArmFaction(seed);
         Faction opponentFaction = armFaction == Faction.Allied ? Faction.Soviet : Faction.Allied;
-        SimSettings settings = (benchmark ?? BenchmarkSettings.Standard).ToSimSettings(seed, maxSeconds, ArmPlayer, armFaction, OpponentPlayer, opponentFaction);
+        SimSettings settings = (benchmark ?? BenchmarkSettings.Standard).ToSimSettings(seed, maxSeconds, ArmPlayer, armFaction, OpponentPlayer, opponentFaction, OpponentSets.IncomeHandicap(opponent));
         SkirmishSimulation sim = new(map, rules, settings);
 
         ObservationMode mode = arm.Oracle ? ObservationMode.Oracle : ObservationMode.Belief;

@@ -29,10 +29,12 @@ public sealed record BenchmarkSettings(string Name, double OpponentIncomeMultipl
     /// Soviet edge, and combat carries ±25% seeded noise, so outcomes vary with the seed within each faction.
     /// Calibration (2026-09-26, the selector against the five live styles, all five maps, 6 seeds, 150 matches):
     /// selector 73/150 (0.49), as Allied 28/75, as Soviet 45/75; noiseless the same setting gave 69/150.
+    /// The defaults also include the held-out opponents (<see cref="OpponentSets.HeldOut"/>), so every default run
+    /// reports an out-of-sample win rate next to the live styles' partly in-sample one.
     /// </summary>
     public static BenchmarkSettings Contested { get; } = new("contested", CombatNoise: 0.25, AlliedStartingCredits: 20_000)
     {
-        DefaultOpponents = ["live-balanced", "live-rush", "live-tech", "live-turtle", "live-harass"],
+        DefaultOpponents = ["live-balanced", "live-rush", "live-tech", "live-turtle", "live-harass", .. Bindery.Ra2.Bot.Sim.Opponents.OpponentProfiles.HeldOutStyles],
     };
 
     /// <summary>Opponents a run uses when <c>--opponents</c> is not given; null keeps the CLI default.</summary>
@@ -46,11 +48,12 @@ public sealed record BenchmarkSettings(string Name, double OpponentIncomeMultipl
     };
 
     /// <summary>The simulator settings for one match under this benchmark.</summary>
-    public SimSettings ToSimSettings(int seed, double maxSeconds, PlayerId arm, Faction armFaction, PlayerId opponent, Faction opponentFaction) =>
+    /// <param name="opponentHandicap">The opponent's own income multiplier (<see cref="OpponentSets.IncomeHandicap"/>), on top of the benchmark's.</param>
+    public SimSettings ToSimSettings(int seed, double maxSeconds, PlayerId arm, Faction armFaction, PlayerId opponent, Faction opponentFaction, double opponentHandicap = 1.0) =>
         new(seed, maxSeconds,
             [
                 new SimPlayer(arm, armFaction, armFaction == Faction.Allied ? AlliedIncomeMultiplier : 1.0, armFaction == Faction.Allied ? AlliedStartingCredits : null),
-                new SimPlayer(opponent, opponentFaction, OpponentIncomeMultiplier * (opponentFaction == Faction.Allied ? AlliedIncomeMultiplier : 1.0),
+                new SimPlayer(opponent, opponentFaction, opponentHandicap * OpponentIncomeMultiplier * (opponentFaction == Faction.Allied ? AlliedIncomeMultiplier : 1.0),
                     OpponentStartingCredits ?? (opponentFaction == Faction.Allied ? AlliedStartingCredits : null)),
             ],
             CombatNoise: CombatNoise);

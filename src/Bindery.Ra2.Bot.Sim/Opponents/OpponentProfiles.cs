@@ -45,14 +45,31 @@ public sealed record OpponentScript(
 }
 
 /// <summary>
-/// The four independent opponent styles (<c>ai-rush</c>, <c>ai-balanced</c>, <c>ai-turtle</c>, <c>ai-air</c>) per
+/// The independent opponent styles (training <c>ai-rush</c>, <c>ai-balanced</c>, <c>ai-turtle</c>, <c>ai-air</c>; held-out <c>ai-horde</c>, <c>ai-armor</c>) per
 /// faction, written against the fixture's type ids. They share no code or tables with the bot's playbooks: they
 /// are deliberately a different author's view of how to play, so bot changes cannot move both sides.
 /// </summary>
 public static class OpponentProfiles
 {
-    /// <summary>Opponent names the arena accepts, without difficulty suffix.</summary>
+    /// <summary>The training styles: the arena's <c>--opponents all</c> and the tuner's default opponents.</summary>
     public static IReadOnlyList<string> Styles { get; } = ["ai-rush", "ai-balanced", "ai-turtle", "ai-air"];
+
+    /// <summary>
+    /// Styles written for evaluation only and never used to choose defaults, train the bandit, build distillation
+    /// datasets or tune (the arena's held-out opponent set). <c>ai-horde</c> masses cheap infantry behind early
+    /// defences from a barracks-first build and attacks late with large growing waves, the opposite of every
+    /// training style's small early task force. <c>ai-armor</c> screens a second war factory with infantry and
+    /// pillboxes and attacks with large tank waves, and carries an income handicap (<see cref="IncomeHandicap"/>).
+    /// </summary>
+    public static IReadOnlyList<string> HeldOutStyles { get; } = ["ai-horde", "ai-armor"];
+
+    /// <summary>
+    /// Multiplier on the harvest income of a style, whatever the benchmark: 1.5 for <c>ai-armor</c> (a retail-style
+    /// AI economy bonus, which a tank-first script needs to survive the bot's infantry timing: without it the
+    /// selector won 17 of 20 against it; with it 11 of 20, 2026-09-26, contested benchmark, all maps, 4 seeds),
+    /// 1 for every other style.
+    /// </summary>
+    public static double IncomeHandicap(string style) => style == "ai-armor" ? 1.5 : 1.0;
 
     /// <summary>Parses <c>ai-style</c> or <c>ai-style:difficulty</c> (default hard); false for any other name.</summary>
     public static bool TryParse(string name, out string style, out OpponentDifficulty difficulty)
@@ -73,7 +90,7 @@ public static class OpponentProfiles
                 default: return false;
             }
         }
-        return Styles.Contains(style);
+        return Styles.Contains(style) || HeldOutStyles.Contains(style);
     }
 
     /// <summary>The script for a style and faction. Yuri has no fixture units and plays the Soviet script.</summary>
@@ -95,6 +112,14 @@ public static class OpponentProfiles
                 [new("GAPOWR", 1), new("GAPILE", 1), new("GAREFN", 1), new("GAWEAP", 1), new("GAPOWR", 2)],
                 [new("PBOX", 1)], 4,
                 [new("MTNK", 3), new("E1", 2)], 1, 10, 0, 1),
+            "ai-armor" => new(
+                [new("GAPOWR", 1), new("GAPILE", 1), new("GAREFN", 1), new("GAWEAP", 1), new("GAPOWR", 2), new("GAREFN", 2), new("GAWEAP", 2), new("GAPOWR", 3)],
+                [new("PBOX", 2), new("GAPATR", 2)], 1,
+                [new("MTNK", 6), new("FV", 2), new("E1", 8)], 2, 20, 300, 2),
+            "ai-horde" => new(
+                [new("GAPOWR", 1), new("GAPILE", 1), new("GAREFN", 1), new("GAWEAP", 1), new("GAPOWR", 2), new("GAREFN", 2), new("GAPOWR", 3)],
+                [new("PBOX", 3), new("GAPATR", 1)], 3,
+                [new("E1", 10), new("MTNK", 4)], 2, 24, 360, 2),
             "ai-turtle" => new(
                 [new("GAPOWR", 1), new("GAPILE", 1), new("GAREFN", 1), new("GAWEAP", 1), new("GAPOWR", 2), new("GAREFN", 2), new("GAAIRC", 1), new("GAPOWR", 3), new("GATECH", 1), new("GAPOWR", 4), new("GAPOWR", 5)],
                 [new("PBOX", 2), new("GAPATR", 1), new("GAPRIS", 3)], 4,
@@ -114,6 +139,14 @@ public static class OpponentProfiles
                 [new("NAPOWR", 1), new("NAHAND", 1), new("NAREFN", 1), new("NAWEAP", 1), new("NAPOWR", 2)],
                 [new("NASNGN", 1)], 4,
                 [new("HTNK", 3), new("E2", 3)], 1, 10, 0, 1),
+            "ai-armor" => new(
+                [new("NAPOWR", 1), new("NAHAND", 1), new("NAREFN", 1), new("NAWEAP", 1), new("NAPOWR", 2), new("NAREFN", 2), new("NAWEAP", 2), new("NAPOWR", 3)],
+                [new("NASNGN", 2), new("NAFLAK", 2)], 1,
+                [new("HTNK", 6), new("HTK", 1), new("E2", 10)], 2, 20, 300, 2),
+            "ai-horde" => new(
+                [new("NAPOWR", 1), new("NAHAND", 1), new("NAREFN", 1), new("NAWEAP", 1), new("NAPOWR", 2), new("NAREFN", 2), new("NAPOWR", 3)],
+                [new("NASNGN", 3), new("NAFLAK", 1)], 3,
+                [new("E2", 12), new("HTNK", 4)], 2, 24, 360, 2),
             "ai-turtle" => new(
                 [new("NAPOWR", 1), new("NAHAND", 1), new("NAREFN", 1), new("NAWEAP", 1), new("NAPOWR", 2), new("NAREFN", 2), new("NARADR", 1), new("NAPOWR", 3), new("NATECH", 1), new("NAPOWR", 4), new("NAPOWR", 5)],
                 [new("NASNGN", 2), new("NAFLAK", 1), new("NATSLA", 3)], 4,

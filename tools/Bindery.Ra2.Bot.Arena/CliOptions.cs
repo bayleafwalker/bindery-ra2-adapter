@@ -20,7 +20,7 @@ public sealed record CliOptions(
     public const double DefaultMaxSeconds = 1200;
 
     public const string Usage =
-        "Usage: arena run --arms a,b --maps training|heldout|all --opponents ai-rush,ai-balanced[:easy|:medium|:hard],rush,turtle,...|all --seeds N --out <dir> " +
+        "Usage: arena run --arms a,b --maps training|heldout|all --opponents ai-rush,ai-balanced[:easy|:medium|:hard],rush,turtle,live-rush,ai-horde,...|all|training|heldout --seeds N --out <dir> " +
         "[--oracle [both|all]] [--llm-fake] [--max-seconds N] [--dataset <decisions.ndjson>] [--llm-latency <game seconds>] [--trace <dir>] " +
         "[--benchmark standard|contested] [--opponent-income X] [--opponent-credits N] [--combat-noise F] [--allied-income X] [--allied-credits N] [--baseline <arm>] [--no-decisions] [--write-adoption <path>] [--personality aggressive,turtle,tech,harasser,none]\n" +
         "       (arms: selector, bandit, llm-shadow, llm, llm+fast, distilled, llm-t0..llm-t3 or tiers, all; any with -oracle)\n" +
@@ -165,7 +165,15 @@ public sealed record CliOptions(
             };
         }
         opponents ??= benchmark.DefaultOpponents is { } preset ? [.. preset] : ["balanced"];
-        if (opponents.Count == 1 && opponents[0] == "all") opponents = [.. BotAgentFactory.AllOpponents];
+        // Groups: all (the scripted training styles, the frozen pinned styles and the held-out set), training (every
+        // training opponent, live-* included) and heldout.
+        opponents = [.. opponents.SelectMany(static o => o switch
+        {
+            "all" => [.. BotAgentFactory.AllOpponents, .. OpponentSets.HeldOut],
+            "training" => OpponentSets.Training,
+            "heldout" => OpponentSets.HeldOut,
+            _ => (IEnumerable<string>)[o],
+        }).Distinct(StringComparer.Ordinal)];
         arms = [.. arms.SelectMany(static a => a switch
         {
             "all" => BotAgentFactory.Arms,

@@ -84,7 +84,7 @@ a contract change records it in its report instead of editing the file.
 | D. Operations & tactics | `src/Bindery.Ra2.Bot/Operations/`, `src/Bindery.Ra2.Bot/Tactics/` | `OperationalPlanner` (budget split by intent shares; production chosen to close composition gaps using rules cost/build time/effectiveness vs known enemy composition; tech path via `PathTo`; power upkeep; harvester/refinery targets; build placement at region level with candidate cells around own base; squad formation from unleased combat units; objective assignment by priority; reinforcement; attack only when attack conditions hold), tactical controllers (`SquadController`: target selection by effectiveness × low health, focus fire, retreat/re-engage hysteresis, path via region graph; `HarvesterSafetyController`; `RepairController`; `DeployController` for MCV/deployables). |
 | E. Deterministic strategists | `src/Bindery.Ra2.Bot/Strategy/` | `PlaybookSelector` (rule-based baseline over features), `ContextualBanditStrategist` (LinUCB over playbooks with a fixed feature vector, `IOutcomeLearner`), `FeatureVector` (shared numeric encoding, documented order), `DistilledStrategist` (multinomial logistic regression trained from a decision dataset; escalates to an inner strategist when the state is out of distribution by Mahalanobis-diagonal distance), `DecisionDataset` (export/import from decision logs). |
 | F. Claude strategist | `src/Bindery.Ra2.Bot.Claude/` | `ClaudeStrategist` (Anthropic C# SDK 12.50.0; `claude-opus-5`; structured output via `OutputConfig`/`JsonOutputFormat` with a JSON schema for an `IntentDraft` DTO; adaptive thinking; effort option; per-request timeout; refusal and max-token stop reasons return null with a logged reason; token usage into `ProposalCost`), `IntentPromptBuilder` (compact deterministic JSON of features, relevant rule facts and the faction's playbook catalogue; stable system prompt first for prompt caching), `IntentDraftMapper` (DTO → `StrategicIntent`), `ClaudeStrategistOptions` including `Mode = Strategic \| Refine` (Refine = the `llm+fast` arm: may only change parameters of the active playbook). Behind an `IMessageClient` seam so tests run on canned responses; one live smoke test runs only when `BINDERY_BOT_LIVE_LLM=1`. |
-| G. Simulator & arena | `src/Bindery.Ra2.Bot.Sim/`, `tools/Bindery.Ra2.Bot.Arena/` | Region-graph skirmish simulator: seeded RNG, 3–5 authored maps (2-player; held-out split), economy (harvest trips, ore depletion), production queues with prerequisites and power penalty, building placement, movement along region links, combat resolution per region using rules damage × effectiveness, fog per player (sight by region presence + last-seen), per-player `IObservationSource`/`ICommandSink`, oracle mode, reset, replay log. Opponents: the independent scripted AI in `src/Bindery.Ra2.Bot.Sim/Opponents/` (`ai-rush`, `ai-balanced`, `ai-turtle`, `ai-air`, easy/medium/hard; retail-style build lists and task-force waves, own observation frame only, no code shared with the bot's planner), and styles (`rush`, `turtle`, `tech`, `harass`, `balanced`) pinned to playbooks on a frozen copy of the stack as of 7f3e2c7 (`tools/Bindery.Ra2.Bot.Baseline`; `live-<style>` on the live stack). Arena CLI: arms × maps × opponents × seeds → JSON + Markdown report with win rate (held-out maps separate), invalid plans, decision lateness, strategic churn, production idle time, resource float, trade efficiency, inference cost, hidden-information leakage probe. |
+| G. Simulator & arena | `src/Bindery.Ra2.Bot.Sim/`, `tools/Bindery.Ra2.Bot.Arena/` | Region-graph skirmish simulator: seeded RNG, 3–5 authored maps (2-player; held-out split), economy (harvest trips, ore depletion), production queues with prerequisites and power penalty, building placement, movement along region links, combat resolution per region using rules damage × effectiveness, fog per player (sight by region presence + last-seen), per-player `IObservationSource`/`ICommandSink`, oracle mode, reset, replay log. Opponents: the independent scripted AI in `src/Bindery.Ra2.Bot.Sim/Opponents/` (training `ai-rush`, `ai-balanced`, `ai-turtle`, `ai-air`, held-out `ai-horde`, `ai-armor`; easy/medium/hard; retail-style build lists and task-force waves, own observation frame only, no code shared with the bot's planner), and styles (`rush`, `turtle`, `tech`, `harass`, `balanced`) pinned to playbooks on a frozen copy of the stack as of 7f3e2c7 (`tools/Bindery.Ra2.Bot.Baseline`; `live-<style>` on the live stack). Arena CLI: arms × maps × opponents × seeds → JSON + Markdown report with win rate (held-out maps and held-out opponents separate), invalid plans, decision lateness, strategic churn, production idle time, resource float, trade efficiency, inference cost, hidden-information leakage probe. |
 | H. RA2 bridge & docs | `src/Bindery.Ra2.Adapter/Bot/`, adapter tests for it, `README.md`, CI | `Ra2ObservationAssembler` (folds normalized ra2yrcpp observations into `ObservationFrame`s; fields the telemetry does not carry are reported as missing, not invented), `IRa2CommandTransport` seam and `Ra2CommandSink`, `Ra2BotHost` (the host loop: telemetry source → normalizer → assembler → `BotRuntime.Tick` → sink, flushed per frame, until match end; tested against `RecordedRa2TelemetrySource` and a fake transport), CI steps building and testing the bot projects on Linux and Windows. |
 
 ## Arena arms
@@ -188,14 +188,30 @@ Recorded when the eight work packages were merged into `feat/strategic-bot`.
   default is the faction's mixed army, with armour kept as the answer to a
   confident armour-heavy enemy. (An earlier exploratory matrix also included
   held-out maps; the choice was re-checked on training maps before adoption.)
-  The arena's held-out split holds out maps, not opponents: the five
-  pinned-playbook styles that chose this default are the same opponents the
-  arena reports against, so selector and distilled-arm win rates against them
-  are partly in-sample, and `report.md` says so. The independent `ai-*` opponents
-  share no planner code with the bot, but the strength work iterated against
-  them (training maps only), so they too are held out by map, not by opponent.
+  The five pinned-playbook styles that chose this default, and the training
+  `ai-*` styles the strength work and the tuner iterated against, are training
+  opponents: win rates against them are partly in-sample, and `report.md` says
+  so.
+- **Held-out opponents** (`OpponentSets`, round 2). `ai-horde` (barracks-first
+  infantry mass behind early defences, large late waves) and `ai-armor`
+  (infantry-screened second war factory, large tank waves, 1.5× income) are
+  independent scripted styles written for evaluation only. The arena never
+  credits the bandit with a match against one (the episode is abandoned), never
+  puts one in a distillation dataset or teacher run, and the tuner refuses them;
+  the selector default above predates them. `--opponents heldout` runs them and
+  the contested benchmark's defaults include them. `report.md` has a "Held-out
+  opponents" section: win rate by opponent split × map split and paired tables
+  on held-out opponents only. Calibration (2026-09-26, contested, all maps, 4
+  seeds, 40 matches per arm, `--llm-fake`): selector 24/40 (0.60), bandit 21,
+  llm-shadow 24, llm 22, llm+fast 20, distilled 27; the training `ai-*` and
+  frozen pinned styles lose every contested game, which is why they cannot
+  serve as the held-out set.
 - **Arena datasets** (`dataset-<arm>.ndjson`) contain training-map decisions
-  only, so a distilled arm is never trained on the maps it is evaluated on.
+  against training opponents only, so a distilled arm is never trained on the
+  maps or opponents it is evaluated on. The distilled arm's teacher always plays
+  the training maps (whatever `--maps` says) and the run's training opponents
+  (the contested live styles when the run names only held-out ones); below 20
+  examples the arm is skipped with the reason recorded.
 
 ## Completeness round 1 (2026-09-26)
 

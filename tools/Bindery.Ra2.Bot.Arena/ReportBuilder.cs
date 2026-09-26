@@ -20,9 +20,9 @@ public static class ReportBuilder
         sb.AppendLine();
         sb.AppendLine($"Results are from the bindery region simulator with the approximate `{rulesetId}` rules, not retail RA2; they are directional.");
         sb.AppendLine($"The arm is a full `BotRuntime`. Opponents named `ai-*` are the independent scripted AI (`Bindery.Ra2.Bot.Sim.Opponents`, no shared planner code; `:easy`/`:medium`/`:hard`, default hard); the other opponents are pinned-playbook styles running a frozen copy of the bot's stack as of commit 7f3e2c7 (`Bindery.Ra2.Bot.Baseline`), a stationary benchmark; `live-<style>` runs a pinned style on the live stack. The arm plays Allied on odd seeds and Soviet on even seeds. Match limit {F(options.MaxSeconds, "0")} s (a timeout is won on final asset value).");
-        // Disclosed because the held-out split holds out maps only: these same opponents chose the selector's
-        // default playbook, so a selector (or distilled) win rate against them is partly in-sample.
-        sb.AppendLine("Opponents are not held out: the selector's default playbook was chosen from a style-versus-style matrix against these same pinned-playbook opponents (training maps only), so selector and distilled-arm win rates against them are partly in-sample. The held-out split holds out maps, not opponents.");
+        // Disclosed because only the held-out opponents are out of sample: the pinned styles chose the selector's
+        // default playbook, so a win rate against them is partly in-sample.
+        sb.AppendLine($"Opponents are split as well as maps. Held-out opponents ({string.Join(", ", OpponentSets.HeldOut.Select(static o => $"`{o}`"))}, independent scripted styles) are never used for the selector's default playbook, bandit learning, distillation datasets or tuning; see \"Held-out opponents\" below. Every other opponent is a training opponent: the selector's default playbook was chosen from a style-versus-style matrix against the pinned-playbook styles (training maps only), so win rates against training opponents are partly in-sample.");
         sb.AppendLine($"Benchmark: {options.Benchmark}.");
         List<string> labels = matches.SelectMany(static m => m.Players["arm"].Labels).Distinct(StringComparer.Ordinal).OrderBy(static l => l, StringComparer.Ordinal).ToList();
         if (labels.Count > 0) sb.AppendLine($"Labels in this run: {string.Join(", ", labels.Select(static l => $"`{l}`"))}.");
@@ -34,6 +34,7 @@ public static class ReportBuilder
         AppendWinRate(sb, matches);
         AppendSaturation(sb, matches, options.Baseline);
         AppendPerOpponent(sb, matches);
+        AppendHeldOutOpponents(sb, matches, options.Baseline);
         PairedReport.Append(sb, matches, options.Baseline, $"## Paired differences vs {options.Baseline}",
             baselineFor: arm => arm == options.Baseline || IsOracle(arm) ? null : options.Baseline);
         // The perception-bottleneck diagnostic: each arm against its own oracle twin on the same jobs.
@@ -58,6 +59,43 @@ public static class ReportBuilder
         sb.AppendLine();
         foreach (SkippedArm s in skipped) sb.AppendLine($"- **{s.Arm}**: {s.Reason}");
         sb.AppendLine();
+    }
+
+    /// <summary>
+    /// Win rate by opponent split and map split, then the paired tables restricted to held-out opponents: the only
+    /// results in the report that are out of sample in opponent as well as in map.
+    /// </summary>
+    private static void AppendHeldOutOpponents(StringBuilder sb, IReadOnlyList<MatchRecord> matches, string baseline)
+    {
+        sb.AppendLine("## Held-out opponents");
+        sb.AppendLine();
+        List<MatchRecord> heldOut = [.. matches.Where(static m => OpponentSets.IsHeldOut(m.Opponent))];
+        if (heldOut.Count == 0)
+        {
+            sb.AppendLine($"No held-out opponent in this run ({string.Join(", ", OpponentSets.HeldOut.Select(static o => $"`{o}`"))}; `--opponents heldout` adds them). Every win rate above is against training opponents.");
+            sb.AppendLine();
+            return;
+        }
+        sb.AppendLine("Opponent split × map split. Held-out opponents never inform the selector's defaults, bandit learning (the arena abandons the bandit's episode instead of crediting it), distillation datasets or teacher runs, or tuning (the tuner refuses them).");
+        sb.AppendLine();
+        sb.AppendLine("| Arm | Opponents | Maps | Wins | Losses | Draws | Matches | Win rate | 95% interval (Wilson) |");
+        sb.AppendLine("|---|---|---|---|---|---|---|---|---|");
+        foreach (var group in matches.GroupBy(static m => (m.Arm, Opponents: OpponentSets.SplitOf(m.Opponent), m.Split))
+                     .OrderBy(static g => g.Key.Arm, StringComparer.Ordinal).ThenBy(static g => g.Key.Opponents, StringComparer.Ordinal).ThenBy(static g => g.Key.Split, StringComparer.Ordinal))
+        {
+            int wins = group.Count(static m => m.Winner == 0);
+            int total = group.Count();
+            sb.AppendLine($"| {group.Key.Arm} | {group.Key.Opponents} | {group.Key.Split} | {wins} | {group.Count(static m => m.Winner == 1)} | {group.Count(static m => m.Winner is null)} | {total} | {Rate(wins, total)} | {Wilson(wins, total)} |");
+        }
+        foreach (var group in heldOut.GroupBy(static m => m.Arm).OrderBy(static g => g.Key, StringComparer.Ordinal))
+        {
+            int wins = group.Count(static m => m.Winner == 0);
+            int total = group.Count();
+            sb.AppendLine($"| {group.Key} | heldout | all | {wins} | {group.Count(static m => m.Winner == 1)} | {group.Count(static m => m.Winner is null)} | {total} | {Rate(wins, total)} | {Wilson(wins, total)} |");
+        }
+        sb.AppendLine();
+        PairedReport.Append(sb, heldOut, baseline, $"### Paired differences vs {baseline}, held-out opponents only",
+            baselineFor: arm => arm == baseline || IsOracle(arm) ? null : baseline);
     }
 
     private static void AppendWinRate(StringBuilder sb, IReadOnlyList<MatchRecord> matches)

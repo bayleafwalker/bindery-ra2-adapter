@@ -166,6 +166,7 @@ public static class Program
                 for (int i = start; i < jobs.Count; i++)
                 {
                     int index = i;
+                    context.BanditLearning = !OpponentSets.IsHeldOut(jobs[i].Opponent);
                     armResults[i] = RunJob(jobs[i], options, rules, factory, log => logs[index] = log);
                 }
             }
@@ -173,12 +174,13 @@ public static class Program
             {
                 Parallel.For(start, jobs.Count, i => armResults[i] = RunJob(jobs[i], options, rules, factory, log => logs[i] = log));
             }
+            context.BanditLearning = true;
             results.AddRange(armResults);
 
-            // Exported datasets hold training-map decisions only, so a distilled arm trained on them is never
-            // evaluated on maps its teacher's data came from.
+            // Exported datasets hold training-map decisions against training opponents only, so a distilled arm
+            // trained on them is never evaluated on maps or opponents its teacher's data came from.
             DecisionDataset dataset = DecisionDataset.Merge(Enumerable.Range(0, jobs.Count)
-                .Where(i => logs.ContainsKey(i) && jobs[i].Split == "training")
+                .Where(i => logs.ContainsKey(i) && jobs[i].Split == "training" && !OpponentSets.IsHeldOut(jobs[i].Opponent))
                 .Select(i => DecisionDataset.FromDecisionLog(logs[i], DatasetFilter.PrimaryOnly, MatchId(jobs[i]))));
             using (StreamWriter writer = new(Path.Combine(options.OutDir, $"dataset-{Slug(arm.ToString())}.ndjson")))
             {
@@ -278,7 +280,7 @@ public static class Program
     private static DecisionDataset TeacherDataset(ArmSpec teacher, CliOptions options, IRulesDatabase rules, BotAgentFactory factory)
     {
         List<(ArmSpec Arm, string Opponent, SimMap Map, string Split, int Seed)> jobs =
-            Jobs(teacher, options, [.. SimMaps.Training.Select(static m => (m, "training"))]);
+            Jobs(teacher, OpponentSets.TeacherOpponents(options.Opponents), options.Seeds, [.. SimMaps.Training.Select(static m => (m, "training"))]);
         ConcurrentDictionary<int, IReadOnlyList<DecisionRecord>> logs = new();
         if (options.LlmFake)
         {
@@ -297,14 +299,17 @@ public static class Program
             .Select(i => DecisionDataset.FromDecisionLog(logs[i], DatasetFilter.PrimaryOnly, MatchId(jobs[i]))));
     }
 
-    private static List<(ArmSpec Arm, string Opponent, SimMap Map, string Split, int Seed)> Jobs(ArmSpec arm, CliOptions options, List<(SimMap Map, string Split)> maps)
+    private static List<(ArmSpec Arm, string Opponent, SimMap Map, string Split, int Seed)> Jobs(ArmSpec arm, CliOptions options, List<(SimMap Map, string Split)> maps) =>
+        Jobs(arm, options.Opponents, options.Seeds, maps);
+
+    private static List<(ArmSpec Arm, string Opponent, SimMap Map, string Split, int Seed)> Jobs(ArmSpec arm, IReadOnlyList<string> opponents, int seeds, List<(SimMap Map, string Split)> maps)
     {
         List<(ArmSpec, string, SimMap, string, int)> jobs = [];
-        foreach (string opponent in options.Opponents)
+        foreach (string opponent in opponents)
         {
             foreach ((SimMap map, string split) in maps)
             {
-                for (int seed = 1; seed <= options.Seeds; seed++) jobs.Add((arm, opponent, map, split, seed));
+                for (int seed = 1; seed <= seeds; seed++) jobs.Add((arm, opponent, map, split, seed));
             }
         }
         return jobs;

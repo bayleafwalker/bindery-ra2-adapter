@@ -30,6 +30,12 @@ public sealed class ArenaRunContext
 
     public string? DistillSource { get; set; }
 
+    /// <summary>
+    /// False while the arena plays a held-out opponent: the bandit's decisions in that match are then abandoned,
+    /// never credited, so held-out opponents cannot shape what it learns (<see cref="OpponentSets"/>).
+    /// </summary>
+    public bool BanditLearning { get; set; } = true;
+
     /// <summary>Set when a live LLM arm cannot run; every LLM-arm match is then skipped with this reason.</summary>
     public string? LlmSkipReason { get; set; }
 
@@ -201,7 +207,12 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
                     break;
                 case "bandit":
                     primary = context.Bandit;
-                    onFinish = (won, own, enemy, _) => context.Bandit.CompleteEpisode(Reward(won, own, enemy));
+                    bool learn = context.BanditLearning;
+                    onFinish = (won, own, enemy, _) =>
+                    {
+                        if (learn) context.Bandit.CompleteEpisode(Reward(won, own, enemy));
+                        else context.Bandit.AbandonEpisode();
+                    };
                     break;
                 case "llm-shadow":
                     primary = new PlaybookSelector();

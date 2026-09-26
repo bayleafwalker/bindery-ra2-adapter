@@ -96,7 +96,12 @@ public sealed record TuneOptions(
         {
             if (o == "all") expanded.AddRange(BotAgentFactory.AllOpponents);
             else if (o == "self") expanded.AddRange(VariantAgentFactory.SelfPlayOpponents);
-            else if (VariantAgentFactory.IsOpponent(o)) expanded.Add(o);
+            else if (VariantAgentFactory.IsOpponent(o))
+            {
+                // Held-out opponents are evaluation-only: tuning against them would make them in-sample.
+                OpponentSets.EnsureTraining(o, "tuning");
+                expanded.Add(o);
+            }
             else throw new ArgumentException($"Unknown opponent '{o}'.\n{Usage}");
         }
         return new TuneOptions(command, mode, [.. expanded.Distinct(StringComparer.Ordinal)], generations, population, parents, sigma, seed,
