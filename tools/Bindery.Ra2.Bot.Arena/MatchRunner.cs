@@ -96,6 +96,7 @@ public static class MatchRunner
         using IArenaAgent opponentAgent = factory.Create(new ArmSpec(opponent, false, false), OpponentPlayer, opponentFaction, sim.Map, seed);
 
         Dictionary<PlayerId, int> destroyedValueOf = new() { [ArmPlayer] = 0, [OpponentPlayer] = 0 };
+        Dictionary<PlayerId, int> killedValueBy = new() { [ArmPlayer] = 0, [OpponentPlayer] = 0 };
         Dictionary<PlayerId, double> creditsSampleSum = new() { [ArmPlayer] = 0, [OpponentPlayer] = 0 };
         Dictionary<PlayerId, int> idleSamples = new() { [ArmPlayer] = 0, [OpponentPlayer] = 0 };
         Dictionary<PlayerId, int> unitsBuilt = new() { [ArmPlayer] = 0, [OpponentPlayer] = 0 };
@@ -116,10 +117,10 @@ public static class MatchRunner
             sim.Step();
 
             ObservationFrame oracle = sim.Observe(ArmPlayer, ObservationMode.Oracle);
+            TallyTrades(oracle.Events, rules, destroyedValueOf, killedValueBy);
             foreach (GameEvent e in oracle.Events)
             {
                 if (e.Owner is not { } owner || !rules.TryGet(e.TypeId ?? string.Empty, out UnitRule rule)) continue;
-                if (e.Kind == GameEventKind.EntityDestroyed && e.Detail is "combat" or "superweapon") destroyedValueOf[owner] += rule.Cost;
                 if (e.Kind == GameEventKind.EntityCreated)
                 {
                     if (rule.Kind == EntityKind.Building) buildingsBuilt[owner]++;
@@ -162,7 +163,7 @@ public static class MatchRunner
         opponentAgent.Finish(armWon is { } aw ? !aw : null, opponentAssets, armAssets);
 
         PlayerMatchMetrics Metrics(PlayerId p, Faction faction, IArenaAgent agent) =>
-            BuildMetrics(p, faction, agent.Stats, sim, destroyedValueOf, creditsSampleSum, idleSamples, samples, unitsBuilt[p], buildingsBuilt[p], peakArmy[p]) with { FirstAttackSeconds = firstAttack[p] };
+            BuildMetrics(p, faction, agent.Stats, sim, destroyedValueOf, killedValueBy, creditsSampleSum, idleSamples, samples, unitsBuilt[p], buildingsBuilt[p], peakArmy[p]) with { FirstAttackSeconds = firstAttack[p] };
 
         Dictionary<string, PlayerMatchMetrics> perPlayer = new()
         {
@@ -211,9 +212,28 @@ public static class MatchRunner
         return frame.Queues.All(static q => q.Items.Count == 0);
     }
 
+    /// <summary>
+    /// Adds one step's losses and kills: every object destroyed in combat or by a superweapon is a loss to its owner,
+    /// but only a kill the simulator attributes to the other player (<see cref="GameEventKind.EntityKilledByUs"/>)
+    /// counts as value that player destroyed, so a strike on one's own units is a loss, not the opponent's kill.
+    /// </summary>
+    public static void TallyTrades(IEnumerable<GameEvent> events, IRulesDatabase rules, Dictionary<PlayerId, int> lostValueOf, Dictionary<PlayerId, int> killedValueBy)
+    {
+        ArgumentNullException.ThrowIfNull(events);
+        ArgumentNullException.ThrowIfNull(rules);
+        ArgumentNullException.ThrowIfNull(lostValueOf);
+        ArgumentNullException.ThrowIfNull(killedValueBy);
+        foreach (GameEvent e in events)
+        {
+            if (e.Owner is not { } owner || e.Detail is not ("combat" or "superweapon") || !rules.TryGet(e.TypeId ?? string.Empty, out UnitRule rule)) continue;
+            if (e.Kind == GameEventKind.EntityDestroyed) lostValueOf[owner] = lostValueOf.GetValueOrDefault(owner) + rule.Cost;
+            else if (e.Kind == GameEventKind.EntityKilledByUs) killedValueBy[owner] = killedValueBy.GetValueOrDefault(owner) + rule.Cost;
+        }
+    }
+
     private static PlayerMatchMetrics BuildMetrics(
         PlayerId player, Faction faction, ArenaAgentStats stats, SkirmishSimulation sim,
-        Dictionary<PlayerId, int> destroyedValueOf, Dictionary<PlayerId, double> creditsSampleSum,
+        Dictionary<PlayerId, int> destroyedValueOf, Dictionary<PlayerId, int> killedValueBy, Dictionary<PlayerId, double> creditsSampleSum,
         Dictionary<PlayerId, int> idleSamples, int samples, int unitsBuilt, int buildingsBuilt, int peakArmy)
     {
         PlayerId opponent = player == ArmPlayer ? OpponentPlayer : ArmPlayer;
@@ -233,7 +253,7 @@ public static class MatchRunner
             ProposalsFailed: stats.ProposalsFailed,
             ProductionIdleFraction: samples == 0 ? 0 : idleSamples[player] / (double)samples,
             AverageCreditsOnHand: samples == 0 ? 0 : creditsSampleSum[player] / samples,
-            AssetValueDestroyedByOpponent: destroyedValueOf.GetValueOrDefault(opponent),
+            AssetValueDestroyedByOpponent: killedValueBy.GetValueOrDefault(player),
             AssetValueLostByPlayer: destroyedValueOf.GetValueOrDefault(player),
             TokensIn: stats.TokensIn,
             TokensOut: stats.TokensOut,
