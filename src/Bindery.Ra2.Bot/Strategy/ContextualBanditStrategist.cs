@@ -20,7 +20,14 @@ public sealed record BanditOptions(double Alpha = 0.6, double Ridge = 1.0, doubl
 /// <para>Learning: <see cref="Observe"/> is the <see cref="IOutcomeLearner"/> update for one
 /// decision. The strategist also remembers the decisions it made since the last
 /// <see cref="CompleteEpisode"/>, so a harness that only knows the match outcome can credit
-/// every decision of that match with it. One instance is meant to live across the matches
+/// the decisions of that match with it. Only decisions that took effect are remembered: a proposal
+/// is a request that the scheduler may discard as late, the validator may reject and the arbiter may
+/// refuse, and crediting a playbook that never played with the result of a match another intent
+/// played would corrupt its estimate. A proposal took effect when the next request's
+/// <see cref="StrategistContext.ActiveIntent"/> carries its intent id (the scheduler starts a primary
+/// request only after collecting the previous one); the match's last proposal is settled by
+/// <see cref="CompleteEpisode"/>'s final active intent, or dropped when the harness does not know it.
+/// One instance is meant to live across the matches
 /// of an arena run (the spec's "learns across matches within a run"); decisions are
 /// deterministic given the same update order.</para>
 /// <para>Base defence is not learned: at a base threat ratio of
@@ -32,6 +39,7 @@ public sealed class ContextualBanditStrategist : IStrategist, IOutcomeLearner
     private readonly BanditOptions options;
     private readonly Dictionary<string, Arm> arms = new(StringComparer.Ordinal);
     private readonly List<(double[] Context, string PlaybookId)> episode = [];
+    private (double[] Context, string PlaybookId, string IntentId)? pending;
     private readonly object gate = new();
 
     public ContextualBanditStrategist(BanditOptions? options = null, string id = "bandit")
@@ -50,6 +58,7 @@ public sealed class ContextualBanditStrategist : IStrategist, IOutcomeLearner
     public Task<StrategistProposal?> ProposeAsync(StrategistContext context, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(context);
+        lock (gate) Settle(context.ActiveIntent);
         StrategicFeatures features = context.Features;
         IReadOnlyList<Playbook> candidates = context.Playbooks.For(features.Faction).OrderBy(static p => p.Id, StringComparer.Ordinal).ToList();
         if (candidates.Count == 0) return Task.FromResult<StrategistProposal?>(null);
@@ -82,12 +91,13 @@ public sealed class ContextualBanditStrategist : IStrategist, IOutcomeLearner
                     bestWidth = width;
                 }
             }
-            episode.Add((x, best!.Id));
         }
 
         double confidence = Math.Clamp(0.5 + 0.5 * Math.Tanh(bestMean) - 0.2 * Math.Min(1, bestWidth), 0.05, 0.95);
+        string intentId = $"{Id}/{features.SnapshotVersion}";
+        lock (gate) pending = (x, best!.Id, intentId);
         StrategicIntent intent = IntentComposer.Compose(
-            best!, features, $"{Id}/{features.SnapshotVersion}", Source, confidence,
+            best!, features, intentId, Source, confidence,
             StrategyRationale.Explain(best!.Id, string.Create(CultureInfo.InvariantCulture, $"LinUCB: highest upper bound, mean {bestMean:0.000} + {options.Alpha:0.00} × width {bestWidth:0.000} over {candidates.Count} playbooks")
                 + (personality is null ? string.Empty : string.Create(CultureInfo.InvariantCulture, $" (personality {personality.Id}, +{personality.BanditBonus:0.00} to {preferred})")), features),
             parameters: personality?.ScaledParameters(best!));
@@ -115,12 +125,18 @@ public sealed class ContextualBanditStrategist : IStrategist, IOutcomeLearner
         }
     }
 
-    /// <summary>Credits every decision since the last call with <paramref name="reward"/> and starts a new episode.</summary>
-    public int CompleteEpisode(double reward)
+    /// <summary>
+    /// Credits every decision since the last call that took effect with <paramref name="reward"/> and starts a new
+    /// episode. <paramref name="finalActive"/> is the intent active when the match ended; it settles the last
+    /// proposal, which is dropped when it is null or another intent.
+    /// </summary>
+    /// <returns>The number of decisions credited.</returns>
+    public int CompleteEpisode(double reward, StrategicIntent? finalActive = null)
     {
         List<(double[] Context, string PlaybookId)> decisions;
         lock (gate)
         {
+            Settle(finalActive);
             decisions = [.. episode];
             episode.Clear();
         }
@@ -131,7 +147,21 @@ public sealed class ContextualBanditStrategist : IStrategist, IOutcomeLearner
     /// <summary>Forgets the decisions of the current episode without learning from them.</summary>
     public void AbandonEpisode()
     {
-        lock (gate) episode.Clear();
+        lock (gate)
+        {
+            episode.Clear();
+            pending = null;
+        }
+    }
+
+    /// <summary>Keeps the previous proposal as a decision if it is the intent active now; forgets it otherwise.</summary>
+    private void Settle(StrategicIntent? active)
+    {
+        if (pending is { } previous && active is not null && string.Equals(active.IntentId, previous.IntentId, StringComparison.Ordinal))
+        {
+            episode.Add((previous.Context, previous.PlaybookId));
+        }
+        pending = null;
     }
 
     private Arm ArmFor(string playbookId)

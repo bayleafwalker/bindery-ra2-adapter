@@ -98,4 +98,34 @@ public sealed class StrategyLifecycleTests
         Assert.Equal(3, fast.Contexts.Count);
         Assert.Equal("allied-boom", arbiter.Active?.PlaybookId);
     }
+
+    private static StrategicIntent Propose(IStrategist strategist, StrategicFeatures features, StrategicIntent? active = null) =>
+        strategist.ProposeAsync(new StrategistContext(features, Fx.Rules, Fx.Playbooks, active, [], null)).GetAwaiter().GetResult()!.Intent;
+
+    [Fact]
+    public void Bandit_learns_only_from_decisions_that_became_the_active_intent()
+    {
+        ContextualBanditStrategist bandit = new();
+        StrategicIntent other = Fx.Intent("someone-else", "generic-defend", StrategicPosture.Defend);
+
+        Propose(bandit, Fx.Features(100));                              // refused: another intent stays active
+        StrategicIntent second = Propose(bandit, Fx.Features(105), other);
+        Propose(bandit, Fx.Features(110), second);                      // the second was applied; this one is unresolved
+
+        Assert.Equal(1, bandit.CompleteEpisode(1.0));
+        Assert.Equal(0, bandit.CompleteEpisode(1.0));
+    }
+
+    [Fact]
+    public void Bandit_credits_the_last_decision_when_it_is_the_final_active_intent()
+    {
+        ContextualBanditStrategist bandit = new();
+        StrategicIntent last = Propose(bandit, Fx.Features(100));
+        Assert.Equal(1, bandit.CompleteEpisode(1.0, last));
+
+        // A match that ends on another intent (or is abandoned) credits nothing, and nothing leaks into the next.
+        Propose(bandit, Fx.Features(100));
+        bandit.AbandonEpisode();
+        Assert.Equal(0, bandit.CompleteEpisode(1.0, last));
+    }
 }

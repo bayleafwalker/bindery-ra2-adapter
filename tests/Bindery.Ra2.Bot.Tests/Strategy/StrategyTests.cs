@@ -97,11 +97,14 @@ public sealed class StrategyTests
         {
             for (int i = 0; i < 5; i++) bandit.Update(x, p.Id, p.Id == "allied-ifv-mix" ? 1 : -1);
         }
-        Assert.Equal("allied-ifv-mix", Propose(bandit, features).PlaybookId);
-        Assert.Equal(IntentSource.Bandit, Propose(bandit, features).Source);
+        StrategicIntent first = Propose(bandit, features);
+        Assert.Equal("allied-ifv-mix", first.PlaybookId);
+        StrategicIntent second = Propose(bandit, features, first);
+        Assert.Equal(IntentSource.Bandit, second.Source);
 
-        // Episode crediting: the two decisions above are credited once each, then forgotten.
-        Assert.Equal(2, bandit.CompleteEpisode(1.0));
+        // Episode crediting: the two decisions above took effect (the second is the final active intent), so each
+        // is credited once, then forgotten.
+        Assert.Equal(2, bandit.CompleteEpisode(1.0, second));
         Assert.Equal(0, bandit.CompleteEpisode(1.0));
     }
 
