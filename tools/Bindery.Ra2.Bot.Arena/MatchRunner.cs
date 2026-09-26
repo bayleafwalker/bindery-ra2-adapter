@@ -65,7 +65,7 @@ public static class MatchRunner
 
     public static Faction ArmFaction(int seed) => seed % 2 == 1 ? Faction.Allied : Faction.Soviet;
 
-    public static MatchRecord Run(ArmSpec arm, string opponent, SimMap map, string split, int seed, double maxSeconds, IRulesDatabase rules, IArenaAgentFactory factory, Action<IReadOnlyList<DecisionRecord>>? armLog = null)
+    public static MatchRecord Run(ArmSpec arm, string opponent, SimMap map, string split, int seed, double maxSeconds, IRulesDatabase rules, IArenaAgentFactory factory, Action<IReadOnlyList<DecisionRecord>>? armLog = null, TextWriter? trace = null)
     {
         Faction armFaction = ArmFaction(seed);
         Faction opponentFaction = armFaction == Faction.Allied ? Faction.Soviet : Faction.Allied;
@@ -108,6 +108,15 @@ public static class MatchRunner
                 }
             }
 
+            if (trace is not null)
+            {
+                foreach (GameEvent e in oracle.Events.Where(static e => e.Kind == GameEventKind.EntityDestroyed))
+                {
+                    trace.WriteLine($"{sim.Time.Seconds:0} destroyed {e.Owner} {e.TypeId} at {sim.Map.RegionOf(e.Position ?? default)?.Name} ({e.Detail})");
+                }
+                if (sim.Time.Frame % (GameTime.FramesPerSecond * 10) == 0) Trace(trace, sim, rules);
+            }
+
             if (sim.Time.Frame % GameTime.FramesPerSecond == 0)
             {
                 samples++;
@@ -143,6 +152,22 @@ public static class MatchRunner
         };
         int? winner = sim.Winner is { } winnerId ? winnerId.Value : null;
         return new MatchRecord(arm.ToString(), opponent, map.Map.MapId, split, seed, winner, reason, durationSeconds, perPlayer);
+    }
+
+    /// <summary>Diagnostic snapshot for <c>--trace</c>: per player credits, power, own types and where the fighters stand.</summary>
+    private static void Trace(TextWriter trace, SkirmishSimulation sim, IRulesDatabase rules)
+    {
+        foreach (PlayerId p in sim.Players)
+        {
+            ObservationFrame view = sim.Observe(p, ObservationMode.Oracle);
+            List<ObservedEntity> own = [.. view.Entities.Where(e => e.Owner == p)];
+            string types = string.Join(",", own.GroupBy(static e => e.TypeId).OrderBy(static g => g.Key, StringComparer.Ordinal).Select(static g => $"{g.Key}x{g.Count()}"));
+            string army = string.Join(" ", own.Where(e => rules.TryGet(e.TypeId, out UnitRule r) && r.Kind != EntityKind.Building && r.Damage > 0)
+                .GroupBy(e => sim.Map.RegionOf(e.Position)?.Name ?? "?").OrderBy(static g => g.Key, StringComparer.Ordinal)
+                .Select(g => $"{g.Key}:{g.Sum(e => rules.Get(e.TypeId).Cost)}"));
+            string queues = string.Join(";", view.Queues.Where(static q => q.Items.Count > 0).Select(static q => $"{q.Kind}:{string.Join(",", q.Items.Select(static i => i.TypeId))}"));
+            trace.WriteLine($"{sim.Time.Seconds:0} {p} cr={view.Credits} pow={view.Power.Produced}/{view.Power.Drained} [{types}] q[{queues}] army[{army}]");
+        }
     }
 
     /// <summary>

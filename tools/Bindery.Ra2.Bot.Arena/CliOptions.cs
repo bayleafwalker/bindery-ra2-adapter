@@ -12,7 +12,8 @@ public sealed record CliOptions(
     bool LlmFake,
     double MaxSeconds,
     string? Dataset = null,
-    double? LlmLatencySeconds = null)
+    double? LlmLatencySeconds = null,
+    string? TraceDir = null)
 {
     public const double DefaultMaxSeconds = 1200;
 
@@ -20,7 +21,7 @@ public sealed record CliOptions(
     {
         if (args.Count == 0 || args[0] != "run")
         {
-            throw new ArgumentException("Usage: arena run --arms a,b --maps training|heldout|all --opponents ai-rush,ai-balanced[:easy|:medium|:hard],rush,turtle,...|all --seeds N --out <dir> [--oracle] [--llm-fake] [--max-seconds N] [--dataset <decisions.ndjson>] [--llm-latency <game seconds>]");
+            throw new ArgumentException("Usage: arena run --arms a,b --maps training|heldout|all --opponents ai-rush,ai-balanced[:easy|:medium|:hard],rush,turtle,...|all --seeds N --out <dir> [--oracle] [--llm-fake] [--max-seconds N] [--dataset <decisions.ndjson>] [--llm-latency <game seconds>] [--trace <dir>]");
         }
 
         List<string> arms = ["selector"];
@@ -33,6 +34,7 @@ public sealed record CliOptions(
         double maxSeconds = DefaultMaxSeconds;
         string? dataset = null;
         double? llmLatency = null;
+        string? traceDir = null;
 
         for (int i = 1; i < args.Count; i++)
         {
@@ -47,6 +49,7 @@ public sealed record CliOptions(
                 case "--llm-fake": llmFake = true; break;
                 case "--max-seconds": maxSeconds = double.Parse(Next(args, ref i), System.Globalization.CultureInfo.InvariantCulture); break;
                 case "--dataset": dataset = Next(args, ref i); break;
+                case "--trace": traceDir = Next(args, ref i); break;
                 case "--llm-latency": llmLatency = double.Parse(Next(args, ref i), System.Globalization.CultureInfo.InvariantCulture); break;
                 default: throw new ArgumentException($"Unknown argument '{args[i]}'.");
             }
@@ -54,7 +57,7 @@ public sealed record CliOptions(
 
         if (opponents.Count == 1 && opponents[0] == "all") opponents = [.. BotAgentFactory.AllOpponents];
         if (arms.Count == 1 && arms[0] == "all") arms = [.. BotAgentFactory.Arms];
-        return new CliOptions(arms, mapSplit, opponents, seeds, outDir, oracle, llmFake, maxSeconds, dataset, llmLatency);
+        return new CliOptions(arms, mapSplit, opponents, seeds, outDir, oracle, llmFake, maxSeconds, dataset, llmLatency, traceDir);
     }
 
     private static string Next(IReadOnlyList<string> args, ref int i)

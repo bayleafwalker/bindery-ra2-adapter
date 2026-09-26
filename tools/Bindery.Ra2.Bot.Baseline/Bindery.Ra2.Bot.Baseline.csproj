@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    A frozen copy of the bot's non-contract layers exactly as of commit 7f3e2c7 (the start of the strength work),
+    re-namespaced to Bindery.Ra2.Bot.Baseline. The arena's pinned-playbook opponents run on it so they are a
+    stationary benchmark: a change to the live planner or tactics no longer moves the opponent too. Contracts and
+    the rules database come from the live Bindery.Ra2.Bot assembly. Do not edit these sources.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>Bindery.Ra2.Bot.Baseline</AssemblyName>
+    <RootNamespace>Bindery.Ra2.Bot.Baseline</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Bindery.Ra2.Bot/Bindery.Ra2.Bot.csproj" />
+  </ItemGroup>
+</Project>

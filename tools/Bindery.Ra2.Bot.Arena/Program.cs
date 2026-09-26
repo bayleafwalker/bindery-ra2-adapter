@@ -174,8 +174,19 @@ public static class Program
         return jobs;
     }
 
-    private static MatchRecord RunJob((ArmSpec Arm, string Opponent, SimMap Map, string Split, int Seed) job, CliOptions options, IRulesDatabase rules, IArenaAgentFactory factory, Action<IReadOnlyList<DecisionRecord>> armLog) =>
-        MatchRunner.Run(job.Arm, job.Opponent, job.Map, job.Split, job.Seed, options.MaxSeconds, rules, factory, armLog);
+    private static MatchRecord RunJob((ArmSpec Arm, string Opponent, SimMap Map, string Split, int Seed) job, CliOptions options, IRulesDatabase rules, IArenaAgentFactory factory, Action<IReadOnlyList<DecisionRecord>> armLog)
+    {
+        if (options.TraceDir is null) return MatchRunner.Run(job.Arm, job.Opponent, job.Map, job.Split, job.Seed, options.MaxSeconds, rules, factory, armLog);
+        Directory.CreateDirectory(options.TraceDir);
+        using StreamWriter trace = new(Path.Combine(options.TraceDir, $"{Slug(job.Arm.ToString())}_{job.Opponent.Replace(':', '-')}_{job.Map.Map.MapId}_{job.Seed}.txt"));
+        MatchRecord record = MatchRunner.Run(job.Arm, job.Opponent, job.Map, job.Split, job.Seed, options.MaxSeconds, rules, factory, log =>
+        {
+            armLog(log);
+            foreach (DecisionRecord r in log) trace.WriteLine($"log {r.Time.Seconds:0} {r.Kind} {r.Data}");
+        }, trace);
+        trace.WriteLine($"result winner={record.Winner} reason={record.Reason} at {record.DurationSeconds:0}");
+        return record;
+    }
 
     private static string MatchId((ArmSpec Arm, string Opponent, SimMap Map, string Split, int Seed) job) =>
         $"{job.Arm}/{job.Opponent}/{job.Map.Map.MapId}/{job.Seed}";

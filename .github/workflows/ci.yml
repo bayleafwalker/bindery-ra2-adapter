@@ -78,5 +78,5 @@ jobs:
           BINDERY_BOT_LIVE_LLM: "0"
         run: |
           dotnet run --project tools/Bindery.Ra2.Bot.Arena -- run \
-            --arms selector --maps training --opponents balanced --seeds 1 \
+            --arms selector --maps training --opponents balanced,ai-balanced --seeds 1 \
             --max-seconds 300 --out artifacts/arena

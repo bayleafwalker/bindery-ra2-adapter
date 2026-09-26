@@ -2,6 +2,7 @@
 using Bindery.Ra2.Bot.Claude;
 using Bindery.Ra2.Bot.Runtime;
 using Bindery.Ra2.Bot.Sim.Opponents;
+using Baseline = Bindery.Ra2.Bot.Baseline;
 using Bindery.Ra2.Bot.Strategy;
 
 namespace Bindery.Ra2.Bot.Arena;
@@ -95,9 +96,19 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
     /// </summary>
     public static IReadOnlyList<string> AllOpponents { get; } = [.. OpponentProfiles.Styles, .. OpponentStyles.Keys];
 
-    /// <summary>True for a pinned-playbook style or an independent <c>ai-*</c> style (with optional <c>:difficulty</c>).</summary>
+    /// <summary>Prefix that runs a pinned style on the live stack instead of the frozen baseline (<c>live-rush</c>).</summary>
+    public const string LivePrefix = "live-";
+
+    /// <summary>
+    /// True for a pinned-playbook style (frozen baseline stack), a <c>live-</c> pinned style (live stack), or an
+    /// independent <c>ai-*</c> style (with optional <c>:difficulty</c>).
+    /// </summary>
     public static bool IsOpponent(string name) =>
-        OpponentStyles.ContainsKey(name) || OpponentProfiles.TryParse(name, out _, out _);
+        OpponentStyles.ContainsKey(name)
+        || (name.StartsWith(LivePrefix, StringComparison.Ordinal) && OpponentStyles.ContainsKey(name[LivePrefix.Length..]))
+        || OpponentProfiles.TryParse(name, out _, out _);
+
+    private static readonly Baseline.Playbooks.PlaybookLibrary BaselinePlaybooks = Baseline.Playbooks.PlaybookLibrary.LoadDefault();
 
     public IArenaAgent Create(ArmSpec arm, PlayerId player, Faction faction, MapInfo map, int seed)
     {
@@ -106,6 +117,18 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
         {
             return new ScriptedArenaAgent(new ScriptedSkirmishAi(rules, player, faction, map, aiStyle, difficulty, seed), $"scripted:{aiStyle}:{difficulty.ToString().ToLowerInvariant()}");
         }
+        if (OpponentStyles.TryGetValue(arm.Name, out IReadOnlyDictionary<Faction, string>? frozenStyle))
+        {
+            // Pinned styles are the stationary benchmark: the frozen baseline stack, not the live one.
+            Baseline.Runtime.DecisionLog baselineLog = new();
+            Baseline.Runtime.BotRuntime baseline = Baseline.Runtime.StandardBot.Create(
+                rules, BaselinePlaybooks, new Baseline.Strategy.PinnedPlaybookStrategist(frozenStyle, $"style-{arm.Name}"),
+                new Baseline.Strategy.PlaybookSelector(id: "selector-fallback"), null, baselineLog, Baseline.Runtime.StandardBot.SimulatorOptions);
+            return new BaselineArenaAgent(baseline, baselineLog, $"pinned:{arm.Name}:baseline-7f3e2c7");
+        }
+        string name = arm.Name.StartsWith(LivePrefix, StringComparison.Ordinal) && OpponentStyles.ContainsKey(arm.Name[LivePrefix.Length..])
+            ? arm.Name[LivePrefix.Length..]
+            : arm.Name;
         DecisionLog log = new();
         List<string> labels = [];
         if (arm.Oracle) labels.Add("oracle");
@@ -116,9 +139,10 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
         Action<bool?, double, double, BotArenaAgent>? onFinish = null;
         List<ClaudeStrategist> claude = [];
 
-        if (OpponentStyles.TryGetValue(arm.Name, out IReadOnlyDictionary<Faction, string>? style))
+        if (OpponentStyles.TryGetValue(name, out IReadOnlyDictionary<Faction, string>? style))
         {
-            primary = new PinnedPlaybookStrategist(style, $"style-{arm.Name}");
+            primary = new PinnedPlaybookStrategist(style, $"style-{name}");
+            labels.Add($"pinned:{name}:live");
         }
         else
         {
