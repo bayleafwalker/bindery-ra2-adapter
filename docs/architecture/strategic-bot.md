@@ -97,7 +97,7 @@ a contract change records it in its report instead of editing the file.
 | `llm` | `ClaudeStrategist`, selector fallback | step 5 |
 | `llm+fast` | `llm` plus `ClaudeStrategist(Mode=Refine, claude-haiku-4-5)` at 5 s | comparison only |
 | `distilled` | `DistilledStrategist` over a dataset from `llm` runs | step 7 |
-| `*-oracle` | any arm with oracle frames | diagnostic; labelled |
+| `*-oracle` | any arm with oracle frames | diagnostic; labelled; `--arms x,x-oracle` or `--oracle both` runs both on the same jobs and reports belief − oracle per metric |
 
 LLM arms need `ANTHROPIC_API_KEY` (or an `ant auth` profile) and are skipped
 with a recorded reason when no credential resolves. With no credential, a
@@ -270,4 +270,12 @@ Gaps an operator review found after integration, and how each was closed.
   16 better / 33 worse (sign p 0.021, Holm 0.149); first attack 54 s earlier,
   trade share −0.11 (Holm 0.035), activations +3.2 per 10 min. These measure the
   fake policy, not a model.
+- **Oracle side by side.** `--oracle` turned every arm into its oracle version,
+  so belief and oracle never shared a report. An arm named `x-oracle`, or
+  `--oracle both`, now runs next to `x` on the same jobs; `report.md` adds
+  "Perception bottleneck (belief − oracle)", the paired table of `x` against
+  `x-oracle`. First run (contested, selector, all maps, 4 seeds, 100 pairs):
+  belief 49/100, oracle 81/100; score −0.32 [−0.44, −0.21] (5 better, 37
+  worse, Holm p < 0.0001), trade share −0.16, value destroyed −3138: in this
+  simulator perception costs the selector about a third of a win per match.
 

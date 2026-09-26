@@ -34,7 +34,12 @@ public static class ReportBuilder
         AppendWinRate(sb, matches);
         AppendSaturation(sb, matches, options.Baseline);
         AppendPerOpponent(sb, matches);
-        PairedReport.Append(sb, matches, options.Baseline, $"## Paired differences vs {options.Baseline}");
+        PairedReport.Append(sb, matches, options.Baseline, $"## Paired differences vs {options.Baseline}",
+            baselineFor: arm => arm == options.Baseline || arm.EndsWith(CliOptions.OracleSuffix, StringComparison.Ordinal) ? null : options.Baseline);
+        // The perception-bottleneck diagnostic: each arm against its own oracle twin on the same jobs.
+        HashSet<string> armNames = [.. matches.Select(static m => m.Arm)];
+        PairedReport.Append(sb, matches, options.Baseline, "## Perception bottleneck (belief − oracle)",
+            baselineFor: arm => !arm.EndsWith(CliOptions.OracleSuffix, StringComparison.Ordinal) && armNames.Contains(arm + CliOptions.OracleSuffix) ? arm + CliOptions.OracleSuffix : null);
         AppendGame(sb, matches);
         AppendStrategy(sb, matches);
         AppendCommands(sb, matches);

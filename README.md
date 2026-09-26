@@ -129,7 +129,11 @@ says so. `report.md` pairs every arm's matches with the `--baseline` arm
 (default `selector`) by opponent, map and seed and prints a per-metric table:
 mean difference with a 95% bootstrap interval, better/worse/tied pairs, exact
 sign-test p and Holm-adjusted p.
-`--oracle` gives the arm full-state frames (results are labelled), and
+`--oracle` gives every arm full-state frames (results are labelled);
+`--oracle both`, or an arm named with a `-oracle` suffix
+(`--arms selector,selector-oracle`), runs the belief and oracle versions side by
+side on the same jobs, and the report adds a per-metric belief − oracle table
+(the perception-bottleneck diagnostic); and
 `--dataset <file>` trains the distilled arm on an exported dataset (otherwise on
 the run's selector decisions). The output directory holds `results.json`,
 `probes.json` (per-arm leakage probes and skipped arms), `report.md` and one

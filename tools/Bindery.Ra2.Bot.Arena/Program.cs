@@ -50,9 +50,9 @@ public static class Program
         IPlaybookLibrary playbooks = PlaybookLibrary.LoadDefault();
         ArenaRunContext context = new(options.LlmFake, options.LlmLatencySeconds);
         BotAgentFactory factory = new(rules, playbooks, context);
-        foreach (string arm in options.Arms)
+        foreach (ArmSpec arm in options.ArmSpecs())
         {
-            if (!BotAgentFactory.Arms.Contains(arm)) throw new ArgumentException($"Unknown arm '{arm}'. Arms: {string.Join(", ", BotAgentFactory.Arms)}.");
+            if (!BotAgentFactory.Arms.Contains(arm.Name)) throw new ArgumentException($"Unknown arm '{arm.Name}'. Arms: {string.Join(", ", BotAgentFactory.Arms)} (any with a -oracle suffix).");
         }
         foreach (string opponent in options.Opponents)
         {
@@ -60,7 +60,7 @@ public static class Program
         }
 
         List<(SimMap Map, string Split)> maps = MapsForSplit(options.MapSplit);
-        List<ArmSpec> arms = [.. options.Arms.Select(a => new ArmSpec(a, options.Oracle, options.LlmFake))];
+        List<ArmSpec> arms = [.. options.ArmSpecs()];
         if (options.Dataset is not null)
         {
             using StreamReader reader = new(options.Dataset);
