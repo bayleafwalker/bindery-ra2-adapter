@@ -126,6 +126,7 @@ public sealed class SkirmishSimulation
         {
             AdvanceEconomy();
             AdvanceProduction();
+            AdvanceSuperweapons();
             ResolveCombat();
             AdvanceRepair();
         }
@@ -178,7 +179,7 @@ public sealed class SkirmishSimulation
             .Where(kv => visible.Contains(kv.Key))
             .OrderBy(static kv => kv.Key.Value)
             .ToDictionary(static kv => kv.Key, static kv => (int)Math.Round(kv.Value));
-        return new ObservationFrame(Time, mode, player, state.Faction, state.Credits, power, observed, queues, events, visible, map.Map, ore);
+        return new ObservationFrame(Time, mode, player, state.Faction, state.Credits, power, observed, queues, events, visible, map.Map, ore, SuperweaponTimers(player, mode));
     }
 
     /// <summary>Deterministic digest of all visible-and-hidden state, for replay verification.</summary>
@@ -193,7 +194,8 @@ public sealed class SkirmishSimulation
         foreach (SimEntity e in entities.OrderBy(e => e.Id.Value))
         {
             sb.Append(e.Id.Value).Append(':').Append(e.Owner.Value).Append(':').Append(e.TypeId).Append(':')
-              .Append(e.Health).Append(':').Append(e.Position.X).Append(',').Append(e.Position.Y).Append(';');
+              .Append(e.Health).Append(':').Append(e.Position.X).Append(',').Append(e.Position.Y).Append(':')
+              .Append(e.SuperweaponCharge.ToString("R", System.Globalization.CultureInfo.InvariantCulture)).Append(';');
         }
         foreach ((RegionId region, double remaining) in oreRemaining.OrderBy(kv => kv.Key.Value))
         {
@@ -314,8 +316,31 @@ public sealed class SkirmishSimulation
         RepairCommand c => ApplyRepair(player, c),
         HarvestCommand c => ApplyHarvest(player, c),
         SetRallyPointCommand => true,
+        LaunchSuperweaponCommand c => ApplyLaunch(player, c),
         _ => false,
     };
+
+    /// <summary>
+    /// Fires a ready superweapon: every object within <see cref="SimSettings.SuperweaponRadiusCells"/> of the
+    /// target (either side's) takes <see cref="SimSettings.SuperweaponDamage"/>, and every player is told of the
+    /// launch, as RA2 announces it to all.
+    /// </summary>
+    private bool ApplyLaunch(PlayerId player, LaunchSuperweaponCommand c)
+    {
+        if (!OwnsAlive(player, c.Building, out SimEntity building)) return false;
+        if (!rules.TryGet(building.TypeId, out UnitRule rule) || rule.Role != UnitRole.Superweapon) return false;
+        if (building.SuperweaponCharge < settings.SuperweaponChargeSeconds) return false;
+        if (c.Target.X < 0 || c.Target.Y < 0 || c.Target.X >= map.Map.Width || c.Target.Y >= map.Map.Height) return false;
+        building.SuperweaponCharge = 0;
+        frameEvents.Add(new GameEvent(GameEventKind.SuperweaponLaunched, Time, building.Id, player, building.TypeId, c.Target));
+        foreach (SimEntity e in entities.Where(e => e.Alive && e.Position.DistanceTo(c.Target) <= settings.SuperweaponRadiusCells).OrderBy(static e => e.Id.Value).ToList())
+        {
+            e.Health = Math.Max(0, e.Health - settings.SuperweaponDamage);
+            frameEvents.Add(new GameEvent(GameEventKind.UnderAttack, Time, e.Id, e.Owner, e.TypeId, e.Position));
+            if (e.Health <= 0) Destroy(e, "superweapon", player);
+        }
+        return true;
+    }
 
     private bool OwnsAlive(PlayerId player, EntityId id, out SimEntity entity)
     {
@@ -670,6 +695,34 @@ public sealed class SkirmishSimulation
         }
     }
 
+    /// <summary>Charges every powered superweapon by one second (RA2 pauses the countdown on low power).</summary>
+    private void AdvanceSuperweapons()
+    {
+        foreach (SimEntity e in entities.OrderBy(static e => e.Id.Value))
+        {
+            if (!e.Alive || !rules.TryGet(e.TypeId, out UnitRule rule) || rule.Role != UnitRole.Superweapon) continue;
+            if (ComputePower(players[e.Owner]).LowPower) continue;
+            e.SuperweaponCharge = Math.Min(settings.SuperweaponChargeSeconds, e.SuperweaponCharge + 1);
+        }
+    }
+
+    /// <summary>
+    /// Every superweapon timer, as RA2 shows them to all players: the owner also learns which building it is;
+    /// another player sees only owner, type and countdown (oracle frames carry the building too).
+    /// </summary>
+    private List<SuperweaponStatus> SuperweaponTimers(PlayerId player, ObservationMode mode)
+    {
+        List<SuperweaponStatus> timers = [];
+        foreach (SimEntity e in entities.OrderBy(static e => e.Id.Value))
+        {
+            if (!e.Alive || !rules.TryGet(e.TypeId, out UnitRule rule) || rule.Role != UnitRole.Superweapon) continue;
+            double remaining = Math.Max(0, settings.SuperweaponChargeSeconds - e.SuperweaponCharge);
+            EntityId? building = e.Owner == player || mode == ObservationMode.Oracle ? e.Id : null;
+            timers.Add(new SuperweaponStatus(e.Owner, e.TypeId, building, settings.SuperweaponChargeSeconds, remaining, remaining <= 0));
+        }
+        return timers;
+    }
+
     private Cell RallyPointFor(PlayerId owner)
     {
         SimEntity? factory = entities.Where(e => e.Owner == owner && e.Alive && rules.TryGet(e.TypeId, out UnitRule r) && r.Kind == EntityKind.Building)
@@ -831,6 +884,7 @@ public sealed class SkirmishSimulation
     private bool IsEventForPlayer(GameEvent gameEvent, PlayerId player, HashSet<RegionId> visible)
     {
         if (gameEvent.Owner == player) return true;
+        if (gameEvent.Kind == GameEventKind.SuperweaponLaunched) return true; // announced to every player
         if (gameEvent.Position is { } position)
         {
             Region? region = map.Map.RegionOf(position);

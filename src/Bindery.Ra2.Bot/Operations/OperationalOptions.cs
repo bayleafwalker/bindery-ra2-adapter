@@ -38,6 +38,7 @@ namespace Bindery.Ra2.Bot.Operations;
 /// <param name="DefaultDefendThreatRatio">Base threat ratio that pulls the army home to defend when the playbook has no <c>defendThreatRatio</c>.</param>
 /// <param name="DefaultHarassIntervalSeconds">Seconds between harass sorties when the playbook has no <c>harassIntervalSeconds</c>.</param>
 /// <param name="HarassDwellSeconds">Seconds a harass sortie spends in its target region before it heads home to regroup.</param>
+/// <param name="SuperweaponTargetRadiusCells">Radius used to score superweapon targets: the known enemy building value within it.</param>
 /// <param name="ConditionEvaluator">
 /// Evaluates one <see cref="Condition"/> against <see cref="StrategicFeatures"/>. Left null,
 /// the planner uses the canonical <see cref="Arbitration.ConditionEvaluator.Holds"/>, the single
@@ -66,7 +67,8 @@ public sealed record OperationalOptions(
     double ScoutRevisitSeconds = 60,
     double DefaultDefendThreatRatio = 1.0,
     double DefaultHarassIntervalSeconds = 60,
-    double HarassDwellSeconds = 10)
+    double HarassDwellSeconds = 10,
+    double SuperweaponTargetRadiusCells = 6)
 {
     /// <summary>The evaluator actually used: <see cref="ConditionEvaluator"/> when set, else the default.</summary>
     public Func<Condition, StrategicFeatures, bool> Evaluator => ConditionEvaluator ?? Arbitration.ConditionEvaluator.Holds;

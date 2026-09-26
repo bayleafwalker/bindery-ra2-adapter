@@ -42,6 +42,7 @@ public sealed partial class FeatureCompiler : IFeatureCompiler
     private readonly HashSet<string> allSeenTechEver = new(StringComparer.Ordinal);
     private readonly HashSet<string> previousKnownProduction = new(StringComparer.Ordinal);
     private readonly Dictionary<RegionId, RegionControl> previousOreControl = [];
+    private readonly Dictionary<string, int> enemySuperweaponsSeen = new(StringComparer.Ordinal);
 
     private string? cachedMapId;
     private RegionGraph? cachedGraph;
@@ -88,6 +89,8 @@ public sealed partial class FeatureCompiler : IFeatureCompiler
         EconomyFeatures economy = CompileEconomy(snapshot, out double incomePerMinuteCurrent, out double spendingPerMinuteCurrent);
 
         IReadOnlyList<ThreatAssessment> threats = CompileThreats(snapshot, graph, clusters, armyValueCurrent);
+        SuperweaponFeatures? superweapons = CompileSuperweapons(snapshot, events);
+        if (superweapons is { Enemy.Count: > 0 }) enemy = enemy with { SuperweaponKnown = true };
 
         Trend creditsTrend = BuildTrend(snapshot.Time, snapshot.Credits, static s => s.Credits);
         Trend incomeTrend = BuildTrend(snapshot.Time, incomePerMinuteCurrent, static s => s.IncomePerMinute);
@@ -116,7 +119,40 @@ public sealed partial class FeatureCompiler : IFeatureCompiler
 
         return new StrategicFeatures(
             snapshot.Version, snapshot.Time, snapshot.Mode, snapshot.Faction,
-            economyWithTrends, army, enemyWithTrend, mapControl, scouting, threats, events);
+            economyWithTrends, army, enemyWithTrend, mapControl, scouting, threats, events, superweapons);
+    }
+
+    /// <summary>
+    /// Own and enemy superweapon timers from the snapshot (RA2 shows every timer to every player), soonest first;
+    /// null when the source reports none. An enemy superweapon appearing for the first time (per owner and type)
+    /// is a <see cref="StrategicEventKind.SuperweaponDetected"/> event.
+    /// </summary>
+    private SuperweaponFeatures? CompileSuperweapons(BeliefSnapshot snapshot, List<StrategicEvent> events)
+    {
+        if (snapshot.Superweapons is not { } timers) return null;
+        static SuperweaponTimer Timer(SuperweaponStatus s) => new(
+            s.TypeId,
+            s.ChargeSeconds > 0 ? Math.Clamp(1 - s.SecondsToReady / s.ChargeSeconds, 0, 1) : 1,
+            Math.Max(0, s.SecondsToReady),
+            s.Ready);
+        List<SuperweaponTimer> own = [.. timers.Where(s => s.Owner == snapshot.Self).Select(Timer)
+            .OrderBy(static t => t.SecondsToReady).ThenBy(static t => t.TypeId, StringComparer.Ordinal)];
+        List<SuperweaponStatus> theirs = [.. timers.Where(s => s.Owner != snapshot.Self)];
+        List<SuperweaponTimer> enemy = [.. theirs.Select(Timer).OrderBy(static t => t.SecondsToReady).ThenBy(static t => t.TypeId, StringComparer.Ordinal)];
+
+        foreach (IGrouping<string, SuperweaponStatus> group in theirs
+            .GroupBy(static s => $"{s.Owner.Value}:{s.TypeId}", StringComparer.Ordinal)
+            .OrderBy(static g => g.Key, StringComparer.Ordinal))
+        {
+            int count = group.Count();
+            int before = enemySuperweaponsSeen.GetValueOrDefault(group.Key);
+            if (count > before)
+            {
+                AddEvent(events, StrategicEventKind.SuperweaponDetected, snapshot.Time, 0.7, $"built:{group.First().TypeId}");
+            }
+            enemySuperweaponsSeen[group.Key] = Math.Max(before, count);
+        }
+        return new SuperweaponFeatures(own, enemy);
     }
 
     private RegionGraph GraphFor(MapInfo map)
@@ -137,6 +173,7 @@ public sealed partial class FeatureCompiler : IFeatureCompiler
     {
         Dictionary<UnitRole, double> valueByRole = [];
         Dictionary<RegionId, (int Units, double Value, double HealthSum)> byRegion = [];
+        Dictionary<RegionId, SortedDictionary<UnitRole, double>> roleByRegion = [];
         double total = 0;
 
         foreach (OwnEntity e in snapshot.Own)
@@ -147,11 +184,14 @@ public sealed partial class FeatureCompiler : IFeatureCompiler
 
             (int units, double value, double healthSum) = byRegion.TryGetValue(e.Region, out var existing) ? existing : (0, 0.0, 0.0);
             byRegion[e.Region] = (units + 1, value + e.Value, healthSum + e.HealthFraction);
+            if (!roleByRegion.TryGetValue(e.Region, out SortedDictionary<UnitRole, double>? roles)) roleByRegion[e.Region] = roles = [];
+            roles[e.Role] = roles.GetValueOrDefault(e.Role) + e.Value;
         }
 
+        // Role by location: each cluster carries its own role split, so "where is the anti-armour" is answerable.
         List<ForceCluster> clusters = [.. byRegion
             .OrderBy(static kv => kv.Key.Value)
-            .Select(kv => new ForceCluster(kv.Key, kv.Value.Units, kv.Value.Value, kv.Value.Units == 0 ? 0 : kv.Value.HealthSum / kv.Value.Units))];
+            .Select(kv => new ForceCluster(kv.Key, kv.Value.Units, kv.Value.Value, kv.Value.Units == 0 ? 0 : kv.Value.HealthSum / kv.Value.Units, roleByRegion[kv.Key]))];
 
         return (total, valueByRole, clusters);
     }

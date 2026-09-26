@@ -58,6 +58,15 @@ public sealed record GameEvent(
     string? Detail = null);
 
 /// <summary>
+/// One superweapon's countdown as the game shows it. RA2 displays every player's superweapon timer to all
+/// players, so an enemy timer is legitimate belief-mode information; the building behind an enemy timer is not
+/// (its <see cref="Building"/> is null unless the player owns it).
+/// </summary>
+/// <param name="ChargeSeconds">Full recharge time of this superweapon.</param>
+/// <param name="SecondsToReady">Seconds of charge still missing; 0 when ready.</param>
+public sealed record SuperweaponStatus(PlayerId Owner, string TypeId, EntityId? Building, double ChargeSeconds, double SecondsToReady, bool Ready);
+
+/// <summary>
 /// Everything the bot receives for one decision frame. Frames are
 /// append-only facts: the belief model derives memory (last seen, age,
 /// confidence) from their sequence.
@@ -66,6 +75,10 @@ public sealed record GameEvent(
 /// Ore value left in each ore region the player can currently see, as the game shows it; null when the
 /// source does not report ore (the RA2 telemetry contract does not yet). Regions out of sight are absent,
 /// never estimated.
+/// </param>
+/// <param name="Superweapons">
+/// Every superweapon timer on the map (own and enemy, see <see cref="SuperweaponStatus"/>); null when the
+/// source does not report superweapons (the RA2 telemetry contract does not yet).
 /// </param>
 public sealed record ObservationFrame(
     GameTime Time,
@@ -79,7 +92,8 @@ public sealed record ObservationFrame(
     IReadOnlyList<GameEvent> Events,
     IReadOnlySet<RegionId> VisibleRegions,
     MapInfo Map,
-    IReadOnlyDictionary<RegionId, int>? OreRemaining = null);
+    IReadOnlyDictionary<RegionId, int>? OreRemaining = null,
+    IReadOnlyList<SuperweaponStatus>? Superweapons = null);
 
 /// <summary>Where frames come from: the RA2 bridge, the simulator, or a replay.</summary>
 public interface IObservationSource

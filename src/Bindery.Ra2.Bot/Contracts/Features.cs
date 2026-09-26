@@ -19,7 +19,8 @@ public sealed record EconomyFeatures(
     PowerState Power);
 
 /// <summary>A spatial group of own combat units.</summary>
-public sealed record ForceCluster(RegionId Region, int Units, double Value, double AverageHealth);
+/// <param name="ValueByRole">The cluster's value split by role (army value by role and location); null only in hand-built fixtures.</param>
+public sealed record ForceCluster(RegionId Region, int Units, double Value, double AverageHealth, IReadOnlyDictionary<UnitRole, double>? ValueByRole = null);
 
 public sealed record ArmyFeatures(
     Trend ArmyValue,
@@ -32,6 +33,11 @@ public sealed record ArmyFeatures(
 /// Belief about the enemy. Every estimate carries the age of the evidence it
 /// rests on; <see cref="ArmyValueConfidence"/> is in [0, 1].
 /// </summary>
+/// <param name="SuperweaponKnown">An enemy superweapon has been seen, launched, or shown by its public timer.</param>
+/// <param name="TechLastSeenAgeSeconds">
+/// Seconds since each <see cref="KnownTech"/> type (production buildings included) was last seen; null only in
+/// hand-built fixtures.
+/// </param>
 public sealed record EnemyFeatures(
     Trend EstimatedArmyValue,
     double ArmyValueConfidence,
@@ -40,7 +46,16 @@ public sealed record EnemyFeatures(
     IReadOnlyList<string> KnownProduction,
     double NewestObservationAgeSeconds,
     double MedianObservationAgeSeconds,
-    bool SuperweaponKnown);
+    bool SuperweaponKnown,
+    IReadOnlyDictionary<string, double>? TechLastSeenAgeSeconds = null);
+
+/// <summary>One superweapon's countdown as a feature.</summary>
+/// <param name="ChargeFraction">Charge in [0, 1].</param>
+/// <param name="SecondsToReady">0 when ready.</param>
+public sealed record SuperweaponTimer(string TypeId, double ChargeFraction, double SecondsToReady, bool Ready);
+
+/// <summary>Own and enemy superweapon timers, ordered by readiness (soonest first).</summary>
+public sealed record SuperweaponFeatures(IReadOnlyList<SuperweaponTimer> Own, IReadOnlyList<SuperweaponTimer> Enemy);
 
 public enum RegionControl { Own, Contested, Enemy, Neutral, Unknown }
 
@@ -98,6 +113,7 @@ public sealed record StrategicEvent(StrategicEventKind Kind, GameTime Time, doub
 /// The compiled strategic picture for one snapshot. This is the only view of
 /// the game a strategist receives: exact, compact, and built only from belief.
 /// </summary>
+/// <param name="Superweapons">Own and enemy superweapon charge; null when the source reports no superweapon timers.</param>
 public sealed record StrategicFeatures(
     long SnapshotVersion,
     GameTime Time,
@@ -109,7 +125,8 @@ public sealed record StrategicFeatures(
     MapControlFeatures MapControl,
     ScoutingFeatures Scouting,
     IReadOnlyList<ThreatAssessment> Threats,
-    IReadOnlyList<StrategicEvent> Events);
+    IReadOnlyList<StrategicEvent> Events,
+    SuperweaponFeatures? Superweapons = null);
 
 public interface IFeatureCompiler
 {

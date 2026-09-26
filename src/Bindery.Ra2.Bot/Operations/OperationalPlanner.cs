@@ -30,6 +30,9 @@ namespace Bindery.Ra2.Bot.Operations;
 /// becomes) and are never queued.</item>
 /// <item>Squad membership persists across calls in this instance (see the squad
 /// half of this class), so the integrator must keep one planner per match.</item>
+/// <item>A ready own superweapon is fired at the known enemy building whose surroundings (within
+/// <see cref="OperationalOptions.SuperweaponTargetRadiusCells"/>) hold the most known enemy building value;
+/// with no enemy building known it waits.</item>
 /// </list>
 /// </remarks>
 public sealed partial class OperationalPlanner : IOperationalPlanner
@@ -62,6 +65,7 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
 
         pass.Run();
         PlanPlacement(belief, features, pass.Commands, pass.Notes);
+        PlanSuperweapons(belief, pass.Commands, pass.Notes);
         List<SquadOrder> squadOrders = PlanSquads(belief, features, intent, graph, leases, pass.Notes);
 
         SortedDictionary<string, int> sortedReservations = new(pass.Reservations, StringComparer.Ordinal);
@@ -431,6 +435,41 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
                 weight += w;
             }
             return weight > 0 ? Math.Max(0.05, sum / weight) : 1.0;
+        }
+    }
+
+    // ----- Superweapons: fire when ready. -----
+
+    private void PlanSuperweapons(BeliefSnapshot belief, List<GameCommand> commands, List<string> notes)
+    {
+        if (belief.Superweapons is not { } timers) return;
+        List<EnemyContact> buildings = belief.Enemies
+            .Where(static c => !c.ConfirmedDestroyed && c.Kind == EntityKind.Building)
+            .OrderBy(static c => c.Id.Value)
+            .ToList();
+        foreach (SuperweaponStatus timer in timers.Where(t => t.Owner == belief.Self && t.Ready && t.Building is not null).OrderBy(static t => t.Building!.Value.Value))
+        {
+            if (!belief.Own.Any(e => e.Id == timer.Building!.Value)) continue;
+            EnemyContact? best = null;
+            double bestValue = 0;
+            foreach (EnemyContact candidate in buildings)
+            {
+                double value = buildings
+                    .Where(b => b.LastSeenPosition.DistanceTo(candidate.LastSeenPosition) <= options.SuperweaponTargetRadiusCells)
+                    .Sum(static b => Math.Max(1, b.Value) * b.Confidence); // a deploy product (construction yard) costs 0 but is still a target
+                if (value > bestValue)
+                {
+                    best = candidate;
+                    bestValue = value;
+                }
+            }
+            if (best is null)
+            {
+                notes.Add($"superweapon: {timer.TypeId} ready, no known enemy building to target");
+                continue;
+            }
+            commands.Add(new LaunchSuperweaponCommand(options.ControllerId, timer.Building!.Value, best.LastSeenPosition));
+            notes.Add($"superweapon: {timer.TypeId} at {best.LastSeenPosition} ({bestValue:0} known building value)");
         }
     }
 

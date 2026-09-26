@@ -100,7 +100,7 @@ public static class MatchRunner
             foreach (GameEvent e in oracle.Events)
             {
                 if (e.Owner is not { } owner || !rules.TryGet(e.TypeId ?? string.Empty, out UnitRule rule)) continue;
-                if (e.Kind == GameEventKind.EntityDestroyed && e.Detail == "combat") destroyedValueOf[owner] += rule.Cost;
+                if (e.Kind == GameEventKind.EntityDestroyed && e.Detail is "combat" or "superweapon") destroyedValueOf[owner] += rule.Cost;
                 if (e.Kind == GameEventKind.EntityCreated)
                 {
                     if (rule.Kind == EntityKind.Building) buildingsBuilt[owner]++;

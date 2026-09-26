@@ -19,6 +19,7 @@ public sealed class BeliefModel : IBeliefModel
     private readonly Dictionary<EntityId, EnemyContact> contacts = [];
     private readonly Dictionary<PlayerId, HashSet<Faction>> factionCandidates = [];
     private readonly Dictionary<PlayerId, HashSet<string>> seenTech = [];
+    private readonly Dictionary<PlayerId, Dictionary<string, GameTime>> techLastSeen = [];
     private readonly Dictionary<PlayerId, HashSet<RegionId>> enemyBuildingStartRegions = [];
     private readonly HashSet<RegionId> ownStartRegions = [];
     private readonly HashSet<RegionId> emptyScoutedStarts = [];
@@ -74,7 +75,8 @@ public sealed class BeliefModel : IBeliefModel
             new Dictionary<RegionId, GameTime>(regionLastSeen),
             [.. recentEvents],
             frame.Map,
-            oreLastSeen is null ? null : new Dictionary<RegionId, int>(oreLastSeen));
+            oreLastSeen is null ? null : new Dictionary<RegionId, int>(oreLastSeen),
+            frame.Superweapons);
 
         current = snapshot;
         return snapshot;
@@ -196,6 +198,12 @@ public sealed class BeliefModel : IBeliefModel
                 seenTech[e.Owner] = tech;
             }
             tech.Add(e.TypeId);
+            if (!techLastSeen.TryGetValue(e.Owner, out Dictionary<string, GameTime>? lastSeenByType))
+            {
+                lastSeenByType = new Dictionary<string, GameTime>(StringComparer.Ordinal);
+                techLastSeen[e.Owner] = lastSeenByType;
+            }
+            lastSeenByType[e.TypeId] = frame.Time;
             if (rule.Kind != EntityKind.Building) continue;
 
             RegionId region = RegionOf(frame.Map, e.Position);
@@ -270,7 +278,10 @@ public sealed class BeliefModel : IBeliefModel
                 if (lastSeen is null || c.LastSeenAt > lastSeen.Value) lastSeen = c.LastSeenAt;
             }
 
-            result.Add(new EnemyPlayerBelief(p, faction, start, tech, lastSeen));
+            IReadOnlyDictionary<string, GameTime> techTimes = techLastSeen.TryGetValue(p, out Dictionary<string, GameTime>? times)
+                ? new SortedDictionary<string, GameTime>(times, StringComparer.Ordinal)
+                : new SortedDictionary<string, GameTime>(StringComparer.Ordinal);
+            result.Add(new EnemyPlayerBelief(p, faction, start, tech, lastSeen, techTimes));
         }
         return result;
     }

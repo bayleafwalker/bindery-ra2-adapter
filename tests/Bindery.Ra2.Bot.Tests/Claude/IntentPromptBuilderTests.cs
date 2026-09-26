@@ -25,7 +25,36 @@ public sealed class IntentPromptBuilderTests
 
         using JsonDocument situation = JsonDocument.Parse(prompt.Situation);
         List<string> featureKeys = situation.RootElement.GetProperty("features").EnumerateObject().Select(p => p.Name).ToList();
-        Assert.Equal(["army", "economy", "enemy", "events", "gameSeconds", "mapControl", "observationMode", "scouting", "threats"], featureKeys);
+        Assert.Equal(["army", "economy", "enemy", "events", "gameSeconds", "mapControl", "observationMode", "scouting", "superweapons", "threats"], featureKeys);
+    }
+
+    [Fact]
+    public void Prompt_carries_role_by_location_per_item_ages_and_superweapon_timers()
+    {
+        StrategicFeatures baseFeatures = ClaudeFixtures.Features();
+        StrategicFeatures features = baseFeatures with
+        {
+            Army = baseFeatures.Army with
+            {
+                Clusters = [new ForceCluster(new RegionId(2), 8, 5000, 0.9, new Dictionary<UnitRole, double> { [UnitRole.AntiArmor] = 4000, [UnitRole.AntiInfantry] = 1000 })],
+            },
+            Enemy = baseFeatures.Enemy with { TechLastSeenAgeSeconds = new Dictionary<string, double> { ["HTNK"] = 12.5 } },
+            Superweapons = new SuperweaponFeatures(
+                [new SuperweaponTimer("GAWEAT", 0.25, 450, false)],
+                [new SuperweaponTimer("NAMISL", 0.9, 60, false)]),
+        };
+
+        IntentPrompt prompt = new IntentPromptBuilder().Build(ClaudeFixtures.Context(features), StrategistMode.Strategic);
+
+        using JsonDocument situation = JsonDocument.Parse(prompt.Situation);
+        JsonElement f = situation.RootElement.GetProperty("features");
+        JsonElement cluster = Assert.Single(f.GetProperty("army").GetProperty("clusters").EnumerateArray().ToList());
+        Assert.Equal(4000, cluster.GetProperty("valueByRole").GetProperty("AntiArmor").GetDouble());
+        Assert.Equal(12.5, f.GetProperty("enemy").GetProperty("techLastSeenAgeSeconds").GetProperty("HTNK").GetDouble());
+        JsonElement enemySw = Assert.Single(f.GetProperty("superweapons").GetProperty("enemy").EnumerateArray().ToList());
+        Assert.Equal("NAMISL", enemySw.GetProperty("typeId").GetString());
+        Assert.Equal(60, enemySw.GetProperty("secondsToReady").GetDouble());
+        Assert.Equal(0.25, Assert.Single(f.GetProperty("superweapons").GetProperty("own").EnumerateArray().ToList()).GetProperty("chargeFraction").GetDouble());
     }
 
     [Fact]

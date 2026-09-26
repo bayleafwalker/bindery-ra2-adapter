@@ -34,6 +34,8 @@ public sealed record GateResult(IReadOnlyList<GameCommand> Passed, IReadOnlyList
 /// cannot cover it. Spending is recorded, so two orders cannot pass on one reservation.</item>
 /// <item><see cref="PlaceBuildingCommand"/> and <see cref="CancelProductionCommand"/> cost nothing now (RA2 charges
 /// while building), but only a budgeted controller (one with a ledger account this period) may issue them.</item>
+/// <item><see cref="LaunchSuperweaponCommand"/> is irreversible and strategic: only a budgeted controller may issue
+/// it, and not while another controller holds the building's lease.</item>
 /// </list>
 /// Each drop is logged as <c>command.dropped</c> in input order.
 /// </remarks>
@@ -108,6 +110,7 @@ public sealed class CommandGate
         ProduceCommand c => CheckProduce(c),
         PlaceBuildingCommand c => ledger.HasAccount(c.Controller) ? null : Drop(c, BudgetNoAccount),
         CancelProductionCommand c => ledger.HasAccount(c.Controller) ? null : Drop(c, BudgetNoAccount),
+        LaunchSuperweaponCommand c => CheckLaunch(c, now),
         _ => Drop(command, CommandUnknown),
     };
 
@@ -131,6 +134,15 @@ public sealed class CommandGate
         return owner is null || string.Equals(owner, command.Controller, StringComparison.Ordinal)
             ? null
             : new DroppedCommand(command, LeaseMissing, [command.Factory]);
+    }
+
+    private DroppedCommand? CheckLaunch(LaunchSuperweaponCommand command, GameTime now)
+    {
+        if (!ledger.HasAccount(command.Controller)) return Drop(command, BudgetNoAccount);
+        string? owner = leases.OwnerOf(LeaseKey.Unit(command.Building), now);
+        return owner is null || string.Equals(owner, command.Controller, StringComparison.Ordinal)
+            ? null
+            : new DroppedCommand(command, LeaseMissing, [command.Building]);
     }
 
     private DroppedCommand? CheckProduce(ProduceCommand command)

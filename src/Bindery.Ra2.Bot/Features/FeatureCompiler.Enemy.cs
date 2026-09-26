@@ -46,8 +46,21 @@ public sealed partial class FeatureCompiler
         bool superweaponBuildingSeen = knownTech.Any(t => rules.TryGet(t, out UnitRule r) && r.Role == UnitRole.Superweapon);
         bool superweaponKnown = superweaponBuildingSeen || superweaponEverLaunched;
 
+        // Age per item: a tech seen by several enemy players counts its newest sighting.
+        SortedDictionary<string, double> techAges = new(StringComparer.Ordinal);
+        foreach (EnemyPlayerBelief p in snapshot.EnemyPlayers)
+        {
+            foreach (string tech in p.SeenTech)
+            {
+                double age = p.TechLastSeen is { } times && times.TryGetValue(tech, out GameTime seen)
+                    ? snapshot.Time.SecondsSince(seen)
+                    : UnknownSeconds;
+                techAges[tech] = techAges.TryGetValue(tech, out double other) ? Math.Min(other, age) : age;
+            }
+        }
+
         return new EnemyFeatures(
             Trend.Flat(armyValueCurrent), confidence, composition, knownTech, knownProduction,
-            newestAge, medianAge, superweaponKnown);
+            newestAge, medianAge, superweaponKnown, techAges);
     }
 }

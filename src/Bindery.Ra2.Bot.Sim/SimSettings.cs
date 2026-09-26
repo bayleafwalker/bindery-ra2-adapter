@@ -13,4 +13,14 @@ public sealed record SimPlayer(PlayerId Id, Faction Faction);
 /// <param name="MaxSeconds">Match is called a timeout and scored by asset value if no player has won by this wall time.</param>
 /// <param name="StartingCredits">Credits every player begins with.</param>
 /// <param name="Players">Player slots, matched to the map's start regions in order.</param>
-public sealed record SimSettings(int Seed, double MaxSeconds, IReadOnlyList<SimPlayer> Players, int StartingCredits = 10_000);
+/// <param name="SuperweaponChargeSeconds">Recharge time of every superweapon (RA2's nuclear missile and weather storm: 10 minutes); the charge pauses on low power.</param>
+/// <param name="SuperweaponDamage">Damage dealt to every object within <paramref name="SuperweaponRadiusCells"/> of the strike.</param>
+/// <param name="SuperweaponRadiusCells">Strike radius in cells.</param>
+public sealed record SimSettings(
+    int Seed,
+    double MaxSeconds,
+    IReadOnlyList<SimPlayer> Players,
+    int StartingCredits = 10_000,
+    double SuperweaponChargeSeconds = 600,
+    int SuperweaponDamage = 1500,
+    double SuperweaponRadiusCells = 6);

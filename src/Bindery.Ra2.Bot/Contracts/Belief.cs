@@ -34,12 +34,14 @@ public sealed record EnemyContact(
     bool ConfirmedDestroyed);
 
 /// <summary>What the player knows about one enemy player as a whole.</summary>
+/// <param name="TechLastSeen">When each type in <see cref="SeenTech"/> was last seen; null only in hand-built fixtures.</param>
 public sealed record EnemyPlayerBelief(
     PlayerId Player,
     Faction? Faction,
     RegionId? SuspectedStart,
     IReadOnlySet<string> SeenTech,
-    GameTime? LastSeenAnything);
+    GameTime? LastSeenAnything,
+    IReadOnlyDictionary<string, GameTime>? TechLastSeen = null);
 
 /// <summary>
 /// Immutable view of the belief state at one frame. <see cref="Version"/>
@@ -50,6 +52,7 @@ public sealed record EnemyPlayerBelief(
 /// Ore value last seen in each ore region (from <see cref="ObservationFrame.OreRemaining"/>); regions never
 /// seen with an ore report are absent. Null when the source never reports ore.
 /// </param>
+/// <param name="Superweapons">The frame's superweapon timers (<see cref="ObservationFrame.Superweapons"/>); null when not reported.</param>
 public sealed record BeliefSnapshot(
     long Version,
     GameTime Time,
@@ -65,7 +68,8 @@ public sealed record BeliefSnapshot(
     IReadOnlyDictionary<RegionId, GameTime> RegionLastSeen,
     IReadOnlyList<GameEvent> RecentEvents,
     MapInfo Map,
-    IReadOnlyDictionary<RegionId, int>? OreLastSeen = null)
+    IReadOnlyDictionary<RegionId, int>? OreLastSeen = null,
+    IReadOnlyList<SuperweaponStatus>? Superweapons = null)
 {
     public IReadOnlySet<string> OwnBuildingTypes =>
         Own.Where(static e => e.Kind == EntityKind.Building).Select(static e => e.TypeId).ToHashSet(StringComparer.Ordinal);

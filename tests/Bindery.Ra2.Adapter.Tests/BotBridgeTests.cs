@@ -260,6 +260,7 @@ public sealed class BotBridgeTests
         yield return [new RepairCommand("op", new EntityId(1), new EntityId(2)), "repair"];
         yield return [new HarvestCommand("op", new EntityId(1), new Cell(5, 6)), "harvest"];
         yield return [new SetRallyPointCommand("op", new EntityId(1), new Cell(7, 8)), "set_rally_point"];
+        yield return [new LaunchSuperweaponCommand("op", new EntityId(1), new Cell(9, 9)), "launch_superweapon"];
     }
 
     [Theory]

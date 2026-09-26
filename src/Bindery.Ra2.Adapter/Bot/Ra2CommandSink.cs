@@ -59,6 +59,7 @@ public sealed class Ra2CommandSink : ICommandSink
             RepairCommand c => Build(c.Controller, "repair", new { unit = c.Unit.Value, depot = c.Depot?.Value }),
             HarvestCommand c => Build(c.Controller, "harvest", new { harvester = c.Harvester.Value, ore = CellFields(c.Ore) }),
             SetRallyPointCommand c => Build(c.Controller, "set_rally_point", new { factory = c.Factory.Value, cell = CellFields(c.Cell) }),
+            LaunchSuperweaponCommand c => Build(c.Controller, "launch_superweapon", new { building = c.Building.Value, target = CellFields(c.Target) }),
             _ => throw new NotSupportedException($"unmapped GameCommand type: {command.GetType().FullName}"),
         };
     }

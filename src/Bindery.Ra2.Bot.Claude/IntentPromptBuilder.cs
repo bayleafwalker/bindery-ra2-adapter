@@ -294,6 +294,7 @@ public sealed class IntentPromptBuilder
                 ["units"] = c.Units,
                 ["value"] = CanonicalJson.Number(c.Value),
                 ["averageHealth"] = CanonicalJson.Number(c.AverageHealth),
+                ["valueByRole"] = c.ValueByRole is null ? null : RoleMap(c.ValueByRole),
             });
         }
 
@@ -383,6 +384,7 @@ public sealed class IntentPromptBuilder
                 ["newestObservationAgeSeconds"] = CanonicalJson.Number(en.NewestObservationAgeSeconds),
                 ["medianObservationAgeSeconds"] = CanonicalJson.Number(en.MedianObservationAgeSeconds),
                 ["superweaponKnown"] = en.SuperweaponKnown,
+                ["techLastSeenAgeSeconds"] = en.TechLastSeenAgeSeconds is null ? null : NumberMap(en.TechLastSeenAgeSeconds),
             },
             ["mapControl"] = new JsonObject
             {
@@ -396,9 +398,40 @@ public sealed class IntentPromptBuilder
                 ["regionAgeSeconds"] = regionAges,
                 ["importantUnknowns"] = Strings(f.Scouting.ImportantUnknowns),
             },
+            ["superweapons"] = f.Superweapons is null ? null : new JsonObject
+            {
+                ["own"] = Timers(f.Superweapons.Own),
+                ["enemy"] = Timers(f.Superweapons.Enemy),
+            },
             ["threats"] = threats,
             ["events"] = events,
         };
+    }
+
+    private static JsonArray Timers(IReadOnlyList<SuperweaponTimer> timers)
+    {
+        JsonArray result = new();
+        foreach (SuperweaponTimer t in timers.OrderBy(static t => t.SecondsToReady).ThenBy(static t => t.TypeId, StringComparer.Ordinal))
+        {
+            result.Add(new JsonObject
+            {
+                ["typeId"] = t.TypeId,
+                ["chargeFraction"] = CanonicalJson.Number(t.ChargeFraction),
+                ["secondsToReady"] = CanonicalJson.Number(t.SecondsToReady),
+                ["ready"] = t.Ready,
+            });
+        }
+        return result;
+    }
+
+    private static JsonObject NumberMap(IReadOnlyDictionary<string, double> map)
+    {
+        JsonObject result = new();
+        foreach (KeyValuePair<string, double> entry in map.OrderBy(static e => e.Key, StringComparer.Ordinal))
+        {
+            result[entry.Key] = CanonicalJson.Number(entry.Value);
+        }
+        return result;
     }
 
     private static JsonObject Trend(Trend t) => new()

@@ -74,6 +74,9 @@ public sealed record RepairCommand(string Controller, EntityId Unit, EntityId? D
 public sealed record HarvestCommand(string Controller, EntityId Harvester, Cell Ore) : GameCommand(Controller);
 public sealed record SetRallyPointCommand(string Controller, EntityId Factory, Cell Cell) : GameCommand(Controller);
 
+/// <summary>Fires a ready superweapon at a cell.</summary>
+public sealed record LaunchSuperweaponCommand(string Controller, EntityId Building, Cell Target) : GameCommand(Controller);
+
 public interface ICommandSink
 {
     void Submit(GameCommand command);

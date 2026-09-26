@@ -104,6 +104,16 @@ public sealed class CommandGateTests
     }
 
     [Fact]
+    public void Superweapon_launch_needs_a_budget_account_and_no_other_lease_on_the_building()
+    {
+        ledger.BeginPeriod(Fx.T(0), 1000, 0, new BudgetShares(1, 0, 0, 0));
+        ledger.Reserve(BudgetPools.Economy, "ops", 0);
+        Assert.Single(Filter(new LaunchSuperweaponCommand("ops", new EntityId(50), new Cell(1, 1))).Passed);
+        Assert.Equal(CommandGate.BudgetNoAccount, Assert.Single(Filter(new LaunchSuperweaponCommand("squad", new EntityId(50), new Cell(1, 1))).Dropped).Reason);
+        Assert.Equal(CommandGate.LeaseMissing, Assert.Single(Filter(new LaunchSuperweaponCommand("ops", C, new Cell(1, 1))).Dropped).Reason);
+    }
+
+    [Fact]
     public void Rally_point_passes_unless_another_controller_owns_the_factory()
     {
         Assert.Single(Filter(new SetRallyPointCommand("ops", new EntityId(50), new Cell(1, 1))).Passed);

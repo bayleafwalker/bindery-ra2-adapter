@@ -25,7 +25,7 @@ public sealed partial class FeatureCompiler
                 case GameEventKind.UnderAttack:
                     HandleUnderAttack(snapshot, evt, events);
                     break;
-                case GameEventKind.SuperweaponLaunched:
+                case GameEventKind.SuperweaponLaunched when evt.Owner != snapshot.Self:
                     superweaponEverLaunched = true;
                     AddEvent(events, StrategicEventKind.SuperweaponDetected, evt.Time, 0.9,
                         $"launched:{evt.TypeId ?? "unknown"}", RegionForCell(snapshot.Map, evt.Position));

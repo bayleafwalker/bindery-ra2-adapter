@@ -50,6 +50,9 @@ internal sealed class SimEntity
 
     // Repair.
     public bool RepairRequested { get; set; }
+
+    // Superweapon charge in seconds (superweapon buildings only).
+    public double SuperweaponCharge { get; set; }
 }
 
 internal sealed class QueueItemRuntime

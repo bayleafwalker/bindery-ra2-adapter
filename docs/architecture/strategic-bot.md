@@ -216,3 +216,25 @@ Gaps an operator review found after integration, and how each was closed.
   precedence); an attack order on a target already in range no longer walks into
   its region. Contract change: `SquadOrder.StandoffBufferCells` (optional,
   default 0).
+- **State compiler completeness.** Superweapons: the simulator charges a
+  powered superweapon building (`SimSettings.SuperweaponChargeSeconds`, RA2's
+  10 minutes by default; low power pauses it), fires it on
+  `LaunchSuperweaponCommand` (damage within a radius, both sides) and announces
+  `SuperweaponLaunched` to every player. Every frame carries every superweapon
+  timer (`ObservationFrame.Superweapons`), as RA2 shows them to all players; an
+  enemy timer names owner, type and countdown, not the building. Features:
+  `StrategicFeatures.Superweapons` (own and enemy charge fraction, seconds to
+  ready, ready), `SuperweaponDetected` on a new enemy superweapon and on an
+  enemy (not own) launch; the planner fires a ready superweapon at the known
+  enemy building area with the most known value. `ForceCluster.ValueByRole`
+  gives army value by role and location; `EnemyFeatures.TechLastSeenAgeSeconds`
+  (from `EnemyPlayerBelief.TechLastSeen`) gives an age per known enemy tech and
+  production item. All reach the LLM prompt. Contract changes (all optional,
+  additive): `SuperweaponStatus`, `ObservationFrame.Superweapons`,
+  `BeliefSnapshot.Superweapons`, `EnemyPlayerBelief.TechLastSeen`,
+  `ForceCluster.ValueByRole`, `EnemyFeatures.TechLastSeenAgeSeconds`,
+  `SuperweaponTimer`, `SuperweaponFeatures`, `StrategicFeatures.Superweapons`,
+  `LaunchSuperweaponCommand` (sink kind `launch_superweapon`). The RA2
+  telemetry contract (observation/v1) does not carry superweapon timers yet,
+  so a retail frame's `Superweapons` is null.
+
