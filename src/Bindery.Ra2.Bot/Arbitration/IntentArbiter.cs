@@ -61,6 +61,14 @@ public sealed record ArbiterOptions(
 /// covered its latency.</item>
 /// <item>An override (abort trigger or base threat) also skips the posture margin: the
 /// incumbent's plan is failing, so its confidence is no longer a fair bar.</item>
+/// <item>The base-threat override is spent once per threat episode: the intent installed while the threat holds
+/// (by the override or otherwise) was chosen knowing about it and gets its normal commitment, and a Defend or
+/// Turtle incumbent is never overridden by it. Otherwise a strategist wavering under attack would flip the posture
+/// every cadence for as long as the threat lasts. The episode ends when the threat stops holding.</item>
+/// <item>A firing abort trigger ends the intent, like expiry, and asks for the fallback: an aborted plan must not
+/// keep driving the planner until a different plan happens to arrive.</item>
+/// <item>A replan request is acknowledged by an accepted intent only when that intent was based on a snapshot at
+/// or after the request; an answer computed before the trigger fired does not answer it.</item>
 /// <item>An intent whose own abort trigger already holds is refused (<c>abort_firing</c>): it would abort on
 /// arrival, and accepting it lets a strategist re-install the very plan that just aborted.</item>
 /// <item>Triggers are edge-detected: each abort, replan or base-threat condition asks
@@ -78,6 +86,8 @@ public sealed class IntentArbiter
     private bool abortFiring;
     private bool replanFiring;
     private bool baseThreatFiring;
+    private bool baseThreatAnswered;
+    private long replanRequestedVersion;
 
     public IntentArbiter(IPlaybookLibrary playbooks, ArbiterOptions? options = null, IDecisionLog? log = null, BotMetrics? metrics = null)
     {
@@ -129,36 +139,39 @@ public sealed class IntentArbiter
     }
 
     /// <summary>
-    /// Per-frame housekeeping: ends an expired intent (and asks for the fallback),
-    /// and turns rising edges of abort triggers, replan triggers and base threat into
-    /// replan requests.
+    /// Per-frame housekeeping: ends an expired or aborted intent (and asks for the fallback),
+    /// turns rising edges of replan triggers and base threat into replan requests, and ends a
+    /// base-threat episode once the threat stops holding.
     /// </summary>
     public void Update(StrategicFeatures features)
     {
         ArgumentNullException.ThrowIfNull(features);
+        bool threat = ConditionEvaluator.BaseThreatRatio(features) > Options.BaseThreatOverrideRatio;
+        if (!threat) baseThreatAnswered = false;
         if (Active is null) return;
         if (features.Time >= Active.ExpiresAt)
         {
             End(features, "expired");
             FallbackRequested = true;
-            RequestReplan("expired");
+            RequestReplan("expired", features);
             return;
         }
 
         bool abort = ConditionEvaluator.AnyOf(Active.AbortTriggers, features);
         if (abort && !abortFiring)
         {
+            End(features, "aborted");
             FallbackRequested = true;
-            RequestReplan("abort");
+            RequestReplan("abort", features);
+            return;
         }
         abortFiring = abort;
 
         bool replan = ConditionEvaluator.AnyOf(Active.ReplanTriggers, features);
-        if (replan && !replanFiring) RequestReplan("trigger");
+        if (replan && !replanFiring) RequestReplan("trigger", features);
         replanFiring = replan;
 
-        bool threat = ConditionEvaluator.BaseThreatRatio(features) > Options.BaseThreatOverrideRatio;
-        if (threat && !baseThreatFiring) RequestReplan("base_threat");
+        if (threat && !baseThreatFiring) RequestReplan("base_threat", features);
         baseThreatFiring = threat;
     }
 
@@ -174,7 +187,12 @@ public sealed class IntentArbiter
     /// Offers a validation result. Only an accepted result can become active
     /// (invariant 5); the decision is applied, logged and returned.
     /// </summary>
-    public ArbitrationDecision Offer(ValidationResult result, StrategicFeatures features, ProposalRole role = ProposalRole.Primary)
+    /// <param name="basis">
+    /// The features the strategist was asked with, when older than <paramref name="features"/> (an answer that took
+    /// time). The activation record logs them as <c>features</c>, because the decision dataset pairs that vector with
+    /// the chosen playbook as what the strategist saw; the decision itself is always made on the current features.
+    /// </param>
+    public ArbitrationDecision Offer(ValidationResult result, StrategicFeatures features, ProposalRole role = ProposalRole.Primary, StrategicFeatures? basis = null)
     {
         ArgumentNullException.ThrowIfNull(result);
         ArgumentNullException.ThrowIfNull(features);
@@ -195,10 +213,10 @@ public sealed class IntentArbiter
                 if (metrics is not null) metrics.Refused++;
                 break;
             case ArbitrationOutcome.Renewed:
-                Renew(decision.Intent!, features, role);
+                Renew(decision.Intent!, features, role, basis ?? features);
                 break;
             case ArbitrationOutcome.Activated:
-                Activate(decision.Intent!, features, role, decision.Reason);
+                Activate(decision.Intent!, features, role, decision.Reason, basis ?? features);
                 break;
         }
         return decision;
@@ -238,7 +256,9 @@ public sealed class IntentArbiter
         {
             return new ArbitrationDecision(ArbitrationOutcome.Activated, "override:abort", challenger);
         }
-        if (ConditionEvaluator.BaseThreatRatio(features) > Options.BaseThreatOverrideRatio)
+        if (!baseThreatAnswered
+            && incumbent.Posture is not (StrategicPosture.Defend or StrategicPosture.Turtle)
+            && ConditionEvaluator.BaseThreatRatio(features) > Options.BaseThreatOverrideRatio)
         {
             return new ArbitrationDecision(ArbitrationOutcome.Activated, "override:base_threat", challenger);
         }
@@ -257,10 +277,11 @@ public sealed class IntentArbiter
     /// <remarks>
     /// The <c>strategy.intent_activated</c> payload (written here and by <see cref="Renew"/>) carries the
     /// <see cref="DecisionDataset"/> contract: <c>faction</c>, <c>featureVersion</c>, <c>features</c>
-    /// (<see cref="FeatureVector.Encode"/> of the features the decision was made on) and <c>intent</c>
+    /// (<see cref="FeatureVector.Encode"/> of the features the strategist was asked with, whose snapshot version and
+    /// frame are <c>featuresSnapshotVersion</c> and <c>featuresFrame</c>) and <c>intent</c>
     /// (canonical <see cref="IntentJson"/>), alongside the arbitration fields.
     /// </remarks>
-    private void Activate(StrategicIntent intent, StrategicFeatures features, ProposalRole role, string reason)
+    private void Activate(StrategicIntent intent, StrategicFeatures features, ProposalRole role, string reason, StrategicFeatures basis)
     {
         StrategicIntent? previous = Active;
         if (previous is not null) End(features, reason == "yield" ? "yielded" : $"replaced:{reason}");
@@ -273,8 +294,10 @@ public sealed class IntentArbiter
         abortFiring = ConditionEvaluator.AnyOf(intent.AbortTriggers, features);
         replanFiring = ConditionEvaluator.AnyOf(intent.ReplanTriggers, features);
         baseThreatFiring = ConditionEvaluator.BaseThreatRatio(features) > Options.BaseThreatOverrideRatio;
+        // Installed while the threat holds: this plan was chosen knowing about it, so the threat is answered.
+        baseThreatAnswered = baseThreatFiring;
         FallbackRequested = false;
-        AcknowledgeReplan();
+        AcknowledgeReplanAnsweredBy(intent);
         AddHistory(new IntentHistoryEntry(intent.IntentId, intent.Source, intent.Posture, intent.PlaybookId, features.Time, null, null));
 
         if (metrics is not null)
@@ -300,12 +323,14 @@ public sealed class IntentArbiter
             expiresAtFrame = intent.ExpiresAt.Frame,
             faction = features.Faction,
             featureVersion = FeatureVector.Version,
-            features = FeatureVector.Encode(features),
+            features = FeatureVector.Encode(basis),
+            featuresSnapshotVersion = basis.SnapshotVersion,
+            featuresFrame = basis.Time.Frame,
             intent = IntentJson.ToElement(intent),
         })));
     }
 
-    private void Renew(StrategicIntent intent, StrategicFeatures features, ProposalRole role)
+    private void Renew(StrategicIntent intent, StrategicFeatures features, ProposalRole role, StrategicFeatures basis)
     {
         StrategicIntent previous = Active!;
         CloseHistory(previous.IntentId, features.Time, "renewed");
@@ -313,7 +338,7 @@ public sealed class IntentArbiter
         // A primary strategist endorsing a placeholder's plan makes it a real commitment.
         if (role == ProposalRole.Primary) ActiveRole = ProposalRole.Primary;
         AddHistory(new IntentHistoryEntry(intent.IntentId, intent.Source, intent.Posture, intent.PlaybookId, features.Time, null, null));
-        AcknowledgeReplan();
+        AcknowledgeReplanAnsweredBy(intent);
         if (metrics is not null) metrics.Renewals++;
         log?.Write(new DecisionRecord(DecisionRecordKinds.IntentActivated, features.Time, features.SnapshotVersion, BotJson.ToElement(new
         {
@@ -331,7 +356,9 @@ public sealed class IntentArbiter
             expiresAtFrame = intent.ExpiresAt.Frame,
             faction = features.Faction,
             featureVersion = FeatureVector.Version,
-            features = FeatureVector.Encode(features),
+            features = FeatureVector.Encode(basis),
+            featuresSnapshotVersion = basis.SnapshotVersion,
+            featuresFrame = basis.Time.Frame,
             intent = IntentJson.ToElement(intent),
         })));
     }
@@ -353,11 +380,19 @@ public sealed class IntentArbiter
         })));
     }
 
-    private void RequestReplan(string reason)
+    private void RequestReplan(string reason, StrategicFeatures features)
     {
         if (ReplanRequested) return;
         ReplanRequested = true;
         ReplanReason = reason;
+        replanRequestedVersion = features.SnapshotVersion;
+    }
+
+    /// <summary>Clears a pending replan request only if <paramref name="intent"/> was computed from a snapshot that already saw it.</summary>
+    private void AcknowledgeReplanAnsweredBy(StrategicIntent intent)
+    {
+        if (ReplanRequested && intent.BasedOnSnapshotVersion < replanRequestedVersion) return;
+        AcknowledgeReplan();
     }
 
     private void AddHistory(IntentHistoryEntry entry)
