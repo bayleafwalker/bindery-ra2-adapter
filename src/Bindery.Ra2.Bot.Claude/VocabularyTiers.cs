@@ -56,7 +56,16 @@ public static class IntentVocabulary
             Assumptions = proposed.Assumptions,
             Rationale = proposed.Rationale,
         };
-        if (tier >= VocabularyTier.Parameters) restricted = restricted with { PlaybookParameters = proposed.PlaybookParameters };
+        if (tier >= VocabularyTier.Parameters)
+        {
+            // The playbook's conditions stay, but one that carries the attack threshold follows the chosen parameter.
+            restricted = restricted with
+            {
+                PlaybookParameters = proposed.PlaybookParameters,
+                AttackConditions = AttackArmyThreshold.Retarget(
+                    restricted.AttackConditions, AttackArmyThreshold.Of(defaults.PlaybookParameters), AttackArmyThreshold.Of(proposed.PlaybookParameters)),
+            };
+        }
         if (tier >= VocabularyTier.ObjectivesAndRegions) restricted = restricted with { Objectives = proposed.Objectives, RegionsOfInterest = proposed.RegionsOfInterest };
 
         List<string> dropped = [];

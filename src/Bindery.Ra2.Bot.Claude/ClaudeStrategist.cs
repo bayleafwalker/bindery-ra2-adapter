@@ -292,7 +292,8 @@ public sealed class ClaudeStrategist : IStrategist
     /// would lock the strategic model out of posture changes. Expiry never extends past the active intent's: the
     /// strategic model decides how long a plan lives, and a refinement that arrives after the plan it was based on
     /// expired is then already expired and refused instead of re-installing that plan over whatever replaced it.
-    /// Identity and issue time, and the model's own assumptions and rationale, are the new proposal's.
+    /// Identity and issue time, and the model's own assumptions and rationale, are the new proposal's; an army-value
+    /// attack condition that tracked the old <c>attackArmyValue</c> moves with the new one (<see cref="AttackArmyThreshold"/>).
     /// </summary>
     private static StrategicIntent Refined(StrategicIntent active, StrategicIntent proposed) =>
         active with
@@ -303,6 +304,8 @@ public sealed class ClaudeStrategist : IStrategist
             IssuedAt = proposed.IssuedAt,
             ExpiresAt = proposed.ExpiresAt < active.ExpiresAt ? proposed.ExpiresAt : active.ExpiresAt,
             PlaybookParameters = proposed.PlaybookParameters,
+            AttackConditions = AttackArmyThreshold.Retarget(
+                active.AttackConditions, AttackArmyThreshold.Of(active.PlaybookParameters), AttackArmyThreshold.Of(proposed.PlaybookParameters)),
             Assumptions = proposed.Assumptions,
             Rationale = proposed.Rationale,
         };
