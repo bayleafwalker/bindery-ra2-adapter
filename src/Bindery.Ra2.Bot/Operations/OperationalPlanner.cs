@@ -241,7 +241,7 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
                 return (harvesterStep, $"economy: toward {harvester.TypeId}");
             }
 
-            if (refineries < RefineryTarget() && FirstStepToward(refinery) is { } moreRefinery) return (moreRefinery, $"economy: refinery {refineries + 1}");
+            if (refineries < RefineryTarget() && FirstStepToward(refinery, repeatable: true) is { } moreRefinery) return (moreRefinery, $"economy: refinery {refineries + 1}");
 
             foreach (CompositionTarget target in intent.Composition
                 .Where(static c => c.MinShare > 0 && c.Role != UnitRole.Defense)
@@ -265,16 +265,39 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
 
             if (belief.Power.Surplus < options.PowerBuffer && PowerType() is { } buffer) return (buffer.TypeId, "power: buffer");
 
-            int productionBuildings = belief.Own.Count(static e => e.Kind == EntityKind.Building && e.Role == UnitRole.Production);
+            // The construction yard is a Production building but trains nothing (zero cost: a deploy product), so it
+            // does not count toward the factories the army has.
+            int productionBuildings = belief.Own.Count(e => e.Kind == EntityKind.Building && e.Role == UnitRole.Production
+                && !(rules.TryGet(e.TypeId, out UnitRule r) && r.Cost == 0));
             if (productionBuildings < options.MaxProductionBuildings && credits >= options.ExtraProductionCredits && intent.Budget.Army > 0)
             {
-                UnitRule? extra = rules.All
-                    .Where(r => r.Role == UnitRole.Production && r.Kind == EntityKind.Building && Buildable(r))
-                    .OrderBy(static r => r.Cost).ThenBy(static r => r.TypeId, StringComparer.Ordinal)
-                    .FirstOrDefault();
-                if (extra is not null) return (extra.TypeId, $"production: building {productionBuildings + 1}");
+                if (ExtraFactory() is { } extra) return (extra.TypeId, $"production: building {productionBuildings + 1}");
             }
             return null;
+        }
+
+        /// <summary>
+        /// The factory to add: the cheapest buildable Production building that trains a unit of the composition's
+        /// largest role (a second war factory for a tank army; each factory speeds only its own queue in RA2),
+        /// else the cheapest buildable one. Picking the cheapest outright always added barracks.
+        /// </summary>
+        private UnitRule? ExtraFactory()
+        {
+            List<UnitRule> factories = rules.All
+                .Where(r => r.Role == UnitRole.Production && r.Kind == EntityKind.Building && Buildable(r))
+                .OrderBy(static r => r.Cost).ThenBy(static r => r.TypeId, StringComparer.Ordinal)
+                .ToList();
+            foreach (CompositionTarget target in intent.Composition
+                .Where(static c => c.MinShare > 0 && c.Role != UnitRole.Defense)
+                .OrderByDescending(static c => c.MinShare).ThenBy(static c => c.Role.ToString(), StringComparer.Ordinal))
+            {
+                List<UnitRule> units = rules.All
+                    .Where(r => r.Role == target.Role && r.Kind != EntityKind.Building && r.Cost > 0 && r.Factions.Contains(faction))
+                    .ToList();
+                UnitRule? trainer = factories.FirstOrDefault(f => units.Any(u => u.Prerequisites.Any(group => group.Contains(f.TypeId))));
+                if (trainer is not null) return trainer;
+            }
+            return factories.FirstOrDefault();
         }
 
         private int RefineryTarget()
@@ -293,7 +316,11 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
         /// step of its prerequisite path, or the goal itself when it is a building buildable now; null when the
         /// goal is already available (a unit that can be built, a building that is owned) or unreachable.
         /// </summary>
-        private string? FirstStepToward(UnitRule? goal)
+        /// <remarks>
+        /// With <paramref name="repeatable"/> an owned goal building is still returned when buildable: a second
+        /// refinery is a copy of one the base already has, and "owned" would otherwise read as "available".
+        /// </remarks>
+        private string? FirstStepToward(UnitRule? goal, bool repeatable = false)
         {
             if (goal is null) return null;
             IReadOnlyList<string>? path = rules.PathTo(faction, own, goal.TypeId);
@@ -305,7 +332,7 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
                 return null; // the first missing step is not buildable yet (should not happen for a well-formed path)
             }
             bool building = goal.Kind == EntityKind.Building && goal.Queue == QueueKind.Building;
-            return building && !own.Contains(goal.TypeId) && Buildable(goal) ? goal.TypeId : null;
+            return building && (repeatable || !own.Contains(goal.TypeId)) && Buildable(goal) ? goal.TypeId : null;
         }
 
         private UnitRule? PowerType() =>
