@@ -124,8 +124,11 @@ public static class ReportBuilder
     {
         sb.AppendLine("## Win rate (arm × split)");
         sb.AppendLine();
-        sb.AppendLine("| Arm | Split | Wins | Losses | Draws | Matches | Win rate | 95% interval (Wilson) | Eliminations won | Timeouts |");
-        sb.AppendLine("|---|---|---|---|---|---|---|---|---|---|");
+        sb.AppendLine("Distinct games drop repeats of an identical game against a differently named opponent (same arm decision log and outcome on the same map and seed: styles that have not diverged when the match ends); the distinct interval is the one to read. The arm plays Allied on odd seeds and Soviet on even seeds; the fixture is asymmetric, so the faction columns show the mix behind each rate.");
+        sb.AppendLine();
+        sb.AppendLine("| Arm | Split | Wins | Losses | Draws | Matches | Win rate | 95% interval (Wilson) | Distinct games | Distinct wins | 95% interval, distinct | As Allied | As Soviet | Eliminations won | Timeouts |");
+        sb.AppendLine("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+        List<string> unbalanced = [];
         foreach (var group in matches.GroupBy(m => (m.Arm, m.Split)).OrderBy(g => g.Key.Arm, StringComparer.Ordinal).ThenBy(g => g.Key.Split, StringComparer.Ordinal))
         {
             int wins = group.Count(static m => m.Winner == 0);
@@ -134,9 +137,19 @@ public static class ReportBuilder
             int total = group.Count();
             int elimWins = group.Count(static m => m.Winner == 0 && m.Reason == "elimination");
             int timeouts = group.Count(static m => m.Reason == "timeout");
-            sb.AppendLine($"| {group.Key.Arm} | {group.Key.Split} | {wins} | {losses} | {draws} | {total} | {Rate(wins, total)} | {Wilson(wins, total)} | {elimWins} | {timeouts} |");
+            IReadOnlyList<MatchRecord> distinct = PairedReport.DistinctGames(group);
+            int distinctWins = distinct.Count(static m => m.Winner == 0);
+            List<MatchRecord> allied = [.. group.Where(static m => MatchRunner.ArmFaction(m.Seed) == Faction.Allied)];
+            List<MatchRecord> soviet = [.. group.Where(static m => MatchRunner.ArmFaction(m.Seed) == Faction.Soviet)];
+            if (allied.Count != soviet.Count) unbalanced.Add($"{group.Key.Arm}/{group.Key.Split} ({allied.Count} Allied, {soviet.Count} Soviet)");
+            sb.AppendLine($"| {group.Key.Arm} | {group.Key.Split} | {wins} | {losses} | {draws} | {total} | {Rate(wins, total)} | {Wilson(wins, total)} | {distinct.Count} | {distinctWins} | {Wilson(distinctWins, distinct.Count)} | {allied.Count(static m => m.Winner == 0)}/{allied.Count} | {soviet.Count(static m => m.Winner == 0)}/{soviet.Count} | {elimWins} | {timeouts} |");
         }
         sb.AppendLine();
+        if (unbalanced.Count > 0)
+        {
+            sb.AppendLine($"Warning: the faction mix is unbalanced for {string.Join(", ", unbalanced)} (an odd `--seeds` gives the arm Allied more often); a win rate over it mixes faction strength into the result. Use an even `--seeds`.");
+            sb.AppendLine();
+        }
     }
 
     /// <summary>
@@ -172,6 +185,29 @@ public static class ReportBuilder
             sb.AppendLine($"| {group.Key.Arm} | {group.Key.Split} | {string.Join(" | ", cells)} |");
         }
         sb.AppendLine();
+
+        // Opponents that played the same game as another on a map and seed: their columns above are not
+        // independent evidence (their styles had not diverged when the match ended).
+        List<string> identical = [];
+        foreach (var arm in matches.GroupBy(static m => m.Arm).OrderBy(static g => g.Key, StringComparer.Ordinal))
+        {
+            Dictionary<string, int> cellsBySet = new(StringComparer.Ordinal);
+            foreach (var game in arm.Where(static m => PairedReport.GameKey(m) is not null).GroupBy(static m => PairedReport.GameKey(m)!, StringComparer.Ordinal))
+            {
+                List<string> names = [.. game.Select(static m => m.Opponent).Distinct(StringComparer.Ordinal).OrderBy(static o => o, StringComparer.Ordinal)];
+                if (names.Count < 2) continue;
+                string set = string.Join(" = ", names);
+                cellsBySet[set] = cellsBySet.GetValueOrDefault(set) + 1;
+            }
+            identical.AddRange(cellsBySet.OrderBy(static kv => kv.Key, StringComparer.Ordinal).Select(kv => $"{arm.Key}: {kv.Key} on {kv.Value} map × seed cell{(kv.Value == 1 ? string.Empty : "s")}"));
+        }
+        if (identical.Count > 0)
+        {
+            sb.AppendLine("Identical games (same arm decision log and outcome against differently named opponents; counted once in the distinct columns and paired tables):");
+            sb.AppendLine();
+            foreach (string line in identical) sb.AppendLine($"- {line}");
+            sb.AppendLine();
+        }
     }
 
     private static void AppendGame(StringBuilder sb, IReadOnlyList<MatchRecord> matches)

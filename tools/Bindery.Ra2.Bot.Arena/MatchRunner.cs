@@ -74,8 +74,8 @@ public sealed record MatchRecord(
 /// <summary>Runs one arm-vs-opponent match on one map with one seed to completion.</summary>
 /// <remarks>
 /// The arm plays Allied on odd seeds and Soviet on even seeds (the opponent takes the other
-/// faction), so the approximate fixture's faction asymmetry does not bias an arm's results
-/// one way. The arm is always player 0 and starts in the map's first start region.
+/// faction), so with an even seed count the approximate fixture's faction asymmetry does not
+/// bias an arm's results one way; with an odd count the report flags the unbalanced mix. The arm is always player 0 and starts in the map's first start region.
 /// </remarks>
 public static class MatchRunner
 {

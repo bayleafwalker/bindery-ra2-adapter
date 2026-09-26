@@ -42,17 +42,62 @@ public static class PairedReport
         return total <= 0 ? 0.5 : p.AssetValueDestroyedByOpponent / total;
     }
 
-    /// <summary>Pairs every match of <paramref name="arm"/> with the <paramref name="baseline"/> match of the same opponent, map and seed.</summary>
-    public static IReadOnlyList<(MatchRecord Baseline, MatchRecord Arm)> Pairs(IReadOnlyList<MatchRecord> matches, string baseline, string arm, string? split = null)
+    /// <summary>
+    /// What makes two matches the same game: the arm, map and seed, the arm's decision log, and the outcome (winner,
+    /// reason, duration, both sides' final assets and builds). Two opponents that never diverge from each other
+    /// before the match ends (styles that share an opening) produce the same key; counting both would count one
+    /// game twice. Null when the record has no decision log hash, so it is never taken for a duplicate.
+    /// </summary>
+    public static string? GameKey(MatchRecord m)
     {
+        ArgumentNullException.ThrowIfNull(m);
+        if (!m.Players.TryGetValue("arm", out PlayerMatchMetrics? arm) || arm.DecisionLogHash is null) return null;
+        m.Players.TryGetValue("opponent", out PlayerMatchMetrics? opponent);
+        return string.Create(CultureInfo.InvariantCulture,
+            $"{m.Arm}|{m.Map}|{m.Seed}|{arm.DecisionLogHash}|{m.Winner}|{m.Reason}|{m.DurationSeconds:R}|{arm.FinalAssetValue}|{arm.UnitsBuilt}|{opponent?.FinalAssetValue}|{opponent?.UnitsBuilt}|{opponent?.BuildingsBuilt}");
+    }
+
+    /// <summary>The matches with every repeat of an identical game (same <see cref="GameKey"/>) dropped, first by opponent name kept.</summary>
+    public static IReadOnlyList<MatchRecord> DistinctGames(IEnumerable<MatchRecord> matches)
+    {
+        ArgumentNullException.ThrowIfNull(matches);
+        HashSet<string> seen = new(StringComparer.Ordinal);
+        return [.. matches
+            .OrderBy(static m => m.Arm, StringComparer.Ordinal).ThenBy(static m => m.Map, StringComparer.Ordinal).ThenBy(static m => m.Seed)
+            .ThenBy(static m => m.Opponent, StringComparer.Ordinal)
+            .Where(m => GameKey(m) is not { } key || seen.Add(key))];
+    }
+
+    /// <summary>
+    /// Pairs every match of <paramref name="arm"/> with the <paramref name="baseline"/> match of the same opponent, map and
+    /// seed, keeping one pair where two opponents gave identical games on both sides (see <see cref="GameKey"/>): such
+    /// pairs are one observation, and counting them twice would shrink p values and intervals.
+    /// </summary>
+    public static IReadOnlyList<(MatchRecord Baseline, MatchRecord Arm)> Pairs(IReadOnlyList<MatchRecord> matches, string baseline, string arm, string? split = null) =>
+        Pairs(matches, baseline, arm, split, out _);
+
+    /// <inheritdoc cref="Pairs(IReadOnlyList{MatchRecord}, string, string, string?)"/>
+    /// <param name="duplicates">Pairs dropped as repeats of an identical pair.</param>
+    public static IReadOnlyList<(MatchRecord Baseline, MatchRecord Arm)> Pairs(IReadOnlyList<MatchRecord> matches, string baseline, string arm, string? split, out int duplicates)
+    {
+        ArgumentNullException.ThrowIfNull(matches);
         Dictionary<(string, string, int), MatchRecord> baseByKey = matches
             .Where(m => m.Arm == baseline && (split is null || m.Split == split))
             .ToDictionary(static m => (m.Opponent, m.Map, m.Seed));
-        return [.. matches
+        List<(MatchRecord Baseline, MatchRecord Arm)> all = [.. matches
             .Where(m => m.Arm == arm && (split is null || m.Split == split))
             .OrderBy(static m => m.Opponent, StringComparer.Ordinal).ThenBy(static m => m.Map, StringComparer.Ordinal).ThenBy(static m => m.Seed)
             .Where(m => baseByKey.ContainsKey((m.Opponent, m.Map, m.Seed)))
             .Select(m => (baseByKey[(m.Opponent, m.Map, m.Seed)], m))];
+        HashSet<string> seen = new(StringComparer.Ordinal);
+        List<(MatchRecord Baseline, MatchRecord Arm)> distinct = [];
+        foreach ((MatchRecord b, MatchRecord a) in all)
+        {
+            if (GameKey(b) is { } kb && GameKey(a) is { } ka && !seen.Add(kb + "#" + ka)) continue;
+            distinct.Add((b, a));
+        }
+        duplicates = all.Count - distinct.Count;
+        return distinct;
     }
 
     /// <summary>Every metric compared for one arm against the baseline, with Holm-adjusted p values in the same order.</summary>
@@ -81,7 +126,7 @@ public static class PairedReport
         {
             string? against = baselineFor is null ? (arm == baseline ? null : baseline) : baselineFor(arm);
             if (against is null) continue;
-            IReadOnlyList<(MatchRecord Baseline, MatchRecord Arm)> pairs = Pairs(matches, against, arm, split);
+            IReadOnlyList<(MatchRecord Baseline, MatchRecord Arm)> pairs = Pairs(matches, against, arm, split, out int duplicates);
             if (pairs.Count == 0) continue;
             if (!any)
             {
@@ -91,7 +136,9 @@ public static class PairedReport
                 sb.AppendLine();
                 any = true;
             }
-            sb.AppendLine($"### {arm} vs {against} ({pairs.Count} pairs)");
+            sb.AppendLine(duplicates == 0
+                ? $"### {arm} vs {against} ({pairs.Count} pairs)"
+                : $"### {arm} vs {against} ({pairs.Count} pairs; {duplicates} identical to another opponent's pair collapsed)");
             sb.AppendLine();
             sb.AppendLine("| Metric | Pairs | Baseline mean | Arm mean | Difference [95% CI] | Better / worse / tied | Sign p | Holm p |");
             sb.AppendLine("|---|---|---|---|---|---|---|---|");

@@ -89,4 +89,46 @@ public sealed class BenchmarkTests
         Assert.Equal(2, pairs.Count);
         Assert.All(pairs, static p => Assert.Equal((p.Baseline.Opponent, p.Baseline.Map, p.Baseline.Seed), (p.Arm.Opponent, p.Arm.Map, p.Arm.Seed)));
     }
+
+    private static PlayerMatchMetrics Metrics(string? hash, int finalAssets) => new(
+        Faction.Allied, 1, 0, 0, [], 1, 0, 0, new Dictionary<string, int>(), 0, 0, 0, 0, 0.1, 1000, 500, 500, 0, 0, null, 0, finalAssets, 10, 3, 2000, hash, []);
+
+    private static MatchRecord Game(string arm, string opponent, int seed, string hash, int? winner = 0, int finalAssets = 5000) =>
+        new(arm, opponent, "twin-valley", "training", seed, winner, "elimination", 250,
+            new Dictionary<string, PlayerMatchMetrics> { ["arm"] = Metrics(hash, finalAssets), ["opponent"] = Metrics("opp", 0) });
+
+    [Fact]
+    public void Identical_games_against_differently_named_opponents_count_once_in_pairs_and_win_rates()
+    {
+        // ai-rush and ai-balanced play the same game on seed 1 (same arm log and outcome); seed 2 differs.
+        List<MatchRecord> matches =
+        [
+            Game("selector", "ai-rush", 1, "s1"), Game("selector", "ai-balanced", 1, "s1"),
+            Game("llm", "ai-rush", 1, "l1"), Game("llm", "ai-balanced", 1, "l1"),
+            Game("selector", "ai-rush", 2, "s2"), Game("selector", "ai-balanced", 2, "s2b", winner: 1),
+            Game("llm", "ai-rush", 2, "l2"), Game("llm", "ai-balanced", 2, "l2b"),
+        ];
+
+        IReadOnlyList<(MatchRecord Baseline, MatchRecord Arm)> pairs = PairedReport.Pairs(matches, "selector", "llm", null, out int duplicates);
+        Assert.Equal(3, pairs.Count);
+        Assert.Equal(1, duplicates);
+        Assert.Equal(3, PairedReport.DistinctGames(matches.Where(static m => m.Arm == "selector")).Count);
+
+        string report = ReportBuilder.Build(matches, [], [], CliOptions.Parse(["run", "--arms", "selector,llm", "--llm-fake", "--seeds", "2"]), "test");
+        Assert.Contains("| selector | training | 3 | 1 | 0 | 4 | 0.750 |", report, StringComparison.Ordinal);
+        Assert.Contains("| 3 | 2 |", report, StringComparison.Ordinal);
+        Assert.Contains("- selector: ai-balanced = ai-rush on 1 map × seed cell", report, StringComparison.Ordinal);
+        Assert.Contains("(3 pairs; 1 identical to another opponent's pair collapsed)", report, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void An_odd_seed_count_is_flagged_as_an_unbalanced_faction_mix()
+    {
+        List<MatchRecord> matches = [Game("selector", "ai-rush", 1, "a"), Game("selector", "ai-rush", 2, "b"), Game("selector", "ai-rush", 3, "c")];
+
+        string report = ReportBuilder.Build(matches, [], [], CliOptions.Parse(["run", "--arms", "selector", "--seeds", "3"]), "test");
+
+        Assert.Contains("| 2/2 | 1/1 |", report, StringComparison.Ordinal);
+        Assert.Contains("Warning: the faction mix is unbalanced for selector/training (2 Allied, 1 Soviet)", report, StringComparison.Ordinal);
+    }
 }
