@@ -76,4 +76,29 @@ public sealed class BeliefModelReviewTests
         for (int t = 301; t <= 400; t++) model.Apply(Frame(t, [conyard], new HashSet<RegionId> { TestMaps.Home, TestMaps.Middle }));
         Assert.Empty(model.Current.Enemies);
     }
+
+    /// <summary>A tower rushed into our base is not the enemy's start, whatever the region ids.</summary>
+    [Fact]
+    public void SuspectedStart_IsNeverOurOwnStart()
+    {
+        BeliefModel model = new(Rules(), new BeliefOptions());
+        ObservedEntity conyard = Own(1, "conyard", new Cell(10, 10));
+        model.Apply(Frame(0, [conyard], new HashSet<RegionId> { TestMaps.Home }));
+        model.Apply(Frame(1, [conyard, Enemy(50, "conyard", new Cell(90, 90))], new HashSet<RegionId> { TestMaps.Home, TestMaps.EnemyStart }));
+        BeliefSnapshot s = model.Apply(Frame(2, [conyard, Enemy(51, "tower", new Cell(11, 11))], new HashSet<RegionId> { TestMaps.Home }));
+
+        Assert.Equal(TestMaps.EnemyStart, Assert.Single(s.EnemyPlayers).SuspectedStart);
+    }
+
+    /// <summary>With only the tower in our base ever seen, the enemy's start is still the other start by elimination.</summary>
+    [Fact]
+    public void SuspectedStart_FallsBackToEliminationWhenTheOnlyBuildingSeenIsInOurBase()
+    {
+        BeliefModel model = new(Rules(), new BeliefOptions());
+        ObservedEntity conyard = Own(1, "conyard", new Cell(10, 10));
+        model.Apply(Frame(0, [conyard], new HashSet<RegionId> { TestMaps.Home }));
+        BeliefSnapshot s = model.Apply(Frame(1, [conyard, Enemy(51, "tower", new Cell(11, 11))], new HashSet<RegionId> { TestMaps.Home }));
+
+        Assert.Equal(TestMaps.EnemyStart, Assert.Single(s.EnemyPlayers).SuspectedStart);
+    }
 }

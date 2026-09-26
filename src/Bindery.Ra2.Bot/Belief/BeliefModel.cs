@@ -20,7 +20,8 @@ public sealed class BeliefModel : IBeliefModel
     private readonly Dictionary<PlayerId, HashSet<Faction>> factionCandidates = [];
     private readonly Dictionary<PlayerId, HashSet<string>> seenTech = [];
     private readonly Dictionary<PlayerId, Dictionary<string, GameTime>> techLastSeen = [];
-    private readonly Dictionary<PlayerId, HashSet<RegionId>> enemyBuildingStartRegions = [];
+    /// <summary>Per enemy player, each start region an enemy building was seen in, with when it was first seen there.</summary>
+    private readonly Dictionary<PlayerId, Dictionary<RegionId, GameTime>> enemyBuildingStartRegions = [];
     private readonly HashSet<RegionId> ownStartRegions = [];
     private readonly HashSet<RegionId> emptyScoutedStarts = [];
     private readonly Dictionary<RegionId, GameTime> regionLastSeen = [];
@@ -219,18 +220,18 @@ public sealed class BeliefModel : IBeliefModel
 
             RegionId region = RegionOf(frame.Map, e.Position);
             if (!RegionIsStart(frame.Map, region)) continue;
-            if (!enemyBuildingStartRegions.TryGetValue(e.Owner, out HashSet<RegionId>? starts))
+            if (!enemyBuildingStartRegions.TryGetValue(e.Owner, out Dictionary<RegionId, GameTime>? starts))
             {
                 starts = [];
                 enemyBuildingStartRegions[e.Owner] = starts;
             }
-            starts.Add(region);
+            starts.TryAdd(region, frame.Time);
         }
 
         foreach (RegionId regionId in frame.VisibleRegions)
         {
             if (!RegionIsStart(frame.Map, regionId) || ownStartRegions.Contains(regionId)) continue;
-            bool anyEnemyBuildingThere = enemyBuildingStartRegions.Values.Any(set => set.Contains(regionId));
+            bool anyEnemyBuildingThere = enemyBuildingStartRegions.Values.Any(set => set.ContainsKey(regionId));
             if (anyEnemyBuildingThere) emptyScoutedStarts.Remove(regionId);
             else emptyScoutedStarts.Add(regionId);
         }
@@ -258,8 +259,7 @@ public sealed class BeliefModel : IBeliefModel
         Dictionary<PlayerId, RegionId> directStarts = [];
         foreach (PlayerId p in ordered)
         {
-            if (enemyBuildingStartRegions.TryGetValue(p, out HashSet<RegionId>? starts) && starts.Count > 0)
-                directStarts[p] = starts.OrderBy(static r => r.Value).First();
+            if (DirectStart(p, enemies) is { } direct) directStarts[p] = direct;
         }
 
         List<RegionId> allStartRegions = [.. frame.Map.Regions
@@ -295,6 +295,28 @@ public sealed class BeliefModel : IBeliefModel
             result.Add(new EnemyPlayerBelief(p, faction, start, tech, lastSeen, techTimes));
         }
         return result;
+    }
+
+    /// <summary>
+    /// The start region an enemy building of this player says is its base. Our own start is never a candidate (a
+    /// tower rush or captured building there is not the enemy's base), and among the rest the choice goes by
+    /// evidence, not region id: a start still holding one of the player's live buildings beats one whose buildings
+    /// are all destroyed or forgotten, then the earliest sighting (the base is normally found before any
+    /// expansion into another empty start), then the lowest id for determinism. Null when no start qualifies.
+    /// </summary>
+    private RegionId? DirectStart(PlayerId player, IReadOnlyList<EnemyContact> enemies)
+    {
+        if (!enemyBuildingStartRegions.TryGetValue(player, out Dictionary<RegionId, GameTime>? starts)) return null;
+        HashSet<RegionId> held = [.. enemies
+            .Where(c => c.Owner == player && c.Kind == EntityKind.Building && !c.ConfirmedDestroyed)
+            .Select(static c => c.LastSeenRegion)];
+        return starts
+            .Where(kv => !ownStartRegions.Contains(kv.Key))
+            .OrderByDescending(kv => held.Contains(kv.Key))
+            .ThenBy(static kv => kv.Value)
+            .ThenBy(static kv => kv.Key.Value)
+            .Select(static kv => (RegionId?)kv.Key)
+            .FirstOrDefault();
     }
 
     /// <summary>
