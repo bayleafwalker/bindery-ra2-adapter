@@ -116,11 +116,14 @@ public sealed class BotArenaAgent : IArenaAgent
 
     /// <summary>
     /// Distilled decisions and escalations, from the log: every primary request to the distilled strategist is a
-    /// decision; an escalation is one answered by an intent of another source (the inner strategist's own) or not
-    /// answered at all (the model itself always answers, so only an escalated request can fail).
+    /// decision, and every one its own model did not answer is an escalation. Its own answers are the proposals of
+    /// source Distilled (the model itself always answers, at once); everything else was escalated, whether the inner
+    /// strategist answered, failed, or was still waiting when the match ended (the scheduler cancels that request
+    /// without a record, so counting only answers and failures would undercount escalations).
     /// </summary>
     private void CountDistillation()
     {
+        int requests = 0, ownAnswers = 0;
         foreach (DecisionRecord record in log.Records)
         {
             if (record.Data.ValueKind != JsonValueKind.Object
@@ -129,14 +132,15 @@ public sealed class BotArenaAgent : IArenaAgent
             {
                 continue;
             }
-            if (record.Kind == RuntimeRecordKinds.Request) Stats.DistilledDecisions++;
-            else if (record.Kind == DecisionRecordKinds.ProposalFailed) Stats.DistilledEscalations++;
+            if (record.Kind == RuntimeRecordKinds.Request) requests++;
             else if (record.Kind == DecisionRecordKinds.Proposal
-                && record.Data.GetProperty("intent").GetProperty("source").GetString() != nameof(IntentSource.Distilled))
+                && record.Data.GetProperty("intent").GetProperty("source").GetString() == nameof(IntentSource.Distilled))
             {
-                Stats.DistilledEscalations++;
+                ownAnswers++;
             }
         }
+        Stats.DistilledDecisions += requests;
+        Stats.DistilledEscalations += requests - ownAnswers;
     }
 
     /// <summary>The distilled strategist's id in decision logs.</summary>
