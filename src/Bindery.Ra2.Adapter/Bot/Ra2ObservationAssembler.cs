@@ -75,29 +75,43 @@ public sealed class Ra2ObservationAssembler
     /// Folds one normalized event into tracked state. Returns zero or more
     /// frames: normally zero (no cadence boundary crossed) or one, but more
     /// than one when a gap in telemetry frame numbers jumps past several
-    /// boundaries at once — each such filler frame carries no new events.
+    /// boundaries at once.
     /// </summary>
+    /// <remarks>
+    /// Boundaries strictly before the event's frame are emitted <i>before</i>
+    /// the event is applied, so a frame stamped with time T never carries
+    /// state or events from after T (belief would otherwise stamp a sighting
+    /// earlier than it happened, and event windows would see the future).
+    /// The frames emitted for a gap therefore hold the state as of the last
+    /// event before it and no new events; the event itself lands in the
+    /// first frame at or after its own time.
+    /// </remarks>
     public IReadOnlyList<ObservationFrame> Ingest(NormalizedObservation observation)
     {
         ArgumentNullException.ThrowIfNull(observation);
-        Apply(observation);
+        if (!TryGetLong(observation.Payload, Ra2BotTelemetryContract.FieldFrame, observation, "event_skipped", out long frame)) return [];
 
-        if (latestFrame < nextBoundary) return [];
         List<ObservationFrame> emitted = [];
-        while (latestFrame >= nextBoundary)
+        EmitBoundaries(frame - 1, emitted);
+        latestFrame = Math.Max(latestFrame, frame);
+        Apply(observation, frame);
+        EmitBoundaries(latestFrame, emitted);
+        return emitted;
+    }
+
+    /// <summary>Emits one frame per cadence boundary at or before <paramref name="upTo"/>.</summary>
+    private void EmitBoundaries(long upTo, List<ObservationFrame> emitted)
+    {
+        while (upTo >= nextBoundary)
         {
             emitted.Add(BuildFrame(new GameTime(nextBoundary)));
             pendingEvents.Clear();
             nextBoundary += frameCadence;
         }
-        return emitted;
     }
 
-    private void Apply(NormalizedObservation observation)
+    private void Apply(NormalizedObservation observation, long frame)
     {
-        if (!TryGetLong(observation.Payload, Ra2BotTelemetryContract.FieldFrame, observation, "event_skipped", out long frame)) return;
-        latestFrame = Math.Max(latestFrame, frame);
-
         switch (observation.EventType)
         {
             case "game.unit.created":
