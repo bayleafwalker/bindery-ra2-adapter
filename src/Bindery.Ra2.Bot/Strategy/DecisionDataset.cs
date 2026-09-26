@@ -7,6 +7,11 @@ namespace Bindery.Ra2.Bot.Strategy;
 /// One supervised example: the encoded features a strategist saw and the playbook
 /// whose intent the runtime activated.
 /// </summary>
+/// <param name="Mode">
+/// Whether the decision was made on belief (fog) or oracle (full-map) frames. Oracle decisions saw what a
+/// fog-respecting bot cannot, so consumers keep them apart; a line written before the field existed reads as
+/// <see cref="ObservationMode.Belief"/>.
+/// </param>
 public sealed record DecisionExample(
     string FeatureVersion,
     IReadOnlyList<double> Features,
@@ -18,7 +23,8 @@ public sealed record DecisionExample(
     bool Renewal,
     long Frame,
     long SnapshotVersion,
-    string? MatchId = null);
+    string? MatchId = null,
+    ObservationMode Mode = ObservationMode.Belief);
 
 /// <summary>Which activation records become examples.</summary>
 /// <param name="Roles">Arbiter roles to keep (<c>Primary</c>, <c>Fallback</c>, <c>Emergency</c>); null keeps all.</param>
@@ -43,6 +49,8 @@ public sealed record DatasetFilter(
 /// <item><c>faction</c>: the player's faction.</item>
 /// <item><c>intent</c>: the activated intent in canonical <c>IntentJson</c> form (playbook, posture, source, ...).</item>
 /// <item><c>role</c>, <c>renewal</c>: arbiter slot and whether the activation renewed the incumbent.</item>
+/// <item><c>mode</c> (optional): the <see cref="ObservationMode"/> of the features; when absent, the mode the
+/// caller passes to <see cref="FromDecisionLog"/> (the mode the run was played in).</item>
 /// </list>
 /// Records without a vector of the current version are skipped (and counted), never guessed.
 /// </summary>
@@ -54,6 +62,7 @@ public sealed class DecisionDataset
     public const string IntentField = "intent";
     public const string RoleField = "role";
     public const string RenewalField = "renewal";
+    public const string ModeField = "mode";
 
     public DecisionDataset(IReadOnlyList<DecisionExample> examples, int skipped = 0)
     {
@@ -69,10 +78,15 @@ public sealed class DecisionDataset
 
     public int Count => Examples.Count;
 
+    /// <summary>Whether any example was decided on oracle frames (a diagnostic run's data, not a belief arm's).</summary>
+    public bool HasOracleExamples => Examples.Any(static e => e.Mode == ObservationMode.Oracle);
+
     public static DecisionDataset Empty { get; } = new([]);
 
     /// <summary>Builds examples from one match's decision log.</summary>
-    public static DecisionDataset FromDecisionLog(IEnumerable<DecisionRecord> records, DatasetFilter? filter = null, string? matchId = null)
+    /// <param name="mode">The mode the match was played in, for records that do not carry a <c>mode</c> field.</param>
+    public static DecisionDataset FromDecisionLog(IEnumerable<DecisionRecord> records, DatasetFilter? filter = null, string? matchId = null,
+        ObservationMode mode = ObservationMode.Belief)
     {
         ArgumentNullException.ThrowIfNull(records);
         filter ??= new DatasetFilter();
@@ -97,10 +111,19 @@ public sealed class DecisionDataset
                 continue;
             }
             if (filter.Sources is not null && !filter.Sources.Contains(intent!.Source)) continue;
+            ObservationMode recordMode = mode;
+            if (data.TryGetProperty(ModeField, out JsonElement m))
+            {
+                if (m.ValueKind != JsonValueKind.String || !Enum.TryParse(m.GetString(), ignoreCase: false, out recordMode))
+                {
+                    skipped++;
+                    continue;
+                }
+            }
 
             examples.Add(new DecisionExample(
                 version, vector, faction, intent!.PlaybookId, intent.Posture, intent.Source, role, renewal,
-                record.Time.Frame, record.SnapshotVersion, matchId));
+                record.Time.Frame, record.SnapshotVersion, matchId, recordMode));
         }
         return new DecisionDataset(examples, skipped);
     }
