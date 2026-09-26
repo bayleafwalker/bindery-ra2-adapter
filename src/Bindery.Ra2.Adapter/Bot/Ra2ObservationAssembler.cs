@@ -42,6 +42,7 @@ public sealed class Ra2ObservationAssembler
     private readonly Faction faction;
     private readonly MapInfo map;
     private readonly long frameCadence;
+    private readonly HashSet<PlayerId> nonHostileOwners;
     private readonly Dictionary<EntityId, EntityState> entities = [];
     private readonly List<GameEvent> pendingEvents = [];
     private readonly List<MissingFieldEntry> missingFields = [];
@@ -62,7 +63,14 @@ public sealed class Ra2ObservationAssembler
     /// <param name="frameCadence">
     /// Frames between emitted <see cref="ObservationFrame"/>s. Must be positive.
     /// </param>
-    public Ra2ObservationAssembler(PlayerId self, Faction faction, MapInfo map, int frameCadence = GameTime.FramesPerSecond)
+    /// <param name="nonHostileOwners">
+    /// Players that are not enemies of the controlled one: allies in a team
+    /// game and the neutral/civilian/special houses. The bot's frame contract
+    /// treats every other owner as an enemy and v1 telemetry carries no
+    /// alliance field, so the caller supplies them from the match setup
+    /// (like <paramref name="faction"/>). Their entities never enter a frame.
+    /// </param>
+    public Ra2ObservationAssembler(PlayerId self, Faction faction, MapInfo map, int frameCadence = GameTime.FramesPerSecond, IEnumerable<PlayerId>? nonHostileOwners = null)
     {
         ArgumentNullException.ThrowIfNull(map);
         if (frameCadence <= 0) throw new ArgumentOutOfRangeException(nameof(frameCadence), frameCadence, "frame cadence must be positive");
@@ -70,6 +78,8 @@ public sealed class Ra2ObservationAssembler
         this.faction = faction;
         this.map = map;
         this.frameCadence = frameCadence;
+        this.nonHostileOwners = [.. nonHostileOwners ?? []];
+        if (this.nonHostileOwners.Contains(self)) throw new ArgumentException("the controlled player cannot be listed as a non-hostile owner", nameof(nonHostileOwners));
         nextBoundary = frameCadence;
     }
 
@@ -168,6 +178,14 @@ public sealed class Ra2ObservationAssembler
         ok &= TryGetInt(payload, Ra2BotTelemetryContract.FieldHealth, observation, "entity_excluded", out int health);
         ok &= TryGetInt(payload, Ra2BotTelemetryContract.FieldMaxHealth, observation, "entity_excluded", out int maxHealth);
         if (!ok) return;
+
+        if (nonHostileOwners.Contains(owner))
+        {
+            // An ally or a neutral house is not an enemy contact; the frame contract has no place for it. An entity
+            // that changed hands to such an owner leaves tracked state too.
+            entities.Remove(id);
+            return;
+        }
 
         if (owner != self)
         {
