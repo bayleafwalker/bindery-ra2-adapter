@@ -36,6 +36,12 @@ public sealed partial class FeatureCompiler : IFeatureCompiler
     private readonly FeatureOptions options;
 
     private readonly List<Sample> history = [];
+
+    /// <summary>Samples the trend ring buffer holds; exposed so tests can pin the per-second sampling.</summary>
+    internal int HistorySampleCount => history.Count;
+
+    /// <summary>Spacing of the trend ring buffer's samples, per the spec's "ring buffer of per-second samples".</summary>
+    private const double SampleIntervalSeconds = 1.0;
     private readonly Dictionary<EntityId, OwnEntityMemory> ownEntityMemory = [];
     private readonly HashSet<GameEvent> processedEvents = [];
     private readonly Dictionary<(StrategicEventKind Kind, RegionId? Region), GameTime> lastEmitted = [];
@@ -54,6 +60,14 @@ public sealed partial class FeatureCompiler : IFeatureCompiler
     private bool superweaponEverLaunched;
     private bool hasCompiledBefore;
 
+    /// <summary>
+    /// Modelled spending integrated over every compile (each compile's rate held until the next), so the income
+    /// window can read the spend over any span from two samples however sparsely history is sampled.
+    /// </summary>
+    private double spentTotal;
+    private double lastSpendingPerSecond;
+    private GameTime? lastCompileTime;
+
     public FeatureCompiler(IRulesDatabase rules, FeatureOptions options)
     {
         this.rules = rules ?? throw new ArgumentNullException(nameof(rules));
@@ -68,13 +82,17 @@ public sealed partial class FeatureCompiler : IFeatureCompiler
         double ArmyValue,
         double LossesValue,
         double KillsValue,
-        double EnemyArmyValueEstimate);
+        double EnemyArmyValueEstimate,
+        double SpentTotal);
 
     private readonly record struct OwnEntityMemory(UnitRole Role, EntityKind Kind, int Value, RegionId Region);
 
     public StrategicFeatures Compile(BeliefSnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
+
+        if (lastCompileTime is { } previousCompile && snapshot.Time > previousCompile)
+            spentTotal += lastSpendingPerSecond * snapshot.Time.SecondsSince(previousCompile);
 
         RegionGraph graph = GraphFor(snapshot.Map);
         RememberOwnEntities(snapshot);
@@ -109,7 +127,9 @@ public sealed partial class FeatureCompiler : IFeatureCompiler
 
         PushSample(new Sample(
             snapshot.Time, snapshot.Credits, incomePerMinuteCurrent, spendingPerMinuteCurrent,
-            armyValueCurrent, cumulativeLossesValue, cumulativeKillsValue, enemyArmyValueCurrent));
+            armyValueCurrent, cumulativeLossesValue, cumulativeKillsValue, enemyArmyValueCurrent, spentTotal));
+        lastSpendingPerSecond = spendingPerMinuteCurrent / 60.0;
+        lastCompileTime = snapshot.Time;
 
         DetectStateTransitionEvents(snapshot, enemyWithTrend, armyValueCurrent, events);
         events.Sort(static (a, b) =>
@@ -221,8 +241,14 @@ public sealed partial class FeatureCompiler : IFeatureCompiler
         return selector(best);
     }
 
+    /// <summary>
+    /// Appends a sample at most once per <see cref="SampleIntervalSeconds"/>, the spec's per-second ring buffer.
+    /// Every trend and window picks the newest sample at or before its cutoff, so a coarser buffer shifts a
+    /// baseline by under a second while keeping a 65 s history at ~65 samples instead of one per compile.
+    /// </summary>
     private void PushSample(Sample sample)
     {
+        if (history.Count > 0 && sample.Time.SecondsSince(history[^1].Time) < SampleIntervalSeconds) return;
         history.Add(sample);
         GameTime cutoff = sample.Time.Plus(-options.HistorySeconds);
         int keepFrom = 0;

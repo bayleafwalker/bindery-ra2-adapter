@@ -116,6 +116,58 @@ public sealed class FeatureCompilerReviewTests
         Assert.True(worst <= 3600.0 + 1e-6, $"worst |income| {worst}/min");
     }
 
+    /// <summary>
+    /// Bots enqueue in the opening seconds, before a full income window of history exists. Dividing the credit
+    /// change by the short span seen so far turned a 900-credit debit at t=0.2 s into a -270000/min reading; the
+    /// warm-up must be bounded exactly like a full window.
+    /// </summary>
+    [Theory]
+    [InlineData(0.2)]
+    [InlineData(1.0)]
+    [InlineData(2.0)]
+    public void IncomePerMinute_IsBoundedBeforeTheWindowHasFilled(double enqueueAt)
+    {
+        (BeliefModel belief, FeatureCompiler compiler) = New();
+        double worst = 0;
+        const double step = 1.0 / 15.0;
+        for (int frame = 0; frame <= 30 * 15; frame++)
+        {
+            double t = frame * step;
+            bool building = t >= enqueueAt && t < enqueueAt + 10;
+            int credits = t >= enqueueAt ? 4100 : 5000;
+            IReadOnlyList<ProductionQueueState> queues = building
+                ? [new ProductionQueueState(QueueKind.Vehicle, [new QueueItem("tank", (t - enqueueAt) / 10, false, false)], 1)]
+                : [];
+            StrategicFeatures f = compiler.Compile(belief.Apply(Frame(t, credits, [ConYardAtHome()], queues: queues)));
+            worst = Math.Max(worst, Math.Abs(f.Economy.IncomePerMinute.Current));
+        }
+
+        Assert.True(worst <= 3600.0 + 1e-6, $"worst |income| {worst}/min");
+    }
+
+    /// <summary>
+    /// The spec's trend ring buffer holds per-second samples, not one per compile: at a 15 fps cadence a 65 s
+    /// history would otherwise hold ~1000 samples. Income integrates spending per compile regardless, so sampling
+    /// once per second loses nothing: a steady spend is still read as zero income.
+    /// </summary>
+    [Fact]
+    public void History_IsSampledOncePerSecond_AndSteadySpendStillReadsAsZeroIncome()
+    {
+        (BeliefModel belief, FeatureCompiler compiler) = New();
+        const double step = 1.0 / 15.0;
+        StrategicFeatures f = null!;
+        IReadOnlyList<ProductionQueueState> queues = [new ProductionQueueState(QueueKind.Vehicle, [new QueueItem("tank", 0.5, false, false)], 1)];
+        for (int frame = 0; frame <= 80 * 15; frame++)
+        {
+            double t = frame * step;
+            // The tank costs 90 credits per second while it builds; the bank drains exactly that.
+            f = compiler.Compile(belief.Apply(Frame(t, (int)Math.Round(9000 - 90 * t), [ConYardAtHome()], queues: queues)));
+        }
+
+        Assert.InRange(compiler.HistorySampleCount, 60, 67);
+        Assert.InRange(f.Economy.IncomePerMinute.Current, -60, 60);
+    }
+
     /// <summary>A queue with one factory builds one item at a time; the items waiting behind it cost nothing yet.</summary>
     [Fact]
     public void Spending_CountsOnlyAsManyItemsAsTheQueueHasFactories()

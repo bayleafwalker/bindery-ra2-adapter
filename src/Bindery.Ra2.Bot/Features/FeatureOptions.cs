@@ -8,7 +8,7 @@ namespace Bindery.Ra2.Bot.Features;
 /// RTS-AI defaults, documented where they are used.
 /// </summary>
 /// <param name="HistorySeconds">
-/// How much per-compile history the trend ring buffer retains. Must be at
+/// How much per-second history the trend ring buffer retains. Must be at
 /// least the largest trend window (60 s).
 /// </param>
 /// <param name="ThreatSearchCells">

@@ -73,8 +73,12 @@ public sealed partial class FeatureCompiler
 
     /// <summary>
     /// Credits gained per second over the trailing income window: the credit delta from the newest sample at or
-    /// before the window start, plus the modelled spending integrated over the same span (each sample's rate held
-    /// until the next compile). Zero before any history exists.
+    /// before the window start, plus the modelled spending over the same span (from the running
+    /// <see cref="spentTotal"/>, which integrates every compile's rate, so the per-second sample cadence does not
+    /// coarsen it). The divisor is never shorter than the window: in the opening seconds, before a full window of
+    /// history exists, dividing by the short span seen so far turned one enqueue debit into a -270000/min reading.
+    /// Holding the divisor at the window bounds the warm-up error exactly like a full window (an item's cost over
+    /// the window) at the price of under-reading true income until the window fills. Zero before any history exists.
     /// </summary>
     private double WindowedIncomePerSecond(GameTime now, double credits)
     {
@@ -87,15 +91,8 @@ public sealed partial class FeatureCompiler
             else break;
         }
         Sample baseline = history[from];
-        double span = now.SecondsSince(baseline.Time);
+        double span = Math.Max(now.SecondsSince(baseline.Time), options.IncomeWindowSeconds);
         if (span <= 0) return 0.0;
-
-        double spent = 0;
-        for (int i = from; i < history.Count; i++)
-        {
-            GameTime until = i + 1 < history.Count ? history[i + 1].Time : now;
-            spent += history[i].SpendingPerMinute / 60.0 * until.SecondsSince(history[i].Time);
-        }
-        return (credits - baseline.Credits + spent) / span;
+        return (credits - baseline.Credits + (spentTotal - baseline.SpentTotal)) / span;
     }
 }
