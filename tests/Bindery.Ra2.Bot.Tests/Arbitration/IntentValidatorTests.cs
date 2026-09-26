@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Globalization;
 using Bindery.Ra2.Bot.Arbitration;
 using Xunit;
 
@@ -62,6 +63,32 @@ public sealed class IntentValidatorTests
         Assert.True(Has(result, ValidationCodes.BudgetSum, ValidationSeverity.Warning));
         Assert.Equal(1.0, result.Intent!.Budget.Sum, 9);
         Assert.Equal(0.5 / 1.1, result.Intent.Budget.Economy, 9);
+    }
+
+    /// <summary>
+    /// Validation messages go into the decision log, whose hash must match on every machine and locale; a host
+    /// without invariant globalization (the RA2 adapter, the test process) must not write "1,1" for "1.1".
+    /// </summary>
+    [Theory]
+    [InlineData("de-DE")]
+    [InlineData("fi-FI")]
+    public void Validation_messages_do_not_depend_on_the_process_culture(string culture)
+    {
+        StrategicIntent intent = Fx.Intent("i", "allied-boom", StrategicPosture.Boom, budget: new BudgetShares(0.5, 0.4, 0.1, 0.1));
+        CultureInfo saved = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
+            string[] invariant = [.. Validate(intent).Issues.Select(static i => i.Message)];
+            CultureInfo.CurrentCulture = new CultureInfo(culture);
+            string[] local = [.. Validate(intent).Issues.Select(static i => i.Message)];
+            Assert.Equal(invariant, local);
+            Assert.Contains(local, static m => m.Contains("1.1", StringComparison.Ordinal));
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = saved;
+        }
     }
 
     [Fact]
