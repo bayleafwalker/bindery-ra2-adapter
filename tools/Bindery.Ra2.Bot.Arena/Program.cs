@@ -24,9 +24,10 @@ public sealed record SkippedArm(string Arm, string Reason);
 /// </summary>
 /// <remarks>
 /// Order: the distilled arm needs a dataset, so when <c>--dataset</c> is absent it trains on the
-/// <c>llm</c> arm's primary decisions on the training maps of this run (the spec's "a dataset from
-/// <c>llm</c> runs"), running that arm's training-map matches first, unreported, if it was not requested,
-/// and says so in its label; it is never trained on the selector. The bandit's
+/// <c>llm</c> arm's primary decisions on the training maps (the spec's "a dataset from <c>llm</c> runs"): the
+/// run's own <c>llm</c> arm when it played them, else that arm's training-map matches run first, unreported,
+/// whatever <c>--maps</c> says, and its label says which; it is never trained on the selector. With fewer than
+/// <see cref="MinDistillExamples"/> examples the arm is skipped with the reason recorded. The bandit's
 /// matches run sequentially in a fixed order because it learns across them; other arms run in
 /// parallel. A live LLM arm runs its first match alone and is skipped with the recorded reason if no
 /// credential resolved.
@@ -127,15 +128,21 @@ public static class Program
                     skipped.Add(new SkippedArm(arm.ToString(), $"no teacher: the llm arm could not run ({noTeacher})"));
                     continue;
                 }
-                context.DistillDataset = TeacherDataset(t.Teacher, options, maps, rules, factory);
-                context.DistillSource = t.Reported
-                    ? "llm arm in this run (training maps)"
-                    : "llm arm run for this purpose (training maps, unreported)";
+                // The teacher always plays SimMaps.Training, whatever --maps says: with --maps heldout the run has no
+                // training-map matches to learn from, and an empty dataset would escalate every decision to the LLM.
+                context.DistillDataset = TeacherDataset(t.Teacher, options, rules, factory);
+                context.DistillSource = "llm arm run for this purpose (training maps, unreported)";
                 if (context.LlmSkipReason is { } failed)
                 {
                     skipped.Add(new SkippedArm(arm.ToString(), $"no teacher: the llm arm could not run ({failed})"));
                     continue;
                 }
+            }
+            if (arm.Name == "distilled" && DistillSkipReason(context.DistillDataset ?? DecisionDataset.Empty, context.DistillSource ?? "none") is { } tooSmall)
+            {
+                skipped.Add(new SkippedArm(arm.ToString(), tooSmall));
+                Console.WriteLine($"{arm}: {tooSmall}");
+                continue;
             }
 
             List<(ArmSpec Arm, string Opponent, SimMap Map, string Split, int Seed)> jobs = Jobs(arm, options, maps);
@@ -177,7 +184,9 @@ public static class Program
             {
                 dataset.WriteNdjson(writer);
             }
-            if (teacher is { Reported: true } reportedTeacher && arm == reportedTeacher.Teacher && context.DistillDataset is null)
+            // Only a run that played the training maps leaves the teacher's own dataset; otherwise the distilled arm
+            // runs the teacher on the training maps itself (above).
+            if (teacher is { Reported: true } reportedTeacher && arm == reportedTeacher.Teacher && context.DistillDataset is null && dataset.Count > 0)
             {
                 context.DistillDataset = dataset;
                 context.DistillSource = "llm arm in this run (training maps)";
@@ -247,11 +256,29 @@ public static class Program
         return inRun is not null ? (inRun, true) : (new ArmSpec("llm", false, llmFake), false);
     }
 
-    /// <summary>Runs the teacher on the training maps (unreported) and returns its primary decisions.</summary>
-    private static DecisionDataset TeacherDataset(ArmSpec teacher, CliOptions options, List<(SimMap Map, string Split)> maps, IRulesDatabase rules, BotAgentFactory factory)
+    /// <summary>
+    /// Fewest examples the distilled arm runs on. Below this nearly every state is out of distribution, so the arm
+    /// would escalate almost every decision to the LLM and report an LLM arm's play under the distilled label.
+    /// </summary>
+    public const int MinDistillExamples = 20;
+
+    /// <summary>Why the distilled arm cannot run on <paramref name="dataset"/>, or null when it has enough examples.</summary>
+    public static string? DistillSkipReason(DecisionDataset dataset, string source)
+    {
+        ArgumentNullException.ThrowIfNull(dataset);
+        return dataset.Count >= MinDistillExamples
+            ? null
+            : $"skipped: the dataset from {source} has {dataset.Count} examples, fewer than the {MinDistillExamples} needed; every decision would escalate to the LLM";
+    }
+
+    /// <summary>
+    /// Runs the teacher on <see cref="SimMaps.Training"/> (always, whatever the run's <c>--maps</c>; unreported) and
+    /// returns its primary decisions.
+    /// </summary>
+    private static DecisionDataset TeacherDataset(ArmSpec teacher, CliOptions options, IRulesDatabase rules, BotAgentFactory factory)
     {
         List<(ArmSpec Arm, string Opponent, SimMap Map, string Split, int Seed)> jobs =
-            Jobs(teacher, options, [.. maps.Where(static m => m.Split == "training")]);
+            Jobs(teacher, options, [.. SimMaps.Training.Select(static m => (m, "training"))]);
         ConcurrentDictionary<int, IReadOnlyList<DecisionRecord>> logs = new();
         if (options.LlmFake)
         {
