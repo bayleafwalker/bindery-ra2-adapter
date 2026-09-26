@@ -150,6 +150,12 @@ recorded match from its log, LLM answers included, without a model:
 nix shell nixpkgs#dotnet-sdk_8 -c dotnet run --project tools/Bindery.Ra2.Bot.Arena -c Release -- replay artifacts/arena/decisions/llm_live-rush_twin-valley_1.ndjson [--out replayed.ndjson]
 ```
 
+`arena analyze <log> [--out report.md] [--narrate] [--llm-fake]` builds the
+deterministic post-game report (`PostGameReport`: intent timeline with
+rationale and trigger, pivots and what caused them, proposals without effect and
+why, key events, shadow agreement, time by playbook and posture) and, with
+`--narrate`, a short narrative from Claude (`PostGameNarrator`; the fake client
+writes a scripted one, labelled). `arena replay`:
 It replaces the arm's primary and shadow strategists with `ReplayStrategist`s,
 prints whether the replayed decision log hash equals the recorded one (exit 0,
 else 2 with the first differing record), how many requests had no recording,

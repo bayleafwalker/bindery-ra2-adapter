@@ -143,7 +143,7 @@ public sealed class DistilledStrategist : IStrategist, Runtime.IFrameAwareStrate
         LastEscalationReason = null;
         StrategicIntent intent = IntentComposer.Compose(
             playbook, features, $"{Id}/{features.SnapshotVersion}", Source, best.Value.Probability,
-            $"distilled: p={best.Value.Probability:0.00} over {classes.Length} playbooks from {trainedOn} examples");
+            StrategyRationale.Explain(playbook.Id, $"distilled: p={best.Value.Probability:0.00} over {classes.Length} playbooks from {trainedOn} examples", features));
         return Task.FromResult<StrategistProposal?>(new StrategistProposal(intent, new ProposalCost(0, 0, 0, 0, null), null));
     }
 

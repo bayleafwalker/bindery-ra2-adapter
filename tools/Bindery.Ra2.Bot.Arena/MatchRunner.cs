@@ -34,6 +34,12 @@ public sealed record PlayerMatchMetrics(
     IReadOnlyList<string> Labels,
     double? FirstAttackSeconds = null)
 {
+    /// <summary>Shadow proposals whose request also got a primary proposal (see <see cref="Analysis.ShadowAgreement"/>).</summary>
+    public int ShadowCompared { get; init; }
+
+    /// <summary>Of those, shadow proposals naming the same playbook as the primary.</summary>
+    public int ShadowAgreed { get; init; }
+
     /// <summary>Primary requests the distilled strategist answered; 0 for other arms.</summary>
     public int DistilledDecisions { get; init; }
 
@@ -235,6 +241,8 @@ public static class MatchRunner
         {
             DistilledDecisions = stats.DistilledDecisions,
             DistilledEscalations = stats.DistilledEscalations,
+            ShadowCompared = stats.ShadowCompared,
+            ShadowAgreed = stats.ShadowAgreed,
         };
     }
 }

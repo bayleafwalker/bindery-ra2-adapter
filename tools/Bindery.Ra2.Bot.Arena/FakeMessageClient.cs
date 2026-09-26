@@ -49,6 +49,7 @@ public sealed class FakeMessageClient : IMessageClient
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
         Calls++;
+        if (string.Equals(request.SystemPrompt, PostGameNarrator.SystemPrompt, StringComparison.Ordinal)) return Task.FromResult(Narrate(request));
         JsonNode match = JsonNode.Parse(request.UserContent[0].Text)!;
         JsonNode situation = JsonNode.Parse(request.UserContent[^1].Text)!;
         bool refine = request.SystemPrompt.Contains("Mode: REFINE", StringComparison.Ordinal);
@@ -58,6 +59,26 @@ public sealed class FakeMessageClient : IMessageClient
         long input = (request.SystemPrompt.Length + request.UserContent.Sum(static b => b.Text.Length)) / 4;
         ModelUsage usage = new(input, text.Length / 4, 0, 0);
         return Task.FromResult(new ModelReply(text, "end_turn", null, usage, request.Model));
+    }
+
+    /// <summary>A scripted narrative for <see cref="PostGameNarrator"/> requests: facts from the report JSON, in a fixed sentence pattern.</summary>
+    private static ModelReply Narrate(ModelRequest request)
+    {
+        JsonNode report = JsonNode.Parse(request.UserContent[^1].Text)!;
+        JsonArray timeline = report["timeline"]?.AsArray() ?? [];
+        JsonArray pivots = report["pivots"]?.AsArray() ?? [];
+        JsonNode? first = timeline.FirstOrDefault();
+        string opening = first is null
+            ? "No intent took effect."
+            : $"It opened with {first["playbookId"]} ({first["posture"]}) because: {first["rationale"] ?? "no rationale recorded"}.";
+        string turns = pivots.Count == 0
+            ? "It never changed playbook or posture."
+            : $"It changed course {pivots.Count} times, first at {Number(pivots[0]!["atSeconds"]):0} s to {pivots[0]!["toPlaybook"]} (trigger {pivots[0]!["trigger"] ?? "none recorded"}).";
+        double? agreement = report["shadow"]?["compared"] is JsonNode c && Number(c) > 0 ? Number(report["shadow"]!["agreed"]) / Number(c) : null;
+        string shadow = agreement is { } a ? string.Create(CultureInfo.InvariantCulture, $" The shadow strategist agreed on the playbook {a:P0} of the time.") : string.Empty;
+        string text = $"Fake client narrative, scripted from the report, not a model. {timeline.Count} intents took effect over {Number(report["durationSeconds"]):0} s. {opening} {turns} {report["rejected"]?.AsArray().Count ?? 0} proposals had no effect.{shadow} Result: {report["result"] ?? "not in the log"}.";
+        string reply = JsonSerializer.Serialize(new { narrative = text });
+        return new ModelReply(reply, "end_turn", null, new ModelUsage(request.UserContent.Sum(static b => b.Text.Length) / 4, reply.Length / 4, 0, 0), request.Model);
     }
 
     private static string? Personality(JsonNode match) => match["personality"] switch

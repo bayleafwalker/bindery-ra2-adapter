@@ -40,6 +40,11 @@ public sealed record ArenaAgentStats
     public double Usd { get; set; }
     public string? DecisionLogHash { get; set; }
 
+    /// <summary>Shadow proposals compared with the primary's answer to the same request, and how many named the same playbook.</summary>
+    public int ShadowCompared { get; set; }
+
+    public int ShadowAgreed { get; set; }
+
     /// <summary>Primary requests the distilled strategist answered (its own model or by escalation).</summary>
     public int DistilledDecisions { get; set; }
 

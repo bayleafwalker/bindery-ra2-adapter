@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
+using Bindery.Ra2.Bot.Analysis;
+using Bindery.Ra2.Bot.Claude;
 using Bindery.Ra2.Bot.Playbooks;
 using Bindery.Ra2.Bot.Rules;
 using Bindery.Ra2.Bot.Runtime;
@@ -48,6 +51,26 @@ public static class Program
                     Console.WriteLine($"warning: the log file's hash {result.RecordedHash} differs from the hash recorded when the match was played ({result.ManifestHash}): the file was edited");
                 }
                 return result.Equal ? 0 : 2;
+            }
+            if (args.Length > 0 && args[0] == "analyze")
+            {
+                if (args.Length < 2) throw new ArgumentException("Usage: arena analyze <out>/decisions/<match>.ndjson [--out <report.md>] [--narrate] [--llm-fake]");
+                string? outPath = null;
+                bool narrate = false, fake = false;
+                for (int i = 2; i < args.Length; i++)
+                {
+                    switch (args[i])
+                    {
+                        case "--out" when i + 1 < args.Length: outPath = args[++i]; break;
+                        case "--narrate": narrate = true; break;
+                        case "--llm-fake": fake = true; break;
+                        default: throw new ArgumentException($"Unknown argument '{args[i]}'.");
+                    }
+                }
+                string analysis = Analyze(args[1], narrate, fake);
+                if (outPath is null) Console.Write(analysis);
+                else File.WriteAllText(outPath, analysis);
+                return 0;
             }
             CliOptions options = CliOptions.Parse(args);
             Run(options);
@@ -307,6 +330,53 @@ public static class Program
         int misses = replayFactory.Primary!.Misses + (replayFactory.Shadow?.Misses ?? 0);
         int unused = replayFactory.Primary.Unused + (replayFactory.Shadow?.Unused ?? 0);
         return new ReplayResult(ndjsonPath, recordedHash == replayedHash, recordedHash, replayedHash, manifest.RecordedHash, misses, unused, recorded.Count, replayed.Count, first);
+    }
+
+    /// <summary>
+    /// The post-game analysis of one match log (<see cref="PostGameReport"/>), titled from its manifest when there is
+    /// one, with an optional narrative from <see cref="PostGameNarrator"/> (the fake client with
+    /// <paramref name="llmFake"/>, else the Anthropic API; without a credential the section says so).
+    /// </summary>
+    public static string Analyze(string ndjsonPath, bool narrate, bool llmFake)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(ndjsonPath);
+        if (!File.Exists(ndjsonPath)) throw new ArgumentException($"No decision log at {ndjsonPath}.");
+        IReadOnlyList<DecisionRecord> records;
+        using (StreamReader reader = new(ndjsonPath)) records = DecisionLogCodec.ReadAll(reader);
+        string manifestPath = MatchManifest.PathFor(ndjsonPath);
+        MatchManifest? manifest = File.Exists(manifestPath) ? MatchManifest.Load(manifestPath) : null;
+        string header = manifest is null
+            ? Path.GetFileName(ndjsonPath)
+            : $"{manifest.Arm} vs {manifest.Opponent} on {manifest.Map}, seed {manifest.Seed} ({manifest.Split}), benchmark {manifest.Benchmark.Name}";
+        PostGameReport report = PostGameReport.Build(records);
+        StringBuilder md = new(report.ToMarkdown(manifest is null ? "Post-game report" : $"Post-game report: {header}"));
+        if (!narrate) return md.ToString();
+
+        md.AppendLine();
+        md.AppendLine("## Narrative");
+        md.AppendLine();
+        IMessageClient? client = null;
+        if (llmFake)
+        {
+            client = new FakeMessageClient();
+            md.AppendLine("_Written by the `--llm-fake` client: scripted from the report above, not a model._");
+            md.AppendLine();
+        }
+        else
+        {
+            try
+            {
+                client = new AnthropicMessageClient();
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                md.AppendLine($"No narrative: no credential resolved ({ex.GetType().Name}: {ex.Message}). Set ANTHROPIC_API_KEY or pass --llm-fake.");
+                return md.ToString();
+            }
+        }
+        NarrationResult narration = new PostGameNarrator(client).NarrateAsync(report, header).GetAwaiter().GetResult();
+        md.AppendLine(narration.Narrative ?? $"No narrative: {narration.Failure}");
+        return md.ToString();
     }
 
     /// <summary>Builds the recorded arm as a replay and every other side as usual.</summary>

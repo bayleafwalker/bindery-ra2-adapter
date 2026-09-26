@@ -55,7 +55,8 @@ public sealed class PlaybookSelector : IStrategist
         (Playbook? playbook, string reason, double confidence) = Choose(context.Features, context.Playbooks, context.Rules);
         if (playbook is null) return Task.FromResult<StrategistProposal?>(null);
         StrategicIntent intent = IntentComposer.Compose(
-            playbook, context.Features, $"{Id}/{context.Features.SnapshotVersion}", Source, confidence, reason, options.LifetimeSeconds);
+            playbook, context.Features, $"{Id}/{context.Features.SnapshotVersion}", Source, confidence,
+            StrategyRationale.Explain(playbook.Id, reason, context.Features), options.LifetimeSeconds);
         return Task.FromResult<StrategistProposal?>(new StrategistProposal(intent, new ProposalCost(0, 0, 0, 0, null), null));
     }
 

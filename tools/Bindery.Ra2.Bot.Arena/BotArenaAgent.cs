@@ -49,6 +49,16 @@ public sealed class BotArenaAgent : IArenaAgent
 
     public void Finish(bool? won, double ownAssetValue, double enemyAssetValue)
     {
+        // The result goes into the log itself, so a post-game report (and a replay) sees how the match ended.
+        if (runtime.CurrentFeatures is { } last)
+        {
+            log.Write(new DecisionRecord(DecisionRecordKinds.MatchResult, last.Time, last.SnapshotVersion, BotJson.ToElement(new
+            {
+                result = won switch { true => "won", false => "lost", null => "draw" },
+                ownAssetValue,
+                enemyAssetValue,
+            })));
+        }
         BotMetrics m = runtime.Metrics;
         Stats.Proposals = (int)m.Proposals;
         Stats.Rejected = (int)m.Rejected;
@@ -94,6 +104,9 @@ public sealed class BotArenaAgent : IArenaAgent
             }
         }
         CountDistillation();
+        Analysis.ShadowAgreement shadow = Analysis.PostGameReport.Build(log.Records).Shadow;
+        Stats.ShadowCompared = shadow.Compared;
+        Stats.ShadowAgreed = shadow.Agreed;
         // Failed requests still cost tokens; the Claude strategist reports them through LastFailure only.
         Stats.DecisionLogHash = log.ComputeHash();
         onFinish?.Invoke(won, ownAssetValue, enemyAssetValue, this);

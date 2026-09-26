@@ -52,7 +52,8 @@ public sealed class PinnedPlaybookStrategist : IStrategist
             reason = $"pinned style defends: base threat ratio {threat:0.00}";
         }
         if (id is null || !context.Playbooks.TryGet(id, out Playbook playbook)) return Task.FromResult<StrategistProposal?>(null);
-        StrategicIntent intent = IntentComposer.Compose(playbook, features, $"{Id}/{features.SnapshotVersion}", Source, Confidence, reason);
+        StrategicIntent intent = IntentComposer.Compose(playbook, features, $"{Id}/{features.SnapshotVersion}", Source, Confidence,
+            StrategyRationale.Explain(playbook.Id, reason, features));
         return Task.FromResult<StrategistProposal?>(new StrategistProposal(intent, new ProposalCost(0, 0, 0, 0, null), null));
     }
 }

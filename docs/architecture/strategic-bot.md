@@ -309,4 +309,21 @@ Gaps an operator review found after integration, and how each was closed.
   role-less Claude failure records) are written back at the same point
   (`echoLog`). Tests replay `llm`, `llm-shadow`, `llm+fast`, `bandit` and
   `distilled` matches to identical hashes and catch an edited log.
+- **Explanations and post-game analysis.** `PostGameReport`
+  (`src/Bindery.Ra2.Bot/Analysis`) is built from a decision log alone and is
+  deterministic: the timeline of intents that took effect (playbook, posture,
+  source and role, confidence, rationale, the trigger of the request that
+  produced it, the arbiter's reason, renewals, how it ended), pivots with their
+  trigger and the previous intent's end reason, proposals without effect
+  (validator codes, late reasons, arbiter refusals), key events (event and
+  replan triggers, aborts, first attack and defence, superweapon launches, the
+  result, which the arena now logs as `match.result`), shadow agreement (shadow
+  proposals naming the primary's playbook for the same request) and time by
+  playbook and posture. `arena analyze` renders it; `--narrate` adds a narrative
+  from `PostGameNarrator` (Claude, structured output, behind `IMessageClient`;
+  the fake client scripts one from the report and says so). Every deterministic
+  strategist's rationale now names the playbook, the rule or model that chose it
+  and the evidence (`StrategyRationale`: time, base threat, army ratio with the
+  estimate and its confidence, refineries, harvesters, scouting). The run report
+  shows shadow agreement next to the shadow proposal count.
 

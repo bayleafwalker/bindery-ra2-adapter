@@ -139,8 +139,10 @@ public static class ReportBuilder
         sb.AppendLine();
         sb.AppendLine("Invalid plans: rejected / proposals. Lateness: seconds from a proposal's snapshot to its validation; late-discard count / proposals. Churn: activations and posture flips per 10 game minutes.");
         sb.AppendLine();
-        sb.AppendLine("| Arm | Proposals | Invalid plans | Mean lateness s | Late-discarded | Failed requests | Shadow proposals | Activations /10 min | Posture flips /10 min |");
-        sb.AppendLine("|---|---|---|---|---|---|---|---|---|");
+        sb.AppendLine("Shadow agreement: shadow proposals naming the same playbook as the primary proposal for the same request / shadow proposals whose request got a primary proposal.");
+        sb.AppendLine();
+        sb.AppendLine("| Arm | Proposals | Invalid plans | Mean lateness s | Late-discarded | Failed requests | Shadow proposals | Shadow agreement | Activations /10 min | Posture flips /10 min |");
+        sb.AppendLine("|---|---|---|---|---|---|---|---|---|---|");
         foreach (var group in matches.GroupBy(static m => m.Arm).OrderBy(static g => g.Key, StringComparer.Ordinal))
         {
             List<PlayerMatchMetrics> arm = group.Select(static m => m.Players["arm"]).ToList();
@@ -149,7 +151,7 @@ public static class ReportBuilder
             int late = arm.Sum(static a => a.LateDiscarded);
             List<double> lateness = arm.SelectMany(static a => a.LateSeconds).ToList();
             double minutes = Math.Max(1.0 / 60, group.Sum(static m => m.DurationSeconds) / 60.0);
-            sb.AppendLine($"| {group.Key} | {proposals} | {rejected}/{proposals} ({Rate(rejected, proposals)}) | {(lateness.Count == 0 ? "n/a" : F(lateness.Average(), "0.00"))} | {late}/{proposals} ({Rate(late, proposals)}) | {arm.Sum(static a => a.ProposalsFailed)} | {arm.Sum(static a => a.ShadowProposals)} | {F(arm.Sum(static a => a.Activations) / minutes * 10, "0.00")} | {F(arm.Sum(static a => a.PostureFlips) / minutes * 10, "0.00")} |");
+            sb.AppendLine($"| {group.Key} | {proposals} | {rejected}/{proposals} ({Rate(rejected, proposals)}) | {(lateness.Count == 0 ? "n/a" : F(lateness.Average(), "0.00"))} | {late}/{proposals} ({Rate(late, proposals)}) | {arm.Sum(static a => a.ProposalsFailed)} | {arm.Sum(static a => a.ShadowProposals)} | {Agreement(arm)} | {F(arm.Sum(static a => a.Activations) / minutes * 10, "0.00")} | {F(arm.Sum(static a => a.PostureFlips) / minutes * 10, "0.00")} |");
         }
         sb.AppendLine();
     }
@@ -239,6 +241,12 @@ public static class ReportBuilder
             sb.AppendLine($"| {p.Arm} | {p.Map} | {p.Seed} | {F(p.PerturbedAtSeconds, "0")} | {(p.StatesMatchedBeforePerturbation ? "yes" : "no")} | {p.Differences}/{p.FramesCompared} | {p.Note ?? string.Empty} |");
         }
         sb.AppendLine();
+    }
+
+    private static string Agreement(List<PlayerMatchMetrics> arm)
+    {
+        int compared = arm.Sum(static a => a.ShadowCompared);
+        return compared == 0 ? "n/a" : $"{arm.Sum(static a => a.ShadowAgreed)}/{compared} ({Rate(arm.Sum(static a => a.ShadowAgreed), compared)})";
     }
 
     private static string FirstAttack(List<PlayerMatchMetrics> arm)
