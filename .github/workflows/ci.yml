@@ -57,6 +57,9 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+      - name: Check proprietary-asset boundary
+        shell: pwsh
+        run: ./ci/verify-no-assets.ps1
       - name: Restore strategic bot projects
         run: |
           dotnet restore src/Bindery.Ra2.Bot/Bindery.Ra2.Bot.csproj
