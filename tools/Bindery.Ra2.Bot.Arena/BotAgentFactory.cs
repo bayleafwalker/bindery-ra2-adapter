@@ -22,8 +22,23 @@ public sealed class ArenaRunContext
     /// <summary>Simulated game-time latency for LLM answers; null uses measured wall latency (fake: 4 s).</summary>
     public double? LlmLatencySeconds { get; }
 
-    /// <summary>The bandit arm's learner, shared across the run's matches (the spec's "learns across matches within a run").</summary>
-    public ContextualBanditStrategist Bandit { get; } = new();
+    private readonly Dictionary<string, ContextualBanditStrategist> bandits = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// A bandit arm's learner, shared across that arm's matches in the run (the spec's "learns across matches
+    /// within a run"). Every arm has its own, keyed by its full name (observation mode and personality included):
+    /// one shared learner would let an oracle arm's omniscient episodes shape a belief arm's policy, and would make
+    /// a belief-versus-oracle delta measure extra training as well as information.
+    /// </summary>
+    public ContextualBanditStrategist BanditFor(ArmSpec arm)
+    {
+        ArgumentNullException.ThrowIfNull(arm);
+        lock (gate)
+        {
+            string key = arm.ToString();
+            return bandits.TryGetValue(key, out ContextualBanditStrategist? bandit) ? bandit : bandits[key] = new ContextualBanditStrategist();
+        }
+    }
 
     /// <summary>Dataset for the distilled arm, and where it came from.</summary>
     public DecisionDataset? DistillDataset { get; set; }
@@ -31,8 +46,9 @@ public sealed class ArenaRunContext
     public string? DistillSource { get; set; }
 
     /// <summary>
-    /// False while the arena plays a held-out opponent: the bandit's decisions in that match are then abandoned,
-    /// never credited, so held-out opponents cannot shape what it learns (<see cref="OpponentSets"/>).
+    /// False while the arena plays a held-out opponent or a held-out map: the bandit's decisions in that match are
+    /// then abandoned, never credited, so held-out opponents and maps cannot shape what it learns
+    /// (<see cref="OpponentSets"/>).
     /// </summary>
     public bool BanditLearning { get; set; } = true;
 
@@ -206,12 +222,13 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
                     primary = new PlaybookSelector();
                     break;
                 case "bandit":
-                    primary = context.Bandit;
+                    ContextualBanditStrategist bandit = context.BanditFor(arm);
+                    primary = bandit;
                     bool learn = context.BanditLearning;
                     onFinish = (won, own, enemy, _) =>
                     {
-                        if (learn) context.Bandit.CompleteEpisode(Reward(won, own, enemy));
-                        else context.Bandit.AbandonEpisode();
+                        if (learn) bandit.CompleteEpisode(Reward(won, own, enemy));
+                        else bandit.AbandonEpisode();
                     };
                     break;
                 case "llm-shadow":

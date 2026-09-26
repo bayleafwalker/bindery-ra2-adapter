@@ -81,11 +81,11 @@ public sealed class HeldOutOpponentTests : IDisposable
         SimMap map = SimMaps.Training[0];
 
         MatchRunner.Run(new ArmSpec("bandit", false, true), "ai-horde", map, "training", 1, 300, rules, factory, benchmark: BenchmarkSettings.Contested);
-        Assert.Equal(0, context.Bandit.Updates);
+        Assert.Equal(0, context.BanditFor(new ArmSpec("bandit", false, true)).Updates);
 
         context.BanditLearning = true;
         MatchRunner.Run(new ArmSpec("bandit", false, true), "live-rush", map, "training", 1, 300, rules, factory, benchmark: BenchmarkSettings.Contested);
-        Assert.True(context.Bandit.Updates > 0);
+        Assert.True(context.BanditFor(new ArmSpec("bandit", false, true)).Updates > 0);
     }
 
     [Fact]

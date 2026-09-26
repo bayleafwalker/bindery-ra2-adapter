@@ -37,6 +37,13 @@ public static class Program
     /// <summary>Game times at which each arm's leakage probe perturbs hidden state.</summary>
     internal static readonly double[] LeakageProbeTimes = [90, 240];
 
+    /// <summary>
+    /// Whether a bandit match credits the learner: training maps against training opponents only, the same rule as
+    /// the exported datasets, so the bandit's held-out-map and held-out-opponent results are out of sample.
+    /// </summary>
+    public static bool BanditLearnsFrom(string opponent, string split) =>
+        split == "training" && !OpponentSets.IsHeldOut(opponent);
+
     public static int Main(string[] args)
     {
         ArgumentNullException.ThrowIfNull(args);
@@ -168,7 +175,7 @@ public static class Program
                 for (int i = start; i < jobs.Count; i++)
                 {
                     int index = i;
-                    context.BanditLearning = !OpponentSets.IsHeldOut(jobs[i].Opponent);
+                    context.BanditLearning = BanditLearnsFrom(jobs[i].Opponent, jobs[i].Split);
                     armResults[i] = RunJob(jobs[i], options, rules, factory, log => logs[index] = log);
                 }
             }
@@ -182,7 +189,7 @@ public static class Program
             // Exported datasets hold training-map decisions against training opponents only, so a distilled arm
             // trained on them is never evaluated on maps or opponents its teacher's data came from.
             DecisionDataset dataset = DecisionDataset.Merge(Enumerable.Range(0, jobs.Count)
-                .Where(i => logs.ContainsKey(i) && jobs[i].Split == "training" && !OpponentSets.IsHeldOut(jobs[i].Opponent))
+                .Where(i => logs.ContainsKey(i) && BanditLearnsFrom(jobs[i].Opponent, jobs[i].Split))
                 .Select(i => DecisionDataset.FromDecisionLog(logs[i], DatasetFilter.PrimaryOnly, MatchId(jobs[i]))));
             using (StreamWriter writer = new(Path.Combine(options.OutDir, $"dataset-{Slug(arm.ToString())}.ndjson")))
             {
@@ -199,7 +206,7 @@ public static class Program
             // Two perturbation times: early, and after the armies have usually met, when leaks through fire and kill
             // events can show.
             LeakageProbeResult[] armProbes = [.. LeakageProbeTimes.Select(t => LeakageProbe.Run(arm, maps[0].Map, 1, rules, factory, perturbAtSeconds: t))];
-            if (arm.Name == "bandit") context.Bandit.AbandonEpisode();
+            if (arm.Name == "bandit") context.BanditFor(arm).AbandonEpisode();
             probes.AddRange(armProbes);
             Console.WriteLine($"{arm}: {armResults.Length} matches, {armResults.Count(static r => r.Winner == 0)} wins; leakage probe {armProbes.Sum(static p => p.Differences)}/{armProbes.Sum(static p => p.FramesCompared)} differing frames.");
         }

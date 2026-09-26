@@ -9,6 +9,7 @@
     <ProjectReference Include="../../src/Bindery.Ra2.Bot.Sim/Bindery.Ra2.Bot.Sim.csproj" />
     <ProjectReference Include="../../src/Bindery.Ra2.Bot.Claude/Bindery.Ra2.Bot.Claude.csproj" />
     <ProjectReference Include="../../tools/Bindery.Ra2.Bot.Arena/Bindery.Ra2.Bot.Arena.csproj" />
+    <ProjectReference Include="../../tools/Bindery.Ra2.Bot.Tune/Bindery.Ra2.Bot.Tune.csproj" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">

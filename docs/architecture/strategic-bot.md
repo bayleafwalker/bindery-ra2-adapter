@@ -92,7 +92,7 @@ a contract change records it in its report instead of editing the file.
 | Arm | Strategist | Notes |
 |---|---|---|
 | `selector` | `PlaybookSelector` | baseline |
-| `bandit` | `ContextualBanditStrategist` | learns across matches within a run |
+| `bandit` | `ContextualBanditStrategist` | learns across matches within a run: one learner per arm (oracle and personality variants apart), training maps against training opponents only |
 | `llm-shadow` | `PlaybookSelector` active, `ClaudeStrategist` shadow | step 4 |
 | `llm` | `ClaudeStrategist` at the adopted vocabulary tier, selector fallback | step 5 |
 | `llm-t0` … `llm-t3` | `ClaudeStrategist` at `PlaybookOnly`, `Parameters`, `ObjectivesAndRegions`, `Full` | step 6; `--arms tiers`; adoption rule in the report and `vocabulary-adoption.json` |
@@ -202,7 +202,8 @@ Recorded when the eight work packages were merged into `feat/strategic-bot`.
   infantry mass behind early defences, large late waves) and `ai-armor`
   (infantry-screened second war factory, large tank waves, 1.5× income) are
   independent scripted styles written for evaluation only. The arena never
-  credits the bandit with a match against one (the episode is abandoned), never
+  credits the bandit with a match against one or on a held-out map (the episode
+  is abandoned), never
   puts one in a distillation dataset or teacher run, and the tuner refuses them;
   the selector default above predates them. `--opponents heldout` runs them and
   the contested benchmark's defaults include them. `report.md` has a "Held-out

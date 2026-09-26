@@ -98,7 +98,7 @@ public static class ReportBuilder
             sb.AppendLine();
             return;
         }
-        sb.AppendLine("Opponent split × map split. Held-out opponents never inform the selector's defaults, bandit learning (the arena abandons the bandit's episode instead of crediting it), distillation datasets or teacher runs, or tuning (the tuner refuses them).");
+        sb.AppendLine("Opponent split × map split. Held-out opponents never inform the selector's defaults, bandit learning (the arena abandons the bandit's episode instead of crediting it, as it does on held-out maps), distillation datasets or teacher runs, or tuning (the tuner refuses them).");
         sb.AppendLine();
         sb.AppendLine("| Arm | Opponents | Maps | Wins | Losses | Draws | Matches | Win rate | 95% interval (Wilson) |");
         sb.AppendLine("|---|---|---|---|---|---|---|---|---|");
