@@ -271,4 +271,42 @@ public sealed class FeatureCompilerReviewTests
             events.AddRange(compiler.Compile(belief.Apply(Frame(t, 5000, [ConYardAtHome()], power: new PowerState(50, 100)))).Events);
         Assert.Single(events, static e => e.Kind == StrategicEventKind.LowPower);
     }
+
+    /// <summary>An army at the far end of the map cannot defend the base; the base's own value is what is near it.</summary>
+    [Fact]
+    public void BaseThreat_ComparesTheEnemyWithOwnForcesThatCanRespond()
+    {
+        (BeliefModel belief, FeatureCompiler compiler) = New();
+        List<ObservedEntity> entities = [ConYardAtHome()];
+        entities.AddRange(Enumerable.Range(0, 40).Select(i => Own((uint)(100 + i), "rifleman", EnemyCell)));
+        entities.AddRange(Enumerable.Range(0, 20).Select(i => Enemy((uint)(300 + i), "rifleman", new Cell(11, 11))));
+
+        StrategicFeatures f = compiler.Compile(belief.Apply(Frame(0, 5000, entities, new HashSet<RegionId> { TestMaps.Home, TestMaps.EnemyStart })));
+
+        ThreatAssessment home = Assert.Single(f.Threats, static t => t.IsBase);
+        Assert.Equal(2000, home.EnemyValue);
+        Assert.Equal(0, home.OwnValue);
+        Assert.True(home.LocalForceRatio < 1.0);
+        Assert.True(ConditionEvaluator.BaseThreatRatio(f) >= 1.0);
+        Assert.Equal(4000, f.Army.ArmyValue.Current);
+    }
+
+    /// <summary>A tank on the river bank maps to the water region by nearest centre; it still threatens the base.</summary>
+    [Fact]
+    public void BaseThreat_CountsAnEnemyWhoseNearestRegionIsWater()
+    {
+        Region bank = new(new RegionId(0), "bank", new Cell(42, 50), 8, IsStartLocation: true, HasOre: false, Water: false);
+        Region river = new(new RegionId(1), "river", new Cell(50, 50), 8, IsStartLocation: false, HasOre: false, Water: true);
+        MapInfo map = new("shore", 100, 100, [bank, river], [new RegionLink(bank.Id, river.Id, 10, Ground: false, Naval: true)], []);
+        (BeliefModel belief, FeatureCompiler compiler) = New();
+
+        StrategicFeatures f = compiler.Compile(belief.Apply(Frame(0, 5000,
+            [Own(1, "conyard", new Cell(40, 50)), Enemy(40, "tank", new Cell(47, 50))],
+            new HashSet<RegionId> { bank.Id, river.Id }, map: map)));
+
+        Assert.Equal(river.Id, Assert.Single(belief.Current.Enemies).LastSeenRegion);
+        ThreatAssessment home = Assert.Single(f.Threats, static t => t.IsBase);
+        Assert.Equal(900, home.EnemyValue);
+        Assert.True(home.EnemyEtaSeconds < FeatureCompiler.UnknownSeconds);
+    }
 }

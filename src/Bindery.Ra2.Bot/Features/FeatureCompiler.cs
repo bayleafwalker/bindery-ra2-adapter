@@ -91,7 +91,7 @@ public sealed partial class FeatureCompiler : IFeatureCompiler
         ScoutingFeatures scouting = CompileScouting(snapshot, enemy);
         EconomyFeatures economy = CompileEconomy(snapshot, out double incomePerMinuteCurrent, out double spendingPerMinuteCurrent);
 
-        IReadOnlyList<ThreatAssessment> threats = CompileThreats(snapshot, graph, clusters, armyValueCurrent);
+        IReadOnlyList<ThreatAssessment> threats = CompileThreats(snapshot, graph, clusters);
         SuperweaponFeatures? superweapons = CompileSuperweapons(snapshot, events);
         if (superweapons is { Enemy.Count: > 0 }) enemy = enemy with { SuperweaponKnown = true };
 
