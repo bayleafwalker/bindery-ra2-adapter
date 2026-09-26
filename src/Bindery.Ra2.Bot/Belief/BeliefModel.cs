@@ -27,6 +27,7 @@ public sealed class BeliefModel : IBeliefModel
     private readonly List<GameEvent> recentEvents = [];
 
     private long version;
+    private GameTime? previousFrameTime;
     private BeliefSnapshot? current;
     private Dictionary<RegionId, int>? oreLastSeen;
 
@@ -138,10 +139,19 @@ public sealed class BeliefModel : IBeliefModel
             if (seenThisFrame.Contains(id)) continue;
             if (contact.ConfirmedDestroyed) continue; // a confirmed fact does not decay.
 
-            double elapsed = frame.Time.SecondsSince(contact.LastSeenAt);
+            // Decay only over the interval since the previous frame, from the confidence it already had: the
+            // half-life is chosen per interval by what that interval showed, so vacancy evidence gathered while
+            // the spot was in view stays spent when it goes dark again, and confidence never rises unseen.
+            GameTime since = previousFrameTime is { } p && p > contact.LastSeenAt ? p : contact.LastSeenAt;
+            double elapsed = Math.Max(0, frame.Time.SecondsSince(since));
             bool regionVisible = frame.VisibleRegions.Contains(contact.LastSeenRegion);
-            double halfLife = regionVisible ? options.VacancyHalfLifeSeconds : options.ConfidenceHalfLifeSeconds;
-            double confidence = halfLife <= 0 ? 0.0 : Math.Pow(0.5, elapsed / halfLife);
+            double confidence;
+            if (regionVisible)
+                confidence = options.VacancyHalfLifeSeconds <= 0 ? 0.0 : contact.Confidence * Math.Pow(0.5, elapsed / options.VacancyHalfLifeSeconds);
+            else if (contact.Kind == EntityKind.Building)
+                confidence = contact.Confidence; // a building cannot move: out of sight it stands where it was seen.
+            else
+                confidence = options.ConfidenceHalfLifeSeconds <= 0 ? 0.0 : contact.Confidence * Math.Pow(0.5, elapsed / options.ConfidenceHalfLifeSeconds);
 
             if (confidence < options.ConfidenceFloor)
             {
@@ -151,6 +161,7 @@ public sealed class BeliefModel : IBeliefModel
             contacts[id] = contact with { Confidence = confidence };
         }
         foreach (EntityId id in forgotten) contacts.Remove(id);
+        previousFrameTime = frame.Time;
     }
 
     private void UpdateFactionKnowledge(PlayerId player, IReadOnlyList<Faction> observedFactions)
