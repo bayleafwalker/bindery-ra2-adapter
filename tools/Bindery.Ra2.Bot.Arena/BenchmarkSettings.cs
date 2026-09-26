@@ -28,7 +28,10 @@ public sealed record BenchmarkSettings(string Name, double OpponentIncomeMultipl
     /// Allied side (whichever seat) starts with 20,000 credits against the Soviet 10,000 to offset the fixture's
     /// Soviet edge, and combat carries ±25% seeded noise, so outcomes vary with the seed within each faction.
     /// Calibration (2026-09-26, the selector against the five live styles, all five maps, 6 seeds, 150 matches):
-    /// selector 73/150 (0.49), as Allied 28/75, as Soviet 45/75; noiseless the same setting gave 69/150.
+    /// selector 73/150 (0.49), as Allied 28/75, as Soviet 45/75; noiseless the same setting gave 69/150. That was
+    /// before refineries came with RA2's free harvester (<see cref="Bindery.Ra2.Bot.Sim.SimSettings.FreeHarvesterWithRefinery"/>);
+    /// rechecked after it (2026-09-26, all five maps, 4 seeds): selector 56/100 (0.56) against the live styles, as
+    /// Allied 16/50, as Soviet 40/50, still inside the 30–70% band, so the setting was kept.
     /// The defaults also include the held-out opponents (<see cref="OpponentSets.HeldOut"/>), so every default run
     /// reports an out-of-sample win rate next to the live styles' partly in-sample one.
     /// </summary>

@@ -23,6 +23,10 @@ public sealed record SimPlayer(PlayerId Id, Faction Faction, double IncomeMultip
 /// [1 − noise, 1 + noise]. Zero (the default) keeps combat exactly deterministic from the rules; a positive value
 /// makes outcomes depend on the seed, so a benchmark can separate strategies that a noiseless one cannot.
 /// </param>
+/// <param name="FreeHarvesterWithRefinery">
+/// RA2's <c>FreeUnit=</c> on refineries: a placed refinery comes with its owner's cheapest harvester next to it,
+/// at no cost. On by default; off reproduces the starved economy earlier benchmarks were calibrated on.
+/// </param>
 public sealed record SimSettings(
     int Seed,
     double MaxSeconds,
@@ -31,4 +35,5 @@ public sealed record SimSettings(
     double SuperweaponChargeSeconds = 600,
     int SuperweaponDamage = 1500,
     double SuperweaponRadiusCells = 6,
-    double CombatNoise = 0);
+    double CombatNoise = 0,
+    bool FreeHarvesterWithRefinery = true);

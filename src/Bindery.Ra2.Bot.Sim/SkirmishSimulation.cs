@@ -468,7 +468,27 @@ public sealed class SkirmishSimulation
             if (itemIndex >= 0) queue.Items.RemoveAt(itemIndex);
         }
         SpawnEntity(player, c.TypeId, c.Cell, region.Id);
+        if (settings.FreeHarvesterWithRefinery && rules.TryGet(c.TypeId, out UnitRule placed) && placed.Kind == EntityKind.Building && placed.Role == UnitRole.Economy)
+        {
+            SpawnFreeHarvester(player, state.Faction, c.Cell, region.Id);
+        }
         return true;
+    }
+
+    /// <summary>
+    /// RA2's refinery <c>FreeUnit=</c>: the owner's cheapest harvester, next to the refinery, at no cost and without
+    /// its usual prerequisites. It announces itself like any new unit and starts harvesting on its own.
+    /// </summary>
+    private void SpawnFreeHarvester(PlayerId player, Faction faction, Cell refinery, RegionId region)
+    {
+        UnitRule? harvester = rules.All
+            .Where(r => r.Role == UnitRole.Harvester && r.Kind != EntityKind.Building && r.Factions.Contains(faction))
+            .OrderBy(static r => r.Cost).ThenBy(static r => r.TypeId, StringComparer.Ordinal)
+            .FirstOrDefault();
+        if (harvester is null) return;
+        Cell beside = new(refinery.X + 1, refinery.Y + 1);
+        Cell cell = map.Map.RegionOf(beside)?.Id == region && beside.X < map.Map.Width && beside.Y < map.Map.Height ? beside : refinery;
+        SpawnEntity(player, harvester.TypeId, cell, region);
     }
 
     private bool ApplySell(PlayerId player, SimPlayerState state, SellCommand c)
