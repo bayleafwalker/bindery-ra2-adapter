@@ -82,4 +82,67 @@ public sealed class FeatureCompilerReviewTests
         Assert.Equal(100, features.Army.LossesValue.Current);
         Assert.Equal(1000, features.Army.KillsValue.Current);
     }
+
+    /// <summary>
+    /// The simulator debits a unit's full cost when it is queued; a one-frame credit derivative then reads as a
+    /// huge negative income on the enqueue frame and as phantom income while the item builds. The windowed
+    /// estimate keeps the error within the item's cost over the window, whatever the source's debit timing.
+    /// </summary>
+    [Fact]
+    public void IncomePerMinute_IsWindowed_SoAnUpFrontDebitIsNotAMultiThousandSpike()
+    {
+        (BeliefModel belief, FeatureCompiler compiler) = New();
+        double worst = 0;
+        const double step = 1.0 / 15.0;
+        for (int frame = 0; frame <= 45 * 15; frame++)
+        {
+            double t = frame * step;
+            bool building = t >= 20 && t < 30;
+            int credits = t >= 20 ? 4100 : 5000;
+            IReadOnlyList<ProductionQueueState> queues = building
+                ? [new ProductionQueueState(QueueKind.Vehicle, [new QueueItem("tank", (t - 20) / 10, false, false)], 1)]
+                : [];
+            StrategicFeatures f = compiler.Compile(belief.Apply(Frame(t, credits, [ConYardAtHome()], queues: queues)));
+            worst = Math.Max(worst, Math.Abs(f.Economy.IncomePerMinute.Current));
+        }
+
+        // True income is zero throughout; 900 credits over a 15 s window is 3600/min.
+        Assert.True(worst <= 3600.0 + 1e-6, $"worst |income| {worst}/min");
+    }
+
+    /// <summary>A queue with one factory builds one item at a time; the items waiting behind it cost nothing yet.</summary>
+    [Fact]
+    public void Spending_CountsOnlyAsManyItemsAsTheQueueHasFactories()
+    {
+        (BeliefModel belief, FeatureCompiler compiler) = New();
+        IReadOnlyList<ProductionQueueState> queues =
+        [
+            new ProductionQueueState(QueueKind.Vehicle,
+            [
+                new QueueItem("tank", 0.3, false, false), new QueueItem("tank", 0, false, false),
+                new QueueItem("tank", 0, false, false), new QueueItem("tank", 0, false, false),
+            ], 1),
+        ];
+        compiler.Compile(belief.Apply(Frame(0, 2000, [ConYardAtHome()], queues: queues)));
+        StrategicFeatures f = compiler.Compile(belief.Apply(Frame(1, 1910, [ConYardAtHome()], queues: queues)));
+
+        Assert.Equal(5400, f.Economy.SpendingPerMinute.Current, precision: 6);
+        Assert.Equal(0, f.Economy.IncomePerMinute.Current, precision: 6);
+    }
+
+    /// <summary>Runway is how long the bank lasts at the net burn; with credits rising it never runs out.</summary>
+    [Fact]
+    public void CashRunway_UsesNetBurn_AndIsUnboundedWhileCreditsRise()
+    {
+        (BeliefModel belief, FeatureCompiler compiler) = New();
+        IReadOnlyList<ProductionQueueState> queues = [new ProductionQueueState(QueueKind.Infantry, [new QueueItem("rifleman", 0.5, false, false)], 1)];
+        StrategicFeatures f = null!;
+        for (int t = 0; t <= 30; t++) f = compiler.Compile(belief.Apply(Frame(t, 1000 + 50 * t, [ConYardAtHome()], queues: queues)));
+        Assert.Equal(FeatureCompiler.UnknownSeconds, f.Economy.CashRunwaySeconds);
+
+        // Spending 10/s with no income: the bank drains at 10/s, so 200 credits last 20 s.
+        (belief, compiler) = New();
+        for (int t = 0; t <= 30; t++) f = compiler.Compile(belief.Apply(Frame(t, 500 - 10 * t, [ConYardAtHome()], queues: queues)));
+        Assert.Equal(20.0, f.Economy.CashRunwaySeconds, precision: 6);
+    }
 }
