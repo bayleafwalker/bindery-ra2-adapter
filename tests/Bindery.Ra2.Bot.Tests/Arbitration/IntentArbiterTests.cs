@@ -271,6 +271,30 @@ public sealed class IntentArbiterTests
         Assert.Equal("override:base_threat", Offer(Fx.Intent("d2", "generic-defend", StrategicPosture.Defend, issuedAt: 51, confidence: 0.1), threat51).Reason);
     }
 
+    /// <summary>
+    /// The once-per-episode flag on its own: when the override installs a non-defensive answer (a counter-attack),
+    /// the defensive-incumbent guard does not apply, so only the spent flag stops the next non-defensive offer
+    /// during the same threat from overriding again, and the one after that, every cadence.
+    /// </summary>
+    [Fact]
+    public void Base_threat_override_is_spent_even_when_its_answer_is_not_defensive()
+    {
+        Offer(Fx.Intent("a", "allied-boom", StrategicPosture.Boom), Fx.Features(0));
+        StrategicFeatures threat5 = Fx.Features(5, threats: [BaseThreat(2000)]);
+        arbiter.Update(threat5);
+        Assert.Equal("override:base_threat", Offer(Fx.Intent("p1", "allied-pressure", StrategicPosture.Pressure, issuedAt: 5, confidence: 0.1), threat5).Reason);
+        for (int s = 6; s <= 10; s++)
+        {
+            StrategicFeatures threat = Fx.Features(s, threats: [BaseThreat(2000)]);
+            arbiter.Update(threat);
+            StrategicIntent wavering = s % 2 == 0
+                ? Fx.Intent($"b{s}", "allied-boom", StrategicPosture.Boom, issuedAt: s, confidence: 0.1)
+                : Fx.Intent($"e{s}", "allied-expand", StrategicPosture.Boom, issuedAt: s, confidence: 0.1);
+            Assert.Equal("commitment", Offer(wavering, threat).Reason);
+        }
+        Assert.Equal("p1", arbiter.Active?.IntentId);
+    }
+
     [Fact]
     public void Base_threat_override_does_not_replace_a_defensive_incumbent()
     {
