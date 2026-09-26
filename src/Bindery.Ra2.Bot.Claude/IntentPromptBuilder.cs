@@ -30,7 +30,7 @@ public sealed record IntentPrompt(string SystemPrompt, string MatchContext, stri
 public sealed class IntentPromptBuilder
 {
     /// <summary>Top-level keys of <see cref="IntentPrompt.MatchContext"/>.</summary>
-    public static readonly IReadOnlyList<string> MatchContextKeys = ["catalogue", "faction", "personality", "ruleFacts"];
+    public static readonly IReadOnlyList<string> MatchContextKeys = ["arbitration", "catalogue", "faction", "personality", "ruleFacts"];
 
     /// <summary>Top-level keys of <see cref="IntentPrompt.Situation"/>.</summary>
     public static readonly IReadOnlyList<string> SituationKeys = ["activeIntent", "conditionMetrics", "counters", "features", "history", "techProgress"];
@@ -49,8 +49,12 @@ public sealed class IntentPromptBuilder
         How to reason:
         - Base every claim on the features given. Do not assume enemy units, tech or positions that the features do not show. Enemy estimates carry evidence ages (seconds) and confidence in [0, 1]; old or low-confidence evidence is uncertainty, not fact. When scouting is stale or coverage is low, prefer plans that stay safe under that uncertainty, or add a Scout objective, and say so in assumptions.
         - Rule facts (costs, build seconds, prerequisite paths from an empty base) are authoritative; use them for timing and affordability rather than memory of the game. The situation's techProgress says what each tech goal still needs from the buildings you own now, and counters lists your most effective unit types against each enemy unit type you have seen (effectiveness is a damage multiplier, 1 = neutral); use them instead of remembering counters.
-        - Respect commitment: the active intent has a minimum commitment window (minCommitRemainingSeconds). Replacing it inside that window is only accepted when one of its abort triggers has fired or the base is under serious threat, so otherwise propose the same playbook with adjusted parameters.
-        - Changing posture needs clearly higher confidence than the incumbent's. Frequent switching loses games.
+        - Arbitration: the runtime accepts or refuses your proposal by these rules, with the numbers in the match context's arbitration block:
+          - A proposal with the same playbookId and the same posture as the active intent is a renewal: always accepted; it updates parameters and expiry and does not restart the commitment clock. Changing only the posture is not a renewal.
+          - Any other proposal is refused while activeIntent.minCommitRemainingSeconds is above 0, unless one of the active intent's abort triggers holds or BaseThreatRatio is above arbitration.baseThreatOverrideRatio. Inside the window, keep both playbookId and posture and adjust parameters. secondsActive and minCommitRemainingSeconds count from when the current plan was first accepted, across renewals.
+          - After the window, a posture change needs your confidence to be at least arbitration.postureConfidenceMargin above the active intent's confidence; a different playbook with the same posture needs no margin. A playbook without its own commitment uses arbitration.defaultMinCommitSeconds.
+          - A proposal whose own abort triggers already hold is refused.
+          - Frequent switching loses games.
 
         Field conventions:
         - Region ids are integers from the features; regionId is null when a field does not need a region. LocalForceRatio and ScoutingAgeSeconds conditions require a regionId.
@@ -74,7 +78,7 @@ public sealed class IntentPromptBuilder
           A metric that cannot be measured makes its condition false.
         - Trends are {now, d5s, d15s, d60s}: the current value and its change over the last 5, 15 and 60 game seconds. Times and ages are game seconds. null means unknown or unbounded.
 
-        Input: the first user block is the match context (constant for the match: faction, playbook catalogue, rule facts, personality). The second is the current situation (features, active intent, recent history, counters, tech progress). History lists one item per plan: renewals of the same playbook and posture are folded into it and counted in renewals. Personality is style guidance only; it never overrides these rules.
+        Input: the first user block is the match context (constant for the match: arbitration numbers, faction, playbook catalogue, rule facts, personality). The second is the current situation (features, active intent, recent history, counters, tech progress). History lists one item per plan: renewals of the same playbook and posture are folded into it and counted in renewals. Personality is style guidance only; it never overrides these rules.
         """;
 
     private const string RefineSystemPrompt =
@@ -87,12 +91,17 @@ public sealed class IntentPromptBuilder
     private readonly int eventLimit;
     private readonly int unitsPerRole;
     private readonly int countersPerType;
+    private readonly ArbiterOptions arbiterOptions;
 
     /// <param name="historyLimit">Most recent intent history entries included.</param>
     /// <param name="eventLimit">Most recent strategic events included.</param>
     /// <param name="unitsPerRole">Cheapest buildable units per role listed in rule facts; bounds prompt size with large imported rulesets.</param>
     /// <param name="countersPerType">Own unit types listed as counters per seen enemy type.</param>
-    public IntentPromptBuilder(int historyLimit = 8, int eventLimit = 12, int unitsPerRole = 4, int countersPerType = 3)
+    /// <param name="arbiterOptions">
+    /// The options of the arbiter that will judge the proposals (null: <see cref="ArbiterOptions.Default"/>, which
+    /// is what the runtime uses unless configured otherwise); their numbers go into the match context.
+    /// </param>
+    public IntentPromptBuilder(int historyLimit = 8, int eventLimit = 12, int unitsPerRole = 4, int countersPerType = 3, ArbiterOptions? arbiterOptions = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(historyLimit);
         ArgumentOutOfRangeException.ThrowIfNegative(eventLimit);
@@ -102,6 +111,7 @@ public sealed class IntentPromptBuilder
         this.eventLimit = eventLimit;
         this.unitsPerRole = unitsPerRole;
         this.countersPerType = countersPerType;
+        this.arbiterOptions = arbiterOptions ?? ArbiterOptions.Default;
     }
 
     /// <summary>The byte-stable system prompt for a mode and vocabulary tier. It never contains per-call data.</summary>
@@ -125,6 +135,7 @@ public sealed class IntentPromptBuilder
     {
         JsonObject match = new()
         {
+            ["arbitration"] = Arbitration(),
             ["catalogue"] = Catalogue(context),
             ["faction"] = context.Features.Faction.ToString(),
             ["personality"] = Personality(context.Personality ?? fallbackPersonality, context.Features.Faction),
@@ -157,6 +168,19 @@ public sealed class IntentPromptBuilder
             ["preferredPlaybook"] = profile.PreferredPlaybook.TryGetValue(faction, out string? playbook) ? playbook : null,
         };
     }
+
+    /// <summary>
+    /// The arbiter's acceptance numbers, so the model can tell whether a proposal will be accepted instead of
+    /// guessing what "clearly higher confidence" or "serious threat" mean; the rules that use them are in the system
+    /// prompt. Constant for the match, so it sits in the cached prefix.
+    /// </summary>
+    private JsonObject Arbitration() => new()
+    {
+        ["renewal"] = "same playbookId and same posture",
+        ["defaultMinCommitSeconds"] = CanonicalJson.Number(arbiterOptions.DefaultMinCommitSeconds),
+        ["postureConfidenceMargin"] = CanonicalJson.Number(arbiterOptions.PostureConfidenceMargin),
+        ["baseThreatOverrideRatio"] = CanonicalJson.Number(arbiterOptions.BaseThreatOverrideRatio),
+    };
 
     private static IReadOnlyList<Playbook> FactionPlaybooks(StrategistContext context) =>
         context.Playbooks.For(context.Features.Faction).OrderBy(p => p.Id, StringComparer.Ordinal).ToList();

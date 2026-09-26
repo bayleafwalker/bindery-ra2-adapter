@@ -18,7 +18,7 @@ public sealed class IntentPromptBuilderTests
     {
         IntentPrompt prompt = new IntentPromptBuilder().Build(ClaudeFixtures.Context(active: ClaudeFixtures.ActiveIntent(), personality: "cautious"), StrategistMode.Strategic);
 
-        Assert.Equal(["catalogue", "faction", "personality", "ruleFacts"], TopLevelKeys(prompt.MatchContext));
+        Assert.Equal(["arbitration", "catalogue", "faction", "personality", "ruleFacts"], TopLevelKeys(prompt.MatchContext));
         Assert.Equal(["activeIntent", "conditionMetrics", "counters", "features", "history", "techProgress"], TopLevelKeys(prompt.Situation));
         Assert.Equal(IntentPromptBuilder.MatchContextKeys, TopLevelKeys(prompt.MatchContext));
         Assert.Equal(IntentPromptBuilder.SituationKeys, TopLevelKeys(prompt.Situation));

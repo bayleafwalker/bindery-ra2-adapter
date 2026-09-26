@@ -78,6 +78,35 @@ public sealed class PromptArbitrationTests
     }
 
     [Fact]
+    public void Match_context_states_the_arbiters_acceptance_numbers()
+    {
+        IntentPrompt prompt = new IntentPromptBuilder().Build(ClaudeFixtures.Context(), StrategistMode.Strategic);
+
+        using JsonDocument match = JsonDocument.Parse(prompt.MatchContext);
+        Assert.True(match.RootElement.TryGetProperty("arbitration", out JsonElement arbitration));
+        Assert.Equal(ArbiterOptions.Default.PostureConfidenceMargin, arbitration.GetProperty("postureConfidenceMargin").GetDouble());
+        Assert.Equal(ArbiterOptions.Default.BaseThreatOverrideRatio, arbitration.GetProperty("baseThreatOverrideRatio").GetDouble());
+        Assert.Equal(ArbiterOptions.Default.DefaultMinCommitSeconds, arbitration.GetProperty("defaultMinCommitSeconds").GetDouble());
+        Assert.Contains("same playbookId and the same posture", prompt.SystemPrompt, StringComparison.Ordinal);
+        Assert.Contains("arbitration.postureConfidenceMargin", prompt.SystemPrompt, StringComparison.Ordinal);
+        Assert.Contains("arbitration.baseThreatOverrideRatio", prompt.SystemPrompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Arbitration_numbers_come_from_the_options_the_runtime_uses()
+    {
+        ArbiterOptions options = new(DefaultMinCommitSeconds: 30, PostureConfidenceMargin: 0.2, BaseThreatOverrideRatio: 1.8);
+
+        IntentPrompt prompt = new IntentPromptBuilder(arbiterOptions: options).Build(ClaudeFixtures.Context(), StrategistMode.Strategic);
+
+        using JsonDocument match = JsonDocument.Parse(prompt.MatchContext);
+        JsonElement arbitration = match.RootElement.GetProperty("arbitration");
+        Assert.Equal(0.2, arbitration.GetProperty("postureConfidenceMargin").GetDouble());
+        Assert.Equal(1.8, arbitration.GetProperty("baseThreatOverrideRatio").GetDouble());
+        Assert.Equal(30, arbitration.GetProperty("defaultMinCommitSeconds").GetDouble());
+    }
+
+    [Fact]
     public void Every_condition_metric_is_defined_and_its_current_value_given()
     {
         StrategistContext context = ClaudeFixtures.Context();
