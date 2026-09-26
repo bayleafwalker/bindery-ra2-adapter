@@ -243,7 +243,7 @@ public sealed class BotBridgeTests
 
         List<ObservationFrame> frames = [];
         frames.AddRange(assembler.Ingest(Event("game.unit.killed", new { frame = 3, id = 8, killer = 0 })));
-        frames.AddRange(assembler.Ingest(Event("game.unit.killed", new { frame = 15, id = 9 })));
+        frames.AddRange(assembler.Ingest(Event("game.unit.killed", new { frame = 15, id = 9, visible = true })));
 
         List<GameEvent> events = [.. frames.SelectMany(static f => f.Events)];
         Assert.Contains(events, static e => e.Kind == GameEventKind.EntityKilledByUs && e.Entity == new EntityId(8));

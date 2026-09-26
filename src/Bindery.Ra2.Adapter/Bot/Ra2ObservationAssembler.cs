@@ -22,7 +22,10 @@ namespace Bindery.Ra2.Adapter.Bot;
 /// included only when its payload says <c>visible == true</c>. When the
 /// payload lacks a visibility flag entirely, the entity is excluded and the
 /// omission is recorded, so engine-omniscient state can never leak into a
-/// <see cref="ObservationMode.Belief"/> frame through a telemetry gap.
+/// <see cref="ObservationMode.Belief"/> frame through a telemetry gap. A
+/// sighting counts only for the frame whose window holds it, visible regions
+/// come from own entities alone, and an enemy's removal is reported only when
+/// the player saw it (see <see cref="Ra2BotTelemetryContract"/>).
 /// </description></item>
 /// </list>
 ///
@@ -47,6 +50,7 @@ public sealed class Ra2ObservationAssembler
     private PowerState power = new(0, 0);
     private long latestFrame = -1;
     private long nextBoundary;
+    private long lastFrameTime = -1;
     private bool matchEnded;
 
     /// <param name="self">The controlled player this assembler builds frames for.</param>
@@ -180,7 +184,7 @@ public sealed class Ra2ObservationAssembler
             }
         }
 
-        entities[id] = new EntityState(id, owner, typeId, position, health, maxHealth);
+        entities[id] = new EntityState(id, owner, typeId, position, health, maxHealth, frame);
         pendingEvents.Add(new GameEvent(GameEventKind.EntityCreated, new GameTime(frame), id, owner, typeId, position));
     }
 
@@ -191,18 +195,23 @@ public sealed class Ra2ObservationAssembler
         JsonElement payload = observation.Payload;
         entities.Remove(id, out EntityState? removed);
         bool own = removed is { } r && r.Owner == self;
+        bool killedByUs = !own && payload.TryGetProperty(Ra2BotTelemetryContract.FieldKiller, out JsonElement k)
+            && k.ValueKind == JsonValueKind.Number && k.TryGetInt32(out int killer) && killer == self.Value;
         if (!own)
         {
-            // Fog boundary: an enemy's removal is reported only for an entity currently observed (it is dropped from
-            // tracked state when it goes out of sight) and not marked invisible by the payload itself.
+            // Fog boundary: an enemy's removal is reported only for an entity we have observed (never a bare id we
+            // never saw, and never one that went out of sight since), and only when the player saw it happen: the
+            // payload says visible, or we are the killer. A missing flag is a contract gap, recorded and not guessed.
             if (removed is null) return;
-            if (payload.TryGetProperty(Ra2BotTelemetryContract.FieldVisible, out JsonElement v) && v.ValueKind == JsonValueKind.False) return;
+            if (!killedByUs)
+            {
+                bool present = TryGetBool(payload, Ra2BotTelemetryContract.FieldVisible, observation, "removal_skipped", out bool visible);
+                if (!present || !visible) return;
+            }
         }
 
         // A kill is ours only when the payload names us as the killer; the event name alone says nothing about who
         // killed what, and an own unit's death is always a loss.
-        bool killedByUs = !own && payload.TryGetProperty(Ra2BotTelemetryContract.FieldKiller, out JsonElement k)
-            && k.ValueKind == JsonValueKind.Number && k.TryGetInt32(out int killer) && killer == self.Value;
         GameEventKind kind = killedByUs ? GameEventKind.EntityKilledByUs : GameEventKind.EntityDestroyed;
         pendingEvents.Add(new GameEvent(kind, new GameTime(frame), id, removed?.Owner, removed?.TypeId, removed?.Position));
     }
@@ -234,14 +243,22 @@ public sealed class Ra2ObservationAssembler
 
     private ObservationFrame BuildFrame(GameTime time)
     {
+        // Fog: an own entity is always observed; an enemy only when telemetry sighted it in this frame's window.
+        // A sighting from an earlier window is memory, which belief keeps and decays; the bridge must not present
+        // it as seen now.
         List<ObservedEntity> observedEntities = entities.Values
+            .Where(e => e.Owner == self || e.LastSightedFrame > lastFrameTime)
             .OrderBy(static e => e.Id.Value)
             .Select(static e => new ObservedEntity(e.Id, e.Owner, e.TypeId, e.Position, e.Health, e.MaxHealth))
             .ToList();
+        lastFrameTime = time.Frame;
 
+        // What the player sees is around its own units and buildings; where an enemy stands says nothing about
+        // whether that region is in sight (the enemy may be seen at the edge of our vision).
         HashSet<RegionId> visibleRegions = [];
         foreach (ObservedEntity entity in observedEntities)
         {
+            if (entity.Owner != self) continue;
             Region? region = map.RegionOf(entity.Position);
             if (region is not null) visibleRegions.Add(region.Id);
         }
@@ -356,5 +373,6 @@ public sealed class Ra2ObservationAssembler
         return true;
     }
 
-    private sealed record EntityState(EntityId Id, PlayerId Owner, string TypeId, Cell Position, int Health, int MaxHealth);
+    /// <param name="LastSightedFrame">Frame of the latest upsert: for an enemy, the latest sighting.</param>
+    private sealed record EntityState(EntityId Id, PlayerId Owner, string TypeId, Cell Position, int Health, int MaxHealth, long LastSightedFrame);
 }

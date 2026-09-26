@@ -30,7 +30,7 @@ public sealed record Ra2BotHostFrame(ObservationFrame Frame, IReadOnlyList<GameC
 /// <item>The loop ends on the first frame carrying <see cref="GameEventKind.MatchEnded"/>, when the source
 /// completes, or on cancellation. Nothing after the end of the match is read.</item>
 /// <item>What the telemetry contract (<c>bindery.ra2.bot-observation/v1</c>) does not carry is not invented:
-/// production queue state, visible regions beyond the observed entities, ore and superweapon timers are absent
+/// production queue state, visible regions beyond those holding our own entities, ore and superweapon timers are absent
 /// from assembled frames, and the planner treats queues as empty. The report carries the assembler's
 /// missing-field audit.</item>
 /// </list>
