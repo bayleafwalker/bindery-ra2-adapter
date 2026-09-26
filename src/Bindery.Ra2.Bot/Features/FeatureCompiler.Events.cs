@@ -50,8 +50,15 @@ public sealed partial class FeatureCompiler
             AddEvent(events, StrategicEventKind.BuildingLost, evt.Time, 0.5, evt.TypeId ?? "building", region);
     }
 
+    /// <summary>
+    /// Adds the victim's cost to the kills tally. The event's owner is not a reliable "who killed" field (the
+    /// simulator names the killer, the RA2 assembler the victim), and oracle frames carry the opponent's kill events
+    /// too, so the one check that holds under every producer is that the victim was never one of our own entities:
+    /// our own dead are losses (<see cref="HandleEntityDestroyed"/>), never kills.
+    /// </summary>
     private void HandleEntityKilledByUs(GameEvent evt)
     {
+        if (evt.Entity is { } id && ownEntityMemory.ContainsKey(id)) return;
         if (evt.TypeId is { } typeId && rules.TryGet(typeId, out UnitRule rule)) cumulativeKillsValue += rule.Cost;
     }
 
