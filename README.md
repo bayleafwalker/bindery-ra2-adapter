@@ -123,6 +123,34 @@ the run's selector decisions). The output directory holds `results.json`,
 `probes.json` (per-arm leakage probes and skipped arms), `report.md` and one
 `dataset-<arm>.ndjson` of training-map decisions per arm.
 
+### Tuning parameters
+
+`tools/Bindery.Ra2.Bot.Tune` searches playbook parameter defaults and selected
+planner/feature knobs (`src/Bindery.Ra2.Bot/Tuning/TuningKnobs.cs` lists each
+with its range and why it is tunable) with a seeded separable CMA-ES on the
+**training** maps only, then validates the result on the **held-out** maps:
+
+```bash
+nix shell nixpkgs#dotnet-sdk_8 -c dotnet run --project tools/Bindery.Ra2.Bot.Tune -c Release -- search \
+  --date 2026-09-26 --opponents all,self --generations 24 --population 12 --out artifacts/tune
+nix shell nixpkgs#dotnet-sdk_8 -c dotnet run --project tools/Bindery.Ra2.Bot.Tune -c Release -- validate \
+  --tuned artifacts/tune/tuned-candidate.json --date 2026-09-26 --seeds 20 \
+  --out artifacts/tune-validate --write src/Bindery.Ra2.Bot/Data/tuned-parameters.json
+```
+
+Fitness per match is win 1 / draw 0.5 / loss 0 plus `--trade-weight` (0.1)
+× destroyed/(destroyed+lost); every candidate of a generation plays the same
+opponents, maps and seeds, next to the distribution mean and the untuned
+defaults. `--opponents` takes arena opponent names, `bot:default` (the untuned
+live bot) and `bot:champion` (the previous generation's best); `all` is every
+`ai-*` and pinned style, `self` both `bot:*`, and `--mode selfplay` makes
+`self` the default. Matches run in parallel; results do not depend on core
+count. The date is a CLI argument so the output is reproducible byte for byte.
+`validate` writes the set with `adopted` true only if the held-out rule in
+`Program.AdoptionRule` passes; the bot (`PlaybookLibrary.LoadDefault`,
+`StandardBot.Create` defaults) applies the embedded set only when adopted, and
+`PlaybookLibrary.LoadAuthored` always gives the untuned playbooks.
+
 ### Importing an operator ruleset
 
 `RulesmdImporter` (`src/Bindery.Ra2.Bot/Rules`) turns an operator-supplied

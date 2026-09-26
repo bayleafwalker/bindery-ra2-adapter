@@ -104,6 +104,31 @@ with a recorded reason when no credential resolves. With no credential, a
 `--llm-fake` flag substitutes a recorded or scripted client so the pipeline
 itself is exercised.
 
+## Parameter tuning
+
+`tools/Bindery.Ra2.Bot.Tune` runs a seeded separable CMA-ES
+(`src/Bindery.Ra2.Bot/Tuning/EvolutionStrategy.cs`, no external packages)
+over the unit cube of `TuningSpace`: every playbook parameter the planner reads
+(`attackArmyValue`, `expandAtSeconds`, `harvesterTarget`,
+`retreatBelowForceRatio`; declared-but-unread parameters are left alone) and
+the option knobs in `TuningKnobs` (12 `OperationalOptions`, 3
+`FeatureOptions`, each with its range and reason). Search uses training maps
+only, with common random numbers per generation; validation uses held-out maps
+against the untuned bot and a head-to-head with a seat-bias control. The
+result is embedded as `Data/tuned-parameters.json` with provenance and
+validation; the bot applies it only when `adopted` is true.
+
+First run (2026-09-26, from 2322ab8): 24 generations × 12 samples,
+opponents every `ai-*` and pinned style plus `bot:default`/`bot:champion`,
+22,770 training matches in 1,405 s. Fitness never separated from the untuned
+bot (best − default ≤ 0.0008 per generation; every candidate won 60/66, the
+six losses per generation being faction-decided self-play games). Held-out
+(2 maps × 9 opponents × 20 seeds): untuned 360/360, tuned 360/360; paired
+fitness difference 0.0001 [−0.0001, 0.0003]; head-to-head 40/80 against a
+40/80 control. Not adopted. The simulator benchmark is saturated and outcomes
+are fixed by faction and seat, so it cannot rank these knobs; tuning needs a
+harder or less deterministic benchmark first.
+
 ## Metrics definitions
 
 - **Win rate**: wins / completed matches, reported separately for training

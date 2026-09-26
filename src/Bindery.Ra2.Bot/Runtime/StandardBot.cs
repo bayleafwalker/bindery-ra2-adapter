@@ -28,7 +28,11 @@ public static class StandardBot
     /// <param name="shadow">Optional shadow strategist (recorded, never applied).</param>
     /// <param name="log">Decision log; a new in-memory <see cref="DecisionLog"/> when null.</param>
     /// <param name="options">Runtime options; <see cref="SimulatorOptions"/> when null.</param>
-    /// <param name="operations">Planner options; its controller id is forced to the runtime's operations controller id.</param>
+    /// <param name="operations">
+    /// Planner options; its controller id is forced to the runtime's operations controller id. When null, the
+    /// defaults with the adopted tuned set (<see cref="Tuning.TunedParameterSet.Active"/>) applied.
+    /// </param>
+    /// <param name="features">Feature compiler options; when null, the defaults with the adopted tuned set applied.</param>
     public static BotRuntime Create(
         IRulesDatabase rules,
         IPlaybookLibrary playbooks,
@@ -37,17 +41,18 @@ public static class StandardBot
         IStrategist? shadow = null,
         IDecisionLog? log = null,
         BotOptions? options = null,
-        OperationalOptions? operations = null)
+        OperationalOptions? operations = null,
+        FeatureOptions? features = null)
     {
         ArgumentNullException.ThrowIfNull(rules);
         ArgumentNullException.ThrowIfNull(playbooks);
         ArgumentNullException.ThrowIfNull(primary);
         options ??= SimulatorOptions;
-        operations = (operations ?? new OperationalOptions()) with { ControllerId = options.OperationsControllerId };
+        operations = (operations ?? Tuning.TunedParameterSet.Active.ApplyTo(new OperationalOptions())) with { ControllerId = options.OperationsControllerId };
 
         BotComponents components = new(
             new BeliefModel(rules, new BeliefOptions()),
-            new FeatureCompiler(rules, new FeatureOptions()),
+            new FeatureCompiler(rules, features ?? Tuning.TunedParameterSet.Active.ApplyTo(new FeatureOptions())),
             rules,
             playbooks,
             new IntentValidator(),

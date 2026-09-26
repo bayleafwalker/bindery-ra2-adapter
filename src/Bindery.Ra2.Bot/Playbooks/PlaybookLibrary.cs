@@ -26,8 +26,16 @@ public sealed class PlaybookLibrary : IPlaybookLibrary
 
     public IReadOnlyList<Playbook> All { get; }
 
-    /// <summary>The 12 playbooks authored for this bot: allied-boom, allied-grizzly-timing, allied-ifv-mix, allied-prism-turtle, allied-harass, soviet-rhino-rush, soviet-flak-mix, soviet-v3-siege, soviet-apoc-tech, soviet-turtle, generic-defend, generic-expand.</summary>
-    public static PlaybookLibrary LoadDefault() => new(DefaultPlaybooks.All);
+    /// <summary>
+    /// The 12 playbooks authored for this bot (allied-boom, allied-grizzly-timing, allied-ifv-mix, allied-prism-turtle,
+    /// allied-harass, soviet-rhino-rush, soviet-flak-mix, soviet-v3-siege, soviet-apoc-tech, soviet-turtle,
+    /// generic-defend, generic-expand), with parameter defaults from the embedded tuned set
+    /// (<c>Data/tuned-parameters.json</c>) when that set was adopted after held-out validation.
+    /// </summary>
+    public static PlaybookLibrary LoadDefault() => new(Tuning.TunedParameterSet.Active.ApplyTo(DefaultPlaybooks.All));
+
+    /// <summary>The 12 playbooks exactly as authored, ignoring any tuned set: the tuner's untuned baseline.</summary>
+    public static PlaybookLibrary LoadAuthored() => new(DefaultPlaybooks.All);
 
     /// <summary>Parses a <see cref="PlaybookDocument"/> from JSON text (an operator-authored playbook set).</summary>
     public static PlaybookLibrary LoadJson(string json)

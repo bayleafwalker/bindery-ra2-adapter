@@ -63,12 +63,14 @@ jobs:
           dotnet restore src/Bindery.Ra2.Bot.Sim/Bindery.Ra2.Bot.Sim.csproj
           dotnet restore src/Bindery.Ra2.Bot.Claude/Bindery.Ra2.Bot.Claude.csproj
           dotnet restore tools/Bindery.Ra2.Bot.Arena/Bindery.Ra2.Bot.Arena.csproj
+          dotnet restore tools/Bindery.Ra2.Bot.Tune/Bindery.Ra2.Bot.Tune.csproj
       - name: Build strategic bot projects
         run: |
           dotnet build src/Bindery.Ra2.Bot/Bindery.Ra2.Bot.csproj --configuration Release --no-restore
           dotnet build src/Bindery.Ra2.Bot.Sim/Bindery.Ra2.Bot.Sim.csproj --configuration Release --no-restore
           dotnet build src/Bindery.Ra2.Bot.Claude/Bindery.Ra2.Bot.Claude.csproj --configuration Release --no-restore
           dotnet build tools/Bindery.Ra2.Bot.Arena/Bindery.Ra2.Bot.Arena.csproj --configuration Release --no-restore
+          dotnet build tools/Bindery.Ra2.Bot.Tune/Bindery.Ra2.Bot.Tune.csproj --configuration Release --no-restore
       - name: Restore strategic bot tests
         run: dotnet restore tests/Bindery.Ra2.Bot.Tests/Bindery.Ra2.Bot.Tests.csproj
       - name: Test strategic bot
@@ -80,3 +82,8 @@ jobs:
           dotnet run --project tools/Bindery.Ra2.Bot.Arena -- run \
             --arms selector --maps training --opponents balanced,ai-balanced --seeds 1 \
             --max-seconds 300 --out artifacts/arena
+      - name: Tune smoke run
+        run: |
+          dotnet run --project tools/Bindery.Ra2.Bot.Tune -- search --date 2000-01-01 \
+            --opponents ai-balanced,bot:default --generations 1 --population 2 --final-seeds 1 \
+            --seeds-per-generation 1 --max-seconds 300 --out artifacts/tune
