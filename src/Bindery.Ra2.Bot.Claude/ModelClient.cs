@@ -46,7 +46,7 @@ public sealed record ModelUsage(long InputTokens, long OutputTokens, long CacheR
 /// <param name="Text">Concatenated text blocks (thinking blocks excluded).</param>
 /// <param name="StopReason">Wire stop reason (<c>end_turn</c>, <c>refusal</c>, <c>max_tokens</c>, ...).</param>
 /// <param name="StopDetail">Refusal category/explanation when the API gives one; informational only.</param>
-/// <param name="Usage">Tokens billed for the attempt that produced this reply.</param>
+/// <param name="Usage">Tokens billed for the whole request: with server-side fallbacks, every attempt (usage.iterations), not only the one that produced this reply.</param>
 /// <param name="ModelId">Model that actually served the reply (differs from the request when a fallback served it).</param>
 public sealed record ModelReply(string Text, string StopReason, string? StopDetail, ModelUsage Usage, string? ModelId);
 

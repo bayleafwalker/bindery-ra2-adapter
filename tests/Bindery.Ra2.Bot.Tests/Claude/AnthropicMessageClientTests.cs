@@ -55,3 +55,41 @@ public sealed class AnthropicMessageClientTests
         Assert.Equal("adaptive", body["thinking"].GetProperty("type").GetString());
     }
 }
+
+/// <summary>Token accounting of a reply: every billed attempt counts, not only the one that produced the message.</summary>
+public sealed class AnthropicUsageTests
+{
+    private static Anthropic.Models.Beta.Messages.BetaUsage Usage(string json)
+    {
+        using JsonDocument document = JsonDocument.Parse(json);
+        Dictionary<string, JsonElement> raw = document.RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.Clone(), StringComparer.Ordinal);
+        return Anthropic.Models.Beta.Messages.BetaUsage.FromRawUnchecked(raw);
+    }
+
+    [Fact]
+    public void A_fallback_served_reply_counts_the_declined_attempt_too()
+    {
+        // Top-level usage covers only the fallback attempt; usage.iterations lists both.
+        Anthropic.Models.Beta.Messages.BetaUsage usage = Usage("""
+            {
+              "input_tokens": 300, "output_tokens": 500, "cache_read_input_tokens": 4000, "cache_creation_input_tokens": 0,
+              "iterations": [
+                {"type": "message", "model": "claude-opus-5", "input_tokens": 5000, "output_tokens": 800, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 1200},
+                {"type": "fallback_message", "model": "claude-opus-4-8", "input_tokens": 300, "output_tokens": 500, "cache_read_input_tokens": 4000, "cache_creation_input_tokens": 0}
+              ]
+            }
+            """);
+
+        Assert.Equal(new ModelUsage(5300, 1300, 4000, 1200), AnthropicMessageClient.UsageOf(usage));
+    }
+
+    [Fact]
+    public void Without_iterations_the_top_level_usage_is_the_whole_bill()
+    {
+        Anthropic.Models.Beta.Messages.BetaUsage usage = Usage("""
+            {"input_tokens": 300, "output_tokens": 500, "cache_read_input_tokens": 4000, "cache_creation_input_tokens": 100}
+            """);
+
+        Assert.Equal(new ModelUsage(300, 500, 4000, 100), AnthropicMessageClient.UsageOf(usage));
+    }
+}
