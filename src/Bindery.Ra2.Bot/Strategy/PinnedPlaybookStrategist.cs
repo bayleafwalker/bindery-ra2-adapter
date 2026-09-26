@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Globalization;
 using Bindery.Ra2.Bot.Arbitration;
 
 namespace Bindery.Ra2.Bot.Strategy;
@@ -49,7 +50,7 @@ public sealed class PinnedPlaybookStrategist : IStrategist
         if (threat >= DefendThreatRatio && context.Playbooks.TryGet("generic-defend", out _))
         {
             id = "generic-defend";
-            reason = $"pinned style defends: base threat ratio {threat:0.00}";
+            reason = string.Create(CultureInfo.InvariantCulture, $"pinned style defends: base threat ratio {threat:0.00}");
         }
         if (id is null || !context.Playbooks.TryGet(id, out Playbook playbook)) return Task.FromResult<StrategistProposal?>(null);
         StrategicIntent intent = IntentComposer.Compose(playbook, features, $"{Id}/{features.SnapshotVersion}", Source, Confidence,

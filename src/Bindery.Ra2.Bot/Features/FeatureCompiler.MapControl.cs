@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Globalization;
 namespace Bindery.Ra2.Bot.Features;
 
 public sealed partial class FeatureCompiler
@@ -88,9 +89,9 @@ public sealed partial class FeatureCompiler
 
             double lastSeenAge = p.LastSeenAnything is { } t ? snapshot.Time.SecondsSince(t) : UnknownSeconds;
             if (lastSeenAge >= options.EnemyArmyUnseenThresholdSeconds)
-                unknowns.Add($"enemy {p.Player} army not seen for {options.EnemyArmyUnseenThresholdSeconds:0}s");
+                unknowns.Add(string.Create(CultureInfo.InvariantCulture, $"enemy {p.Player} army not seen for {options.EnemyArmyUnseenThresholdSeconds:0}s"));
             if (lastSeenAge >= options.EnemyTechUnknownThresholdSeconds)
-                unknowns.Add($"enemy {p.Player} tech unknown for {options.EnemyTechUnknownThresholdSeconds:0}s");
+                unknowns.Add(string.Create(CultureInfo.InvariantCulture, $"enemy {p.Player} tech unknown for {options.EnemyTechUnknownThresholdSeconds:0}s"));
         }
 
         return new ScoutingFeatures(coverage, ages, unknowns);

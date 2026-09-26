@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Globalization;
 using Bindery.Ra2.Bot.Arbitration;
 
 namespace Bindery.Ra2.Bot.Operations;
@@ -358,7 +359,7 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
                 UnitRule? harvester = BestBuildable(QueueKind.Vehicle, UnitRole.Harvester);
                 if (harvester is not null)
                 {
-                    Queue(harvester, $"economy: {features.Economy.Harvesters}/{target:0.#} harvesters");
+                    Queue(harvester, string.Create(CultureInfo.InvariantCulture, $"economy: {features.Economy.Harvesters}/{target:0.#} harvesters"));
                     return;
                 }
             }
@@ -484,7 +485,7 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
                 continue;
             }
             commands.Add(new LaunchSuperweaponCommand(options.ControllerId, timer.Building!.Value, best.LastSeenPosition));
-            notes.Add($"superweapon: {timer.TypeId} at {best.LastSeenPosition} ({bestValue:0} known building value)");
+            notes.Add(string.Create(CultureInfo.InvariantCulture, $"superweapon: {timer.TypeId} at {best.LastSeenPosition} ({bestValue:0} known building value)"));
         }
     }
 

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Globalization;
 using Bindery.Ra2.Bot.Sim;
 
 namespace Bindery.Ra2.Bot.Arena;
@@ -130,7 +131,7 @@ public static class MatchRunner
             {
                 foreach (GameEvent e in oracle.Events.Where(static e => e.Kind == GameEventKind.EntityDestroyed))
                 {
-                    trace.WriteLine($"{sim.Time.Seconds:0} destroyed {e.Owner} {e.TypeId} at {sim.Map.RegionOf(e.Position ?? default)?.Name} ({e.Detail})");
+                    trace.WriteLine(string.Create(CultureInfo.InvariantCulture, $"{sim.Time.Seconds:0} destroyed {e.Owner} {e.TypeId} at {sim.Map.RegionOf(e.Position ?? default)?.Name} ({e.Detail})"));
                 }
                 if (sim.Time.Frame % (GameTime.FramesPerSecond * 10) == 0) Trace(trace, sim, rules);
             }
@@ -184,7 +185,7 @@ public static class MatchRunner
                 .GroupBy(e => sim.Map.RegionOf(e.Position)?.Name ?? "?").OrderBy(static g => g.Key, StringComparer.Ordinal)
                 .Select(g => $"{g.Key}:{g.Sum(e => rules.Get(e.TypeId).Cost)}"));
             string queues = string.Join(";", view.Queues.Where(static q => q.Items.Count > 0).Select(static q => $"{q.Kind}:{string.Join(",", q.Items.Select(static i => i.TypeId))}"));
-            trace.WriteLine($"{sim.Time.Seconds:0} {p} cr={view.Credits} pow={view.Power.Produced}/{view.Power.Drained} [{types}] q[{queues}] army[{army}]");
+            trace.WriteLine(string.Create(CultureInfo.InvariantCulture, $"{sim.Time.Seconds:0} {p} cr={view.Credits} pow={view.Power.Produced}/{view.Power.Drained} [{types}] q[{queues}] army[{army}]"));
         }
     }
 

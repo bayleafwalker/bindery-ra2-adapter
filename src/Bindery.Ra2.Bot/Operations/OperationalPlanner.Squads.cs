@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Globalization;
 using Bindery.Ra2.Bot.Arbitration;
 
 namespace Bindery.Ra2.Bot.Operations;
@@ -122,7 +123,7 @@ public sealed partial class OperationalPlanner
                 .OrderBy(static t => t.LocalForceRatio).ThenBy(static t => t.Region.Value)
                 .Select(static t => t.Region).DefaultIfEmpty(home).First();
             Fill(GetOrCreate(DefendSquad, ObjectiveKind.DefendRegion, threatened, engage: true), pool);
-            notes.Add($"squads: defending {threatened} (base threat {threat:0.00})");
+            notes.Add(string.Create(CultureInfo.InvariantCulture, $"squads: defending {threatened} (base threat {threat:0.00})"));
             attacking = false;
         }
         else
@@ -138,14 +139,14 @@ public sealed partial class OperationalPlanner
                 RegionId target = ResolveAttackTarget(belief, graph, home, attack?.Region);
                 attacking = true;
                 Fill(GetOrCreate(AttackSquad, ObjectiveKind.AttackRegion, target, engage: true), pool);
-                notes.Add($"squads: attacking {target} with army value {army:0}");
+                notes.Add(string.Create(CultureInfo.InvariantCulture, $"squads: attacking {target} with army value {army:0}"));
             }
             else
             {
                 attacking = false;
                 RegionId staging = wanted ? StagingRegion(belief, features, intent, graph, home, attack?.Region) : home;
                 Fill(GetOrCreate(DefendSquad, ObjectiveKind.DefendRegion, staging, engage: true), pool);
-                if (wanted) notes.Add($"squads: staging at {staging} (army {army:0}/{minArmy:0}, conditions {(conditions ? "hold" : "not met")})");
+                if (wanted) notes.Add(string.Create(CultureInfo.InvariantCulture, $"squads: staging at {staging} (army {army:0}/{minArmy:0}, conditions {(conditions ? "hold" : "not met")})"));
             }
         }
 
@@ -287,7 +288,7 @@ public sealed partial class OperationalPlanner
                 : now;
             harassArrivedAt = null;
             harassReturning = false;
-            notes.Add($"harass: sortie to {region} (every {interval:0} s)");
+            notes.Add(string.Create(CultureInfo.InvariantCulture, $"harass: sortie to {region} (every {interval:0} s)"));
         }
         if (!harassReturning)
         {

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Globalization;
 using Bindery.Ra2.Bot.Arbitration;
 
 namespace Bindery.Ra2.Bot.Strategy;
@@ -77,7 +78,7 @@ public sealed class PlaybookSelector : IStrategist
         double threat = ConditionEvaluator.BaseThreatRatio(features);
         if (threat >= (personality?.DefendThreatRatio ?? options.DefendThreatRatio) && Pick(playbooks, faction, "generic-defend") is { } defend)
         {
-            return (defend, $"base threat ratio {threat:0.00}", 0.9);
+            return (defend, string.Create(CultureInfo.InvariantCulture, $"base threat ratio {threat:0.00}"), 0.9);
         }
 
         double ratio = ConditionEvaluator.ArmyValueRatio(features);
@@ -85,13 +86,13 @@ public sealed class PlaybookSelector : IStrategist
         if (confident && ratio < options.TurtleArmyRatio
             && Pick(playbooks, faction, allied ? "allied-prism-turtle" : "soviet-turtle") is { } turtle)
         {
-            return (turtle, $"outnumbered: army ratio {ratio:0.00}", 0.7);
+            return (turtle, string.Create(CultureInfo.InvariantCulture, $"outnumbered: army ratio {ratio:0.00}"), 0.7);
         }
 
         double air = AirPresence(features, rules);
         if (air >= options.AirThreatShare && Pick(playbooks, faction, allied ? "allied-harass" : "soviet-flak-mix") is { } antiAir)
         {
-            return (antiAir, $"enemy air presence {air:0.00}", 0.65);
+            return (antiAir, string.Create(CultureInfo.InvariantCulture, $"enemy air presence {air:0.00}"), 0.65);
         }
 
         if (personality is not null && personality.PreferredPlaybook.TryGetValue(faction, out string? preferredId) && Pick(playbooks, faction, preferredId) is { } preferred)
@@ -104,13 +105,13 @@ public sealed class PlaybookSelector : IStrategist
         if (confident && armour >= options.ArmourHeavyShare
             && Pick(playbooks, faction, allied ? "allied-grizzly-timing" : "soviet-rhino-rush") is { } armoured)
         {
-            return (armoured, $"enemy armour share {armour:0.00}", 0.6);
+            return (armoured, string.Create(CultureInfo.InvariantCulture, $"enemy armour share {armour:0.00}"), 0.6);
         }
 
         if (features.Time.Seconds >= options.TechAfterSeconds && ratio >= 1.5 && features.Economy.Refineries >= 2
             && Pick(playbooks, faction, allied ? "allied-prism-turtle" : "soviet-apoc-tech") is { } tech)
         {
-            return (tech, $"late lead: army ratio {ratio:0.00}", 0.6);
+            return (tech, string.Create(CultureInfo.InvariantCulture, $"late lead: army ratio {ratio:0.00}"), 0.6);
         }
 
         Playbook? main = Pick(playbooks, faction, allied ? "allied-ifv-mix" : "soviet-flak-mix")

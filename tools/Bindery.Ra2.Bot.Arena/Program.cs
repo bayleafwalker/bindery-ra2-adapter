@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Globalization;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
@@ -227,7 +228,7 @@ public static class Program
             if (options.WriteAdoption is { } target) File.WriteAllText(target, adoption);
         }
 
-        Console.WriteLine($"Wrote {ordered.Count} match results, {probes.Count} leakage probes and report.md to {options.OutDir} in {wall.Elapsed.TotalSeconds:0}s.");
+        Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"Wrote {ordered.Count} match results, {probes.Count} leakage probes and report.md to {options.OutDir} in {wall.Elapsed.TotalSeconds:0}s."));
     }
 
     /// <summary>
@@ -369,9 +370,9 @@ public static class Program
         MatchRecord record = MatchRunner.Run(job.Arm, job.Opponent, job.Map, job.Split, job.Seed, options.MaxSeconds, rules, factory, log =>
         {
             armLog(log);
-            foreach (DecisionRecord r in log) trace.WriteLine($"log {r.Time.Seconds:0} {r.Kind} {r.Data}");
+            foreach (DecisionRecord r in log) trace.WriteLine(string.Create(CultureInfo.InvariantCulture, $"log {r.Time.Seconds:0} {r.Kind} {r.Data}"));
         }, trace, options.Benchmark);
-        trace.WriteLine($"result winner={record.Winner} reason={record.Reason} at {record.DurationSeconds:0}");
+        trace.WriteLine(string.Create(CultureInfo.InvariantCulture, $"result winner={record.Winner} reason={record.Reason} at {record.DurationSeconds:0}"));
         return record;
     }
 

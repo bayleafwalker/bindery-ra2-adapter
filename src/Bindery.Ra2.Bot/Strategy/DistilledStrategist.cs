@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Globalization;
 namespace Bindery.Ra2.Bot.Strategy;
 
 /// <summary>Training and escalation settings for <see cref="DistilledStrategist"/>.</summary>
@@ -125,13 +126,13 @@ public sealed class DistilledStrategist : IStrategist, Runtime.IFrameAwareStrate
             double distance = Distance(x);
             if (distance > options.MaxDistance)
             {
-                escalate = $"out of distribution: distance {distance:0.00} > {options.MaxDistance:0.00}";
+                escalate = string.Create(CultureInfo.InvariantCulture, $"out of distribution: distance {distance:0.00} > {options.MaxDistance:0.00}");
             }
             else
             {
                 best = Predict(x, features.Faction, context.Playbooks, preferred, personality?.DistilledLogitBias ?? 0);
                 if (best is null) escalate = "no trained playbook serves this faction";
-                else if (best.Value.Probability < options.MinProbability) escalate = $"low confidence {best.Value.Probability:0.00}";
+                else if (best.Value.Probability < options.MinProbability) escalate = string.Create(CultureInfo.InvariantCulture, $"low confidence {best.Value.Probability:0.00}");
             }
         }
 
@@ -145,7 +146,7 @@ public sealed class DistilledStrategist : IStrategist, Runtime.IFrameAwareStrate
         LastEscalationReason = null;
         StrategicIntent intent = IntentComposer.Compose(
             playbook, features, $"{Id}/{features.SnapshotVersion}", Source, best.Value.Probability,
-            StrategyRationale.Explain(playbook.Id, $"distilled: p={best.Value.Probability:0.00} over {classes.Length} playbooks from {trainedOn} examples"
+            StrategyRationale.Explain(playbook.Id, string.Create(CultureInfo.InvariantCulture, $"distilled: p={best.Value.Probability:0.00} over {classes.Length} playbooks from {trainedOn} examples")
                 + (personality is null ? string.Empty : $" (personality {personality.Id} leans toward {preferred})"), features),
             parameters: personality?.ScaledParameters(playbook));
         return Task.FromResult<StrategistProposal?>(new StrategistProposal(intent, new ProposalCost(0, 0, 0, 0, null), null));

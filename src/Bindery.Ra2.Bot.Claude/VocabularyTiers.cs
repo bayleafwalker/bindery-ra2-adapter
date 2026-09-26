@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
 using Bindery.Ra2.Bot.Strategy;
@@ -136,15 +137,15 @@ public sealed record VocabularyAdoption(
             string? failure = e is null ? $"no held-out comparison of {next} against {next - 1}"
                 : !e.Live ? $"{next} vs {next - 1}: fake-client evidence is not evidence"
                 : e.Better <= e.Worse ? $"{next} vs {next - 1}: {e.Better} pairs better, {e.Worse} worse"
-                : !(e.SignTestP < SignificanceLevel) ? $"{next} vs {next - 1}: sign-test p {e.SignTestP:0.0000} is not below {SignificanceLevel}"
-                : !(e.CiLow > 0) ? $"{next} vs {next - 1}: score interval [{e.CiLow:0.000}, {e.CiHigh:0.000}] does not exclude 0"
+                : !(e.SignTestP < SignificanceLevel) ? string.Create(CultureInfo.InvariantCulture, $"{next} vs {next - 1}: sign-test p {e.SignTestP:0.0000} is not below {SignificanceLevel}")
+                : !(e.CiLow > 0) ? string.Create(CultureInfo.InvariantCulture, $"{next} vs {next - 1}: score interval [{e.CiLow:0.000}, {e.CiHigh:0.000}] does not exclude 0")
                 : null;
             if (failure is not null)
             {
                 reasons.Add($"stays at {adopted}: {failure}");
                 break;
             }
-            reasons.Add($"{next} adopted over {next - 1}: {e!.Better}/{e.Worse} pairs better/worse, p {e.SignTestP:0.0000}, difference {e.MeanDifference:0.000} [{e.CiLow:0.000}, {e.CiHigh:0.000}]");
+            reasons.Add(string.Create(CultureInfo.InvariantCulture, $"{next} adopted over {next - 1}: {e!.Better}/{e.Worse} pairs better/worse, p {e.SignTestP:0.0000}, difference {e.MeanDifference:0.000} [{e.CiLow:0.000}, {e.CiHigh:0.000}]"));
             adopted = next;
         }
         return new VocabularyAdoption(CurrentSchema, adopted, AdoptionRule, evidence, reasons, date);

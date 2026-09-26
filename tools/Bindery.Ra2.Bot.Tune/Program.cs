@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Globalization;
 using System.Diagnostics;
 using System.Text;
 using Bindery.Ra2.Bot.Arena;
@@ -90,7 +91,7 @@ public static class Program
             curve.AppendLine(string.Join(',', g, string.Join(' ', seeds), F(s.BestFitness), F(s.MedianFitness), F(s.WorstFitness), F(meanFitness),
                 F(defaultFitness), F(s.BestFitness - defaultFitness), F(meanFitness - defaultFitness), F(s.Sigma), wins[best], wins[^1], perCandidate));
             Console.WriteLine($"gen {g}: best {F(s.BestFitness)} median {F(s.MedianFitness)} mean-point {F(meanFitness)} default {F(defaultFitness)} " +
-                $"(wins best {wins[best]}/{perCandidate}, default {wins[^1]}/{perCandidate}) sigma {F(s.Sigma)} [{wall.Elapsed.TotalSeconds:0}s]");
+                string.Create(CultureInfo.InvariantCulture, $"(wins best {wins[best]}/{perCandidate}, default {wins[^1]}/{perCandidate}) sigma {F(s.Sigma)} [{wall.Elapsed.TotalSeconds:0}s]"));
             File.WriteAllText(Path.Combine(options.OutDir, "curve.csv"), curve.ToString());
         }
 
@@ -118,7 +119,7 @@ public static class Program
         md.AppendLine("# Tuning search");
         md.AppendLine();
         md.AppendLine($"Rules `{rules.RulesetId}`; mode {options.Mode}; opponents {string.Join(", ", options.Opponents)}; training maps {string.Join(", ", provenance.Maps)}; " +
-            $"{options.Generations} generations × ({options.Population} samples + mean + default) × {options.Opponents.Count} opponents × {maps.Count} maps × {options.SeedsPerGeneration} seeds; {matchesPlayed} matches in {wall.Elapsed.TotalSeconds:0} s.");
+            string.Create(CultureInfo.InvariantCulture, $"{options.Generations} generations × ({options.Population} samples + mean + default) × {options.Opponents.Count} opponents × {maps.Count} maps × {options.SeedsPerGeneration} seeds; {matchesPlayed} matches in {wall.Elapsed.TotalSeconds:0} s."));
         md.AppendLine();
         md.AppendLine($"Final check on fresh training seeds {string.Join(' ', finalSeeds)} ({finalPer} matches each): final mean {F(finalFitness[0])} ({finalWins[0]} wins), " +
             $"best sample {F(finalFitness[1])} ({finalWins[1]} wins), untuned {F(finalFitness[2])} ({finalWins[2]} wins). Chosen: {(meanWins ? "final mean" : "best sample")}.");
@@ -140,7 +141,7 @@ public static class Program
         md.Append(curve);
         md.AppendLine("```");
         File.WriteAllText(Path.Combine(options.OutDir, "search.md"), md.ToString());
-        Console.WriteLine($"Chose {(meanWins ? "final mean" : "best sample")}: training fitness {F(tunedFitness)} vs untuned {F(finalFitness[2])}. Wrote {options.OutDir} in {wall.Elapsed.TotalSeconds:0}s.");
+        Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"Chose {(meanWins ? "final mean" : "best sample")}: training fitness {F(tunedFitness)} vs untuned {F(finalFitness[2])}. Wrote {options.OutDir} in {wall.Elapsed.TotalSeconds:0}s."));
     }
 
     /// <summary>The embedded fixture, or the <c>--rules</c> file.</summary>
@@ -217,7 +218,7 @@ public static class Program
         md.AppendLine($"Decision: {(adopted ? "ADOPTED" : "NOT ADOPTED")}.");
         File.WriteAllText(Path.Combine(options.OutDir, "validation.md"), md.ToString());
         Console.Write(md.ToString());
-        Console.WriteLine($"[{wall.Elapsed.TotalSeconds:0}s]");
+        Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"[{wall.Elapsed.TotalSeconds:0}s]"));
     }
 
     /// <summary>Plays one generation's matches for every variant and returns each variant's mean fitness and win count.</summary>

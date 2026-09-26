@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Globalization;
 using Bindery.Ra2.Bot.Arbitration;
 
 namespace Bindery.Ra2.Bot.Strategy;
@@ -59,7 +60,7 @@ public sealed class ContextualBanditStrategist : IStrategist, IOutcomeLearner
         if (threat >= (personality?.DefendThreatRatio ?? options.DefendThreatRatio) && context.Playbooks.TryGet("generic-defend", out Playbook defend))
         {
             StrategicIntent guard = IntentComposer.Compose(defend, features, $"{Id}/{features.SnapshotVersion}", Source, 0.9,
-                StrategyRationale.Explain(defend.Id, $"LinUCB not consulted: base threat ratio {threat:0.00} is at the defence guard", features));
+                StrategyRationale.Explain(defend.Id, string.Create(CultureInfo.InvariantCulture, $"LinUCB not consulted: base threat ratio {threat:0.00} is at the defence guard"), features));
             return Task.FromResult<StrategistProposal?>(new StrategistProposal(guard, new ProposalCost(0, 0, 0, 0, null), null));
         }
 
@@ -87,8 +88,8 @@ public sealed class ContextualBanditStrategist : IStrategist, IOutcomeLearner
         double confidence = Math.Clamp(0.5 + 0.5 * Math.Tanh(bestMean) - 0.2 * Math.Min(1, bestWidth), 0.05, 0.95);
         StrategicIntent intent = IntentComposer.Compose(
             best!, features, $"{Id}/{features.SnapshotVersion}", Source, confidence,
-            StrategyRationale.Explain(best!.Id, $"LinUCB: highest upper bound, mean {bestMean:0.000} + {options.Alpha:0.00} × width {bestWidth:0.000} over {candidates.Count} playbooks"
-                + (personality is null ? string.Empty : $" (personality {personality.Id}, +{personality.BanditBonus:0.00} to {preferred})"), features),
+            StrategyRationale.Explain(best!.Id, string.Create(CultureInfo.InvariantCulture, $"LinUCB: highest upper bound, mean {bestMean:0.000} + {options.Alpha:0.00} × width {bestWidth:0.000} over {candidates.Count} playbooks")
+                + (personality is null ? string.Empty : string.Create(CultureInfo.InvariantCulture, $" (personality {personality.Id}, +{personality.BanditBonus:0.00} to {preferred})")), features),
             parameters: personality?.ScaledParameters(best!));
         return Task.FromResult<StrategistProposal?>(new StrategistProposal(intent, new ProposalCost(0, 0, 0, 0, null), null));
     }

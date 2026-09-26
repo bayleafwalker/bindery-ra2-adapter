@@ -73,10 +73,10 @@ public sealed class FakeMessageClient : IMessageClient
             : $"It opened with {first["playbookId"]} ({first["posture"]}) because: {first["rationale"] ?? "no rationale recorded"}.";
         string turns = pivots.Count == 0
             ? "It never changed playbook or posture."
-            : $"It changed course {pivots.Count} times, first at {Number(pivots[0]!["atSeconds"]):0} s to {pivots[0]!["toPlaybook"]} (trigger {pivots[0]!["trigger"] ?? "none recorded"}).";
+            : string.Create(CultureInfo.InvariantCulture, $"It changed course {pivots.Count} times, first at {Number(pivots[0]!["atSeconds"]):0} s to {pivots[0]!["toPlaybook"]} (trigger {pivots[0]!["trigger"] ?? "none recorded"}).");
         double? agreement = report["shadow"]?["compared"] is JsonNode c && Number(c) > 0 ? Number(report["shadow"]!["agreed"]) / Number(c) : null;
         string shadow = agreement is { } a ? string.Create(CultureInfo.InvariantCulture, $" The shadow strategist agreed on the playbook {a:P0} of the time.") : string.Empty;
-        string text = $"Fake client narrative, scripted from the report, not a model. {timeline.Count} intents took effect over {Number(report["durationSeconds"]):0} s. {opening} {turns} {report["rejected"]?.AsArray().Count ?? 0} proposals had no effect.{shadow} Result: {report["result"] ?? "not in the log"}.";
+        string text = string.Create(CultureInfo.InvariantCulture, $"Fake client narrative, scripted from the report, not a model. {timeline.Count} intents took effect over {Number(report["durationSeconds"]):0} s. {opening} {turns} {report["rejected"]?.AsArray().Count ?? 0} proposals had no effect.{shadow} Result: {report["result"] ?? "not in the log"}.");
         string reply = JsonSerializer.Serialize(new { narrative = text });
         return new ModelReply(reply, "end_turn", null, new ModelUsage(request.UserContent.Sum(static b => b.Text.Length) / 4, reply.Length / 4, 0, 0), request.Model);
     }
@@ -136,7 +136,7 @@ public sealed class FakeMessageClient : IMessageClient
         if (threat >= 1.2)
         {
             playbookId = "generic-defend";
-            rationale = $"Base threat ratio {threat:0.00}: defend before it grows.";
+            rationale = string.Create(CultureInfo.InvariantCulture, $"Base threat ratio {threat:0.00}: defend before it grows.");
         }
         else if (enemyAir)
         {
@@ -156,17 +156,17 @@ public sealed class FakeMessageClient : IMessageClient
         else if (seconds < EarlyPushSeconds || personality == "aggressive" && seconds < 2 * EarlyPushSeconds)
         {
             playbookId = armour;
-            rationale = $"Early armour timing before the enemy techs (t={seconds:0} s).";
+            rationale = string.Create(CultureInfo.InvariantCulture, $"Early armour timing before the enemy techs (t={seconds:0} s).");
         }
         else if (enemy > 0 && own >= 1.3 * enemy)
         {
             playbookId = armour;
-            rationale = $"Army {own:0} vs estimated {enemy:0}: press the advantage with armour.";
+            rationale = string.Create(CultureInfo.InvariantCulture, $"Army {own:0} vs estimated {enemy:0}: press the advantage with armour.");
         }
         else if ((refineries >= 2 && (enemy <= 0 || own >= 0.8 * enemy)) || personality == "tech")
         {
             playbookId = tech;
-            rationale = $"Two refineries and an even army ({own:0} vs {enemy:0}): tech up.";
+            rationale = string.Create(CultureInfo.InvariantCulture, $"Two refineries and an even army ({own:0} vs {enemy:0}): tech up.");
         }
         else
         {

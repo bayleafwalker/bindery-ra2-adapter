@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Globalization;
 namespace Bindery.Ra2.Bot;
 
 /// <summary>
@@ -26,7 +27,7 @@ public readonly record struct GameTime(long Frame) : IComparable<GameTime>
     public static bool operator <=(GameTime a, GameTime b) => a.Frame <= b.Frame;
     public static bool operator >=(GameTime a, GameTime b) => a.Frame >= b.Frame;
 
-    public override string ToString() => $"{Seconds:0.0}s";
+    public override string ToString() => string.Create(CultureInfo.InvariantCulture, $"{Seconds:0.0}s");
 }
 
 /// <summary>Stable identity of a game object for as long as it exists.</summary>

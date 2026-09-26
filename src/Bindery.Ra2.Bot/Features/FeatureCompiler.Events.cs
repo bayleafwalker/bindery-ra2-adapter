@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Globalization;
 namespace Bindery.Ra2.Bot.Features;
 
 public sealed partial class FeatureCompiler
@@ -117,7 +118,7 @@ public sealed partial class FeatureCompiler
             {
                 double deficit = snapshot.Power.Drained - snapshot.Power.Produced;
                 double severity = Math.Min(1.0, deficit / Math.Max(1.0, snapshot.Power.Produced));
-                EmitGated(events, StrategicEventKind.LowPower, snapshot.Time, severity, $"deficit {deficit:0}");
+                EmitGated(events, StrategicEventKind.LowPower, snapshot.Time, severity, string.Create(CultureInfo.InvariantCulture, $"deficit {deficit:0}"));
             }
         }
         else
