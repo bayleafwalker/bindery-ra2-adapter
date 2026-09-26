@@ -197,4 +197,33 @@ public sealed class FeatureCompilerReviewTests
         }
         Assert.Single(events, static e => e.Kind == StrategicEventKind.ExpansionTaken && e.Region == TestMaps.Middle);
     }
+
+    /// <summary>Watching an enemy building says nothing about where its army is.</summary>
+    [Fact]
+    public void ArmyNotSeen_IsReportedWhileOnlyEnemyBuildingsAreWatched()
+    {
+        (BeliefModel belief, FeatureCompiler compiler) = New();
+        HashSet<RegionId> visible = [TestMaps.Home, TestMaps.EnemyStart];
+        StrategicFeatures f = null!;
+        for (int t = 0; t <= 200; t += 5)
+        {
+            f = compiler.Compile(belief.Apply(Frame(t, 5000,
+                [ConYardAtHome(), Own(2, "rifleman", EnemyCell), Enemy(50, "conyard", EnemyCell)], visible)));
+        }
+        Assert.Contains(f.Scouting.ImportantUnknowns, static u => u.Contains("army not seen", StringComparison.Ordinal));
+        Assert.DoesNotContain(f.Scouting.ImportantUnknowns, static u => u.Contains("tech unknown", StringComparison.Ordinal));
+    }
+
+    /// <summary>A match in which no enemy was ever seen is the least scouted there is, not one with nothing unknown.</summary>
+    [Fact]
+    public void ImportantUnknowns_AreReportedBeforeAnyEnemyIsSeen()
+    {
+        (BeliefModel belief, FeatureCompiler compiler) = New();
+        StrategicFeatures f = null!;
+        for (int t = 0; t <= 300; t += 10) f = compiler.Compile(belief.Apply(Frame(t, 5000, [ConYardAtHome()])));
+
+        Assert.Contains(f.Scouting.ImportantUnknowns, static u => u.Contains("start unscouted", StringComparison.Ordinal));
+        Assert.Contains(f.Scouting.ImportantUnknowns, static u => u.Contains("army not seen", StringComparison.Ordinal));
+        Assert.Contains(f.Scouting.ImportantUnknowns, static u => u.Contains("tech unknown", StringComparison.Ordinal));
+    }
 }
