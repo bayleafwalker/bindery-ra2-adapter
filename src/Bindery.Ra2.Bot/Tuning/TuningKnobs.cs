@@ -54,7 +54,7 @@ public static class TuningKnobs
     [
         new("ThreatSearchCells", 20, 120, false, "Travel distance within which an enemy contact counts toward a region's threat."),
         new("SlowestTypicalSpeed", 2, 8, false, "Cells/second used for every ETA and reinforcement estimate."),
-        new("ArmyValueSwingThreshold", 0.1, 0.5, false, "Fractional army-value change over 15 s that raises an army-value-swing event (a replan trigger)."),
+        new("ArmyValueSwingThreshold", 0.1, 0.5, false, "Fractional army-value loss over 15 s that raises an army-value-swing event (a replan trigger)."),
     ];
 
     /// <summary>Reads a knob's value from <paramref name="options"/>.</summary>

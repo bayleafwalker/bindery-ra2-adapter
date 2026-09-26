@@ -22,11 +22,11 @@ namespace Bindery.Ra2.Bot.Features;
 /// speed model belongs to a later package; this keeps ETAs a deterministic,
 /// explainable function of distance alone.
 /// </param>
-/// <param name="ArmyValueSwingThreshold">Fractional own-army-value change over <see cref="ArmyValueSwingWindowSeconds"/> that raises <see cref="StrategicEventKind.ArmyValueSwing"/>.</param>
+/// <param name="ArmyValueSwingThreshold">Fractional own-army-value loss over <see cref="ArmyValueSwingWindowSeconds"/> that raises <see cref="StrategicEventKind.ArmyValueSwing"/>. Gains never do: own army only grows by production the bot ordered.</param>
 /// <param name="ArmyValueSwingWindowSeconds">Window for the army-value-swing check. Spec default: 15 s.</param>
 /// <param name="ArmyValueSwingMinValue">
-/// Smallest army value a swing is measured against. The fraction is the change over
-/// <c>max(|baseline|, this)</c>, so a first unit or a rebuild from nothing is not a 100% swing unless it adds at
+/// Smallest army value a swing is measured against. The fraction is the loss over
+/// <c>max(|baseline|, this)</c>, so losing a lone cheap unit is not a 100% swing unless it loses at
 /// least <see cref="ArmyValueSwingThreshold"/> of this value; 1000 credits is roughly one tank and escort.
 /// </param>
 /// <param name="ScoutingWindowSeconds">A region counts as "covered" for <see cref="ScoutingFeatures.CoverageFraction"/> if seen within this many seconds. Spec default: 60 s.</param>

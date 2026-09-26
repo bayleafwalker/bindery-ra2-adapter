@@ -112,15 +112,17 @@ public sealed partial class FeatureCompiler
                     AddEvent(events, StrategicEventKind.ProductionTransition, snapshot.Time, 0.3, produced);
             }
 
-            // Measured over the configured window against a value floor: from an empty army, the first cheap unit
-            // is +100% of nothing, which is not the sudden swing this event exists to flag.
+            // Only a loss is a swing. Own army value grows only by our own production arriving, which the planner
+            // ordered and the strategist already expects; counting it made the first tank of every opening (+90% of
+            // the floor) and every rebuild after a wipe a top-severity replan trigger. Measured over the configured
+            // window against a value floor, so losing a lone cheap unit is not a 100% swing either.
             double window = options.ArmyValueSwingWindowSeconds;
             double baseline = Baseline(snapshot.Time, window, static s => s.ArmyValue);
-            double change = armyValueCurrent - baseline;
-            double fraction = Math.Abs(change) / Math.Max(Math.Abs(baseline), Math.Max(1.0, options.ArmyValueSwingMinValue));
+            double loss = baseline - armyValueCurrent;
+            double fraction = loss / Math.Max(Math.Abs(baseline), Math.Max(1.0, options.ArmyValueSwingMinValue));
             if (fraction > options.ArmyValueSwingThreshold)
                 EmitGated(events, StrategicEventKind.ArmyValueSwing, snapshot.Time, Math.Min(1.0, fraction),
-                    string.Create(CultureInfo.InvariantCulture, $"{(change < 0 ? "-" : "+")}{fraction * 100:0}% in {window:0}s"));
+                    string.Create(CultureInfo.InvariantCulture, $"-{fraction * 100:0}% in {window:0}s"));
 
             foreach (RegionId region in ownExpansions.Where(r => !previousOwnExpansions.Contains(r)).OrderBy(static r => r.Value))
                 AddEvent(events, StrategicEventKind.ExpansionTaken, snapshot.Time, 0.3, "ore region taken", region);

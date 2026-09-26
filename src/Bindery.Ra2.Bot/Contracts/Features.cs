@@ -100,6 +100,7 @@ public enum StrategicEventKind
     BaseUnderAttack,
     ProductionTransition,
     SuperweaponDetected,
+    /// <summary>Own army value fell by more than the configured fraction within the swing window (losses only).</summary>
     ArmyValueSwing,
     ExpansionTaken,
     EnemyExpansionSeen,

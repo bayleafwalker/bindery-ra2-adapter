@@ -299,6 +299,45 @@ public sealed class FeatureCompilerReviewTests
         Assert.DoesNotContain(events, static e => e.Kind == StrategicEventKind.ArmyValueSwing);
     }
 
+    /// <summary>
+    /// Growth from an empty army is our own production arriving, not a swing: a first 900-credit tank used to read
+    /// as +90% (severity 0.9) and a first tank-and-escort as +100%, above the scheduler's major-event severity, so
+    /// every opening and every rebuild woke the strategist and made its pending result late.
+    /// </summary>
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    public void ArmyValueSwing_DoesNotFireWhenTheArmyGrowsFromNothing(int tanks)
+    {
+        (BeliefModel belief, FeatureCompiler compiler) = New();
+        List<StrategicEvent> events = [];
+        for (int t = 0; t <= 40; t++)
+        {
+            List<ObservedEntity> entities = [ConYardAtHome()];
+            if (t >= 20) entities.AddRange(Enumerable.Range(0, tanks).Select(i => Own((uint)(3 + i), "tank", HomeCell)));
+            events.AddRange(compiler.Compile(belief.Apply(Frame(t, 5000, entities))).Events);
+        }
+        Assert.DoesNotContain(events, static e => e.Kind == StrategicEventKind.ArmyValueSwing);
+    }
+
+    /// <summary>A sudden loss is still the swing the event exists for, at a severity proportional to it.</summary>
+    [Fact]
+    public void ArmyValueSwing_StillFiresWhenTheArmyIsWipedOut()
+    {
+        (BeliefModel belief, FeatureCompiler compiler) = New();
+        List<StrategicEvent> events = [];
+        for (int t = 0; t <= 40; t++)
+        {
+            List<ObservedEntity> entities = [ConYardAtHome()];
+            if (t < 30) entities.AddRange(Enumerable.Range(0, 3).Select(i => Own((uint)(3 + i), "tank", HomeCell)));
+            events.AddRange(compiler.Compile(belief.Apply(Frame(t, 5000, entities))).Events);
+        }
+        StrategicEvent swing = Assert.Single(events, static e => e.Kind == StrategicEventKind.ArmyValueSwing);
+        Assert.Equal(30, swing.Time.SecondsSince(GameTime.FromSeconds(0)), precision: 6);
+        Assert.Equal(1.0, swing.Severity, precision: 6);
+        Assert.StartsWith("-", swing.Detail, StringComparison.Ordinal);
+    }
+
     private static List<StrategicEvent> SlowDecline(FeatureOptions options)
     {
         (BeliefModel belief, FeatureCompiler compiler) = New(options);
