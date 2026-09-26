@@ -171,7 +171,10 @@ public sealed class SkirmishSimulation
         {
             if (!e.Alive) continue;
             bool own = e.Owner == player;
-            bool visibleEnemy = mode == ObservationMode.Oracle || (own is false && visible.Contains(e.Region));
+            // Visibility is decided by the cell the object is reported at (the rule events use too), so a frame can
+            // never carry a position in a region it does not see.
+            bool visibleEnemy = mode == ObservationMode.Oracle
+                || (own is false && map.Map.RegionOf(e.Position) is { } at && visible.Contains(at.Id));
             if (!own && !visibleEnemy) continue;
             rules.TryGet(e.TypeId, out UnitRule rule);
             observed.Add(new ObservedEntity(e.Id, e.Owner, e.TypeId, e.Position, e.Health, e.MaxHealth, e.Deployed, own ? e.ExplicitTarget : null));
@@ -251,6 +254,44 @@ public sealed class SkirmishSimulation
         };
         entity.SnapTo(position);
         entities.Add(entity);
+    }
+
+    /// <summary>
+    /// Spawns an entity in a region and announces it through the normal event path (a completed build and a new
+    /// object, as a factory there would), so each player receives the events only as its fog allows. The probe uses
+    /// it to exercise event gating, which a silent spawn never reaches. Ids come from the probe range.
+    /// </summary>
+    internal EntityId DebugSpawnAnnounced(PlayerId owner, string typeId, RegionId region)
+    {
+        UnitRule rule = rules.Get(typeId);
+        Cell position = RegionCenter(region);
+        SimEntity entity = new()
+        {
+            Id = new EntityId(nextProbeEntityId++),
+            Owner = owner,
+            TypeId = typeId,
+            Position = position,
+            Region = region,
+            Health = rule.Strength,
+            MaxHealth = rule.Strength,
+        };
+        entity.SnapTo(position);
+        entities.Add(entity);
+        GameEvent[] announced =
+        [
+            new(GameEventKind.ProductionCompleted, Time, null, owner, typeId, position),
+            new(GameEventKind.EntityCreated, Time, entity.Id, owner, typeId, position),
+        ];
+        frameEvents.AddRange(announced);
+        foreach (SimPlayerState state in players.Values.OrderBy(static p => p.Id.Value))
+        {
+            HashSet<RegionId> visible = VisibleRegionsFor(state.Id);
+            foreach (GameEvent gameEvent in announced)
+            {
+                if (EventForPlayer(gameEvent, state.Id, visible) is { } delivered) state.PendingEvents.Add(delivered);
+            }
+        }
+        return entity.Id;
     }
 
     /// <summary>
@@ -643,6 +684,10 @@ public sealed class SkirmishSimulation
                 e.ExactX += dx * t;
                 e.ExactY += dy * t;
                 e.Position = new Cell((int)Math.Round(e.ExactX), (int)Math.Round(e.ExactY));
+                // A unit is in the region it stands in from the moment it crosses the border, not when it reaches
+                // the next region's centre: fog, combat and sight all work by region, and a lagging region let a
+                // unit that had walked into fog still be seen (and shot at) where it no longer was.
+                if (map.Map.RegionOf(e.Position) is { } now) e.Region = now.Id;
             }
         }
     }

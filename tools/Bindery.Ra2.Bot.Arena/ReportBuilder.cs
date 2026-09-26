@@ -439,13 +439,13 @@ public static class ReportBuilder
             sb.AppendLine($"- **{group.Key}**: {group.Sum(static m => m.Players["arm"].FogRejections)} validator `fog.*` rejections.");
         }
         sb.AppendLine();
-        sb.AppendLine("Probe: two lockstep simulations, hidden state of one perturbed (`SimLeakageProbe`: enemy credits and queue, wounded hidden enemies, a hidden unit in an unseen region and one just across a border inside the arm's weapon reach), strategist-context hash compared on every following frame until the window closes or the objects the arm can see first differ. A differing frame is one where the context changed while everything visible was still identical.");
+        sb.AppendLine("Probe: two lockstep simulations, hidden state of one perturbed (`SimLeakageProbe`: enemy credits and queue, wounded hidden enemies, a hidden unit in an unseen region, one announced there through the event path, and one just across a border inside the arm's weapon reach), strategist-context hash compared on every following frame until the window closes or the objects the arm can see first differ. A differing frame is one where the context changed while everything visible was still identical. Fog-violation frames are arm frames, over the whole run of both simulations, that carried an enemy object or event from a region the arm did not see: a per-frame check that finds leaks the perturbation does not exercise.");
         sb.AppendLine();
-        sb.AppendLine("| Arm | Map | Seed | Perturbed at s | Lockstep before | Compared s | Differing frames | Note |");
-        sb.AppendLine("|---|---|---|---|---|---|---|---|");
+        sb.AppendLine("| Arm | Map | Seed | Perturbed at s | Lockstep before | Compared s | Differing frames | Fog-violation frames | Note |");
+        sb.AppendLine("|---|---|---|---|---|---|---|---|---|");
         foreach (LeakageProbeResult p in probes)
         {
-            sb.AppendLine($"| {p.Arm} | {p.Map} | {p.Seed} | {F(p.PerturbedAtSeconds, "0")} | {(p.StatesMatchedBeforePerturbation ? "yes" : "no")} | {F(p.ComparedSeconds, "0")} | {p.Differences}/{p.FramesCompared} | {p.Note ?? string.Empty} |");
+            sb.AppendLine($"| {p.Arm} | {p.Map} | {p.Seed} | {F(p.PerturbedAtSeconds, "0")} | {(p.StatesMatchedBeforePerturbation ? "yes" : "no")} | {F(p.ComparedSeconds, "0")} | {p.Differences}/{p.FramesCompared} | {p.FogViolations} | {p.Note ?? string.Empty} |");
         }
         sb.AppendLine();
     }

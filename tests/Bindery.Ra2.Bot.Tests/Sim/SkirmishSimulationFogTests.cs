@@ -74,4 +74,22 @@ public sealed class SkirmishSimulationFogTests
 
         Assert.NotEqual(before, after);
     }
+
+    // The probe's announced spawn must reach the event channel (the oracle sees it) and still be held back from the
+    // belief frame: a probe that raised no events could never catch broken event gating.
+    [Fact]
+    public void Leakage_probe_announces_a_hidden_object_that_only_the_oracle_frame_receives()
+    {
+        TestRules rules = new();
+        SkirmishSimulation sim = new(TestMaps.TwoPlayerCombat(), rules, SimTestHelpers.TwoPlayers(seed: 9, maxSeconds: 30));
+        PlayerId observer = new(0);
+        sim.Step();
+
+        SimLeakageProbe.PerturbHidden(sim, observer);
+
+        Assert.Contains(sim.Observe(observer, ObservationMode.Oracle).Events, e => e.Kind == GameEventKind.EntityCreated && e.Owner != observer);
+        ObservationFrame belief = sim.Observe(observer, ObservationMode.Belief);
+        Assert.DoesNotContain(belief.Events, e => e.Owner != observer);
+        Assert.Empty(SimLeakageProbe.FogViolations(belief));
+    }
 }
