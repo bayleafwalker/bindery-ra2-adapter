@@ -77,4 +77,21 @@ public sealed class PromptArbitrationTests
         Assert.Equal(JsonValueKind.Null, history[1].GetProperty("endedAtSeconds").ValueKind);
     }
 
+    [Fact]
+    public void Every_condition_metric_is_defined_and_its_current_value_given()
+    {
+        StrategistContext context = ClaudeFixtures.Context();
+        IntentPrompt prompt = new IntentPromptBuilder().Build(context, StrategistMode.Strategic);
+
+        foreach (ConditionMetric metric in Enum.GetValues<ConditionMetric>())
+        {
+            Assert.Contains($"- {metric}", prompt.SystemPrompt, StringComparison.Ordinal);
+        }
+        Assert.Contains("0 when nothing threatens", prompt.SystemPrompt, StringComparison.Ordinal);
+
+        JsonElement metrics = Situation(context).GetProperty("conditionMetrics");
+        Assert.Equal(ConditionEvaluator.BaseThreatRatio(context.Features), metrics.GetProperty("BaseThreatRatio").GetDouble(), 3);
+        Assert.Equal(ConditionEvaluator.ArmyValueRatio(context.Features), metrics.GetProperty("ArmyValueRatio").GetDouble(), 3);
+        Assert.False(metrics.TryGetProperty("LocalForceRatio", out _));
+    }
 }

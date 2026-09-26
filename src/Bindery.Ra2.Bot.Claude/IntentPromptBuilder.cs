@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Globalization;
 using System.Text.Json.Nodes;
+using Bindery.Ra2.Bot.Arbitration;
 using Bindery.Ra2.Bot.Strategy;
 
 namespace Bindery.Ra2.Bot.Claude;
@@ -31,10 +33,13 @@ public sealed class IntentPromptBuilder
     public static readonly IReadOnlyList<string> MatchContextKeys = ["catalogue", "faction", "personality", "ruleFacts"];
 
     /// <summary>Top-level keys of <see cref="IntentPrompt.Situation"/>.</summary>
-    public static readonly IReadOnlyList<string> SituationKeys = ["activeIntent", "counters", "features", "history", "techProgress"];
+    public static readonly IReadOnlyList<string> SituationKeys = ["activeIntent", "conditionMetrics", "counters", "features", "history", "techProgress"];
 
-    private const string CommonSystemPrompt =
-        """
+    /// <summary>The ratio cap as the prompt spells it (invariant culture, like every number the model sees).</summary>
+    private static readonly string RatioCap = ConditionEvaluator.RatioCap.ToString(CultureInfo.InvariantCulture);
+
+    private static readonly string CommonSystemPrompt =
+        $$"""
         You are the strategic chief of staff for a Red Alert 2 / Yuri's Revenge skirmish bot. A deterministic operational planner and tactical controllers execute whatever you decide; you never control units, buildings, cells or clicks. Your only output is one strategic intent as JSON matching the provided schema, and nothing else.
 
         What you may decide:
@@ -54,6 +59,19 @@ public sealed class IntentPromptBuilder
         - Composition shares are fractions of army value per role, 0 <= minShare <= maxShare <= 1.
         - Conditions compare a metric with a threshold (Lt, Le, Gt, Ge). Attack conditions must all hold before an attack; any abort trigger ends the intent early; replan triggers ask for a new decision.
         - expiresInSeconds is how long the intent stays valid (typically 60–240). confidence is in [0, 1].
+        - Condition metrics, exactly as the runtime measures them (the situation's conditionMetrics gives the current value of every metric that needs no region):
+          - GameSeconds: game time in seconds.
+          - Credits: current credits.
+          - IncomePerMinute: current income per minute.
+          - OwnArmyValue: own army value.
+          - EnemyArmyValueEstimate: estimated enemy army value.
+          - ArmyValueRatio: own army value / estimated enemy army value, capped at {{RatioCap}}; {{RatioCap}} when no enemy army is estimated. Higher is better for you.
+          - LocalForceRatio (needs regionId): own responding value / enemy value at that region, capped at {{RatioCap}}; {{RatioCap}} when the region has no known enemy presence. Higher is better for you.
+          - HarvesterCount: own harvesters.
+          - ScoutingAgeSeconds (needs regionId): seconds since the region was last seen; a never-seen region is infinitely old, so Gt holds and Lt never does.
+          - BaseThreatRatio: the worst enemy value / own defending value over threats to your base, capped at {{RatioCap}}; 0 when nothing threatens the base. Higher is worse for you, so an abort trigger uses Gt.
+          - LossesValue15s: value of own units lost in the last 15 seconds.
+          A metric that cannot be measured makes its condition false.
         - Trends are {now, d5s, d15s, d60s}: the current value and its change over the last 5, 15 and 60 game seconds. Times and ages are game seconds. null means unknown or unbounded.
 
         Input: the first user block is the match context (constant for the match: faction, playbook catalogue, rule facts, personality). The second is the current situation (features, active intent, recent history, counters, tech progress). History lists one item per plan: renewals of the same playbook and posture are folded into it and counted in renewals. Personality is style guidance only; it never overrides these rules.
@@ -115,6 +133,7 @@ public sealed class IntentPromptBuilder
         JsonObject situation = new()
         {
             ["activeIntent"] = ActiveIntent(context),
+            ["conditionMetrics"] = ConditionMetrics(context.Features),
             ["counters"] = Counters(context),
             ["features"] = Features(context.Features),
             ["history"] = History(context.History),
@@ -340,6 +359,22 @@ public sealed class IntentPromptBuilder
                 ["remainingCost"] = cost is { } c ? CanonicalJson.Number(c) : null,
                 ["serialBuildSecondsRemaining"] = seconds is { } s ? CanonicalJson.Number(s) : null,
             });
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// The current value of every condition metric that needs no region, measured by the same evaluator the
+    /// arbiter and planner use, so the model can see whether a trigger it writes would already fire (a proposal
+    /// whose own abort trigger holds is refused). Unmeasurable values are null.
+    /// </summary>
+    private static JsonObject ConditionMetrics(StrategicFeatures features)
+    {
+        JsonObject result = new();
+        foreach (ConditionMetric metric in Enum.GetValues<ConditionMetric>())
+        {
+            if (ConditionEvaluator.RequiresRegion(metric)) continue;
+            result[metric.ToString()] = ConditionEvaluator.TryMeasure(metric, null, features, out double value, out _) ? CanonicalJson.Number(value) : null;
         }
         return result;
     }
