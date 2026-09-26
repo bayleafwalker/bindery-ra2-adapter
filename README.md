@@ -179,4 +179,12 @@ call.
   (in) and `IRa2CommandTransport` (out) seams over the ra2yrcpp fork's native
   RPC. This repository decodes/encodes the documented envelopes
   (`bindery.ra2.bot-observation/v1`, `bindery.ra2.bot-command/v1`) but does
-  not implement or vendor that native transport.
+  not implement or vendor that native transport. `Ra2BotHost`
+  (`src/Bindery.Ra2.Adapter/Bot`) is the host loop between the two seams
+  (telemetry → normalizer → `Ra2ObservationAssembler` → `BotRuntime.Tick` →
+  `Ra2CommandSink` → transport, flushed per frame, stopping at match end); it is
+  tested end to end against recorded telemetry (`RecordedRa2TelemetrySource`,
+  NDJSON) and a fake transport. What a retail match still needs: a native
+  `IRa2TelemetrySource` and `IRa2CommandTransport` from the ra2yrcpp fork, and
+  telemetry for production queues, ore and superweapon timers, which
+  observation/v1 does not carry (the planner then treats queues as empty).
