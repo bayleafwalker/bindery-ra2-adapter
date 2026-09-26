@@ -95,7 +95,7 @@ public sealed class RulesmdImporterTests
     Warhead=SmallArms
 
     [SmallArms]
-    Verses=100%,80%,50%,25%,25%,50%,50%,50%
+    Verses=100%,80%,80%,25%,25%,25%,50%,50%,50%,100%,100%
 
     [MTNK]
     Name=Allied Grizzly Tank
@@ -116,7 +116,7 @@ public sealed class RulesmdImporterTests
     Warhead=AP
 
     [AP]
-    Verses=50%,60%,100%,125%,50%,80%,80%,80%
+    Verses=25%,25%,25%,90%,75%,75%,70%,40%,40%,100%,100%
 
     [HARV]
     Name=Allied Chrono Miner
