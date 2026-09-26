@@ -19,14 +19,40 @@ public sealed class RulesDatabase : IRulesDatabase
 
     private RulesDatabase(RulesDocument document)
     {
+        Validate(document);
         RulesetId = document.RulesetId;
-        Provenance = document.Provenance;
+        Provenance = document.Provenance ?? string.Empty;
         byTypeId = new Dictionary<string, UnitRule>(StringComparer.Ordinal);
-        foreach (UnitRule unit in document.Units) byTypeId[unit.TypeId] = unit;
+        foreach (UnitRule unit in document.Units) byTypeId.Add(unit.TypeId, unit);
         // Sorted by type id: All must not depend on the document's array order,
         // which would make consumers that enumerate it non-deterministic.
         All = document.Units.OrderBy(static u => u.TypeId, StringComparer.Ordinal).ToList();
         effectivenessMatrix = document.Effectiveness;
+    }
+
+    /// <summary>
+    /// Rejects a document that would only fail later. System.Text.Json leaves a missing collection null rather than
+    /// failing, so without this check a truncated file loads and then throws a NullReferenceException deep inside
+    /// <see cref="CanBuild"/> or the planner; and a duplicated type id would sit twice in <see cref="All"/> while
+    /// <see cref="TryGet"/> saw only one of the two.
+    /// </summary>
+    private static void Validate(RulesDocument document)
+    {
+        if (string.IsNullOrWhiteSpace(document.RulesetId)) throw new InvalidDataException("Rules document has no rulesetId.");
+        if (document.Units is null) throw new InvalidDataException($"Rules document '{document.RulesetId}' has no units array.");
+        if (document.Effectiveness is null) throw new InvalidDataException($"Rules document '{document.RulesetId}' has no effectiveness matrix.");
+        HashSet<string> seen = new(StringComparer.Ordinal);
+        for (int i = 0; i < document.Units.Count; i++)
+        {
+            UnitRule? unit = document.Units[i];
+            if (unit is null || string.IsNullOrWhiteSpace(unit.TypeId)) throw new InvalidDataException($"Rules unit #{i} is null or has no typeId.");
+            if (!seen.Add(unit.TypeId)) throw new InvalidDataException($"Rules unit '{unit.TypeId}' appears more than once.");
+            if (unit.Factions is null) throw new InvalidDataException($"Rules unit '{unit.TypeId}' has no factions array.");
+            if (unit.Prerequisites is null || unit.Prerequisites.Any(static g => g is null || g.Any(static id => id is null)))
+            {
+                throw new InvalidDataException($"Rules unit '{unit.TypeId}' has a missing or null prerequisites entry.");
+            }
+        }
     }
 
     public string RulesetId { get; }
@@ -174,10 +200,19 @@ public sealed class RulesDatabase : IRulesDatabase
             bool satisfied = false;
             foreach (UnitRule candidate in candidates)
             {
+                // A candidate can resolve some of its own prerequisites before a later group of it fails; those
+                // buildings served only the abandoned candidate, so they are rolled back rather than left in the
+                // plan, where the planner would build them first for nothing.
+                int planMark = plan.Count;
                 if (TryAdd(candidate, faction, trial, plan, resolving))
                 {
                     satisfied = true;
                     break;
+                }
+                for (int i = plan.Count - 1; i >= planMark; i--)
+                {
+                    trial.Remove(plan[i]);
+                    plan.RemoveAt(i);
                 }
             }
             if (!satisfied) return false;
