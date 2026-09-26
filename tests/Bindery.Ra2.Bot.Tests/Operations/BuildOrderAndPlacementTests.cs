@@ -86,4 +86,28 @@ public sealed partial class BuildOrderAndPlacementTests
         ProduceCommand produce = Assert.Single(plan.ProductionCommands.OfType<ProduceCommand>(), static c => c.Queue == QueueKind.Building);
         Assert.Equal("weap", produce.TypeId);
     }
+
+    /// <summary>
+    /// The shipped Soviet data has an anti-armor infantry (E5, trained at the barracks) beside its anti-armor
+    /// vehicles. Picking the cheapest factory named by any unit of the role then added barracks for a tank army
+    /// and never a second war factory; the factory must be the one for the queue the role is mostly built in.
+    /// </summary>
+    [Fact]
+    public void Extra_production_for_a_tank_army_is_a_war_factory_even_when_an_infantry_unit_shares_the_role()
+    {
+        UnitRule tech = Fixture.Building("tech", UnitRole.Tech, cost: 1500);
+        UnitRule antiArmorInfantry = Fixture.Combat("e5", UnitRole.AntiArmor, QueueKind.Infantry, 600, 8) with { Prerequisites = [["pile"], ["tech"]] };
+        UnitRule heavyTank = Fixture.Combat("htnk", UnitRole.AntiArmor, QueueKind.Vehicle, 1000, 12) with { Prerequisites = [["weap"], ["tech"]] };
+        OperationalPlanner planner = new(
+            new FakeRulesDatabase([Yard, Power, Refinery, Barracks, Factory, Gi, Tank, heavyTank, antiArmorInfantry, tech, Harvester]),
+            new FakePlaybookLibrary([]), new OperationalOptions(MaxProductionBuildings: 3));
+        BeliefSnapshot belief = Base(0, 6000, [EmptyBuildingQueue],
+            Own(104, "pile", UnitRole.Production, new Cell(7, 7)), Own(105, "tech", UnitRole.Tech, new Cell(16, 10)));
+        StrategicIntent intent = Fixture.Intent(composition: [new CompositionTarget(UnitRole.AntiArmor, 0.6, 1.0)]);
+
+        OperationalPlan plan = planner.Plan(belief, Economy(belief, 1, 3), intent, new FakeLeaseManager());
+
+        ProduceCommand produce = Assert.Single(plan.ProductionCommands.OfType<ProduceCommand>(), static c => c.Queue == QueueKind.Building);
+        Assert.Equal("weap", produce.TypeId);
+    }
 }

@@ -318,9 +318,11 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
         }
 
         /// <summary>
-        /// The factory to add: the cheapest buildable Production building that trains a unit of the composition's
-        /// largest role (a second war factory for a tank army; each factory speeds only its own queue in RA2),
-        /// else the cheapest buildable one. Picking the cheapest outright always added barracks.
+        /// The factory to add: for the composition's largest role, a factory for the queue that role is mostly built
+        /// in (a second war factory for a tank army; each factory speeds only its own queue in RA2), else the
+        /// cheapest buildable one. The queue is ranked by the role's units we own from it, then by how many of the
+        /// role's unit types it trains, so one anti-armor infantry type (Soviet E5 at the barracks) does not turn a
+        /// tank army's extra factory into barracks, as picking the cheapest factory any such unit names did.
         /// </summary>
         private UnitRule? ExtraFactory()
         {
@@ -328,6 +330,7 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
                 .Where(r => r.Role == UnitRole.Production && r.Kind == EntityKind.Building && Buildable(r))
                 .OrderBy(static r => r.Cost).ThenBy(static r => r.TypeId, StringComparer.Ordinal)
                 .ToList();
+            bool declared = rules.All.Any(static r => r.Produces is { Count: > 0 });
             foreach (CompositionTarget target in intent.Composition
                 .Where(static c => c.MinShare > 0 && c.Role != UnitRole.Defense)
                 .OrderByDescending(static c => c.MinShare).ThenBy(static c => c.Role.ToString(), StringComparer.Ordinal))
@@ -335,11 +338,26 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
                 List<UnitRule> units = rules.All
                     .Where(r => r.Role == target.Role && r.Kind != EntityKind.Building && r.Cost > 0 && r.Factions.Contains(faction))
                     .ToList();
-                UnitRule? trainer = factories.FirstOrDefault(f => units.Any(u => u.Prerequisites.Any(group => group.Contains(f.TypeId))));
-                if (trainer is not null) return trainer;
+                IEnumerable<QueueKind> queues = units.GroupBy(static u => u.Queue)
+                    .Select(g => (Queue: g.Key, Owned: belief.Own.Count(e => e.Role == target.Role && rules.TryGet(e.TypeId, out UnitRule r) && r.Queue == g.Key && r.Kind != EntityKind.Building), Types: g.Count()))
+                    .OrderByDescending(static q => q.Owned).ThenByDescending(static q => q.Types).ThenBy(static q => q.Queue)
+                    .Select(static q => q.Queue);
+                foreach (QueueKind queue in queues)
+                {
+                    UnitRule? trainer = factories.FirstOrDefault(f => TrainsFor(f, queue, declared));
+                    if (trainer is not null) return trainer;
+                }
             }
             return factories.FirstOrDefault();
         }
+
+        /// <summary>
+        /// Whether a factory serves a queue: as the rules declare (<see cref="UnitRule.Produces"/>) where any rule
+        /// declares, else when it is a prerequisite of some item of that queue (barracks for infantry).
+        /// </summary>
+        private bool TrainsFor(UnitRule factory, QueueKind queue, bool declared) => declared
+            ? factory.Produces is { } produces && produces.Contains(queue)
+            : rules.All.Any(u => u.Queue == queue && u.Kind != EntityKind.Building && u.Prerequisites.Any(group => group.Contains(factory.TypeId)));
 
         private int RefineryTarget()
         {
