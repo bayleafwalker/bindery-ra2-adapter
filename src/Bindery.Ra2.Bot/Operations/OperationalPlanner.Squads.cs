@@ -10,10 +10,10 @@ namespace Bindery.Ra2.Bot.Operations;
 /// squads, and every squad has a stable id so tactical hysteresis state survives:
 /// <list type="bullet">
 /// <item><c>scout</c>: one cheap, fast unit while the intent has a
-/// <see cref="ObjectiveKind.Scout"/> objective, visiting the intent's
+/// <see cref="ObjectiveKind.Scout"/> objective, visiting the objective's own region and then the intent's
 /// <see cref="StrategicIntent.RegionsOfInterest"/> first (in order, skipping any seen within
 /// <see cref="OperationalOptions.ScoutRevisitSeconds"/>), then non-own start locations
-/// (oldest sighting first), then the region seen longest ago.</item>
+/// it can walk to (oldest sighting first), then the region seen longest ago.</item>
 /// <item><c>harass</c>: up to <see cref="OperationalOptions.HarassSquadSize"/> units
 /// while the intent has a <see cref="ObjectiveKind.Harass"/> objective, in sorties: a sortie
 /// starts every <c>harassIntervalSeconds</c> (playbook parameter, else
@@ -24,11 +24,17 @@ namespace Bindery.Ra2.Bot.Operations;
 /// <see cref="ObjectiveKind.Retreat"/> objective.</item>
 /// <item><c>defend</c>: everything else while a base region is threatened (base threat
 /// ratio at least the playbook's <c>defendThreatRatio</c>, else
-/// <see cref="OperationalOptions.DefaultDefendThreatRatio"/>), and otherwise while no attack is on;
-/// it stages, engaged, at the first of the intent's <see cref="StrategicIntent.RegionsOfInterest"/> that is
-/// reachable, not the attack target and not enemy-held, else at the own building region nearest the target.</item>
+/// <see cref="OperationalOptions.DefaultDefendThreatRatio"/>, held until the threat drops below
+/// <see cref="OperationalOptions.DefendReleaseFraction"/> of that and at least
+/// <see cref="OperationalOptions.DefendMinSeconds"/> have passed); while a
+/// <see cref="ObjectiveKind.DefendRegion"/> objective that outranks the attack names a region under threat; and
+/// otherwise while no attack is on. Waiting for an attack it stages, engaged, at the first of the intent's
+/// <see cref="StrategicIntent.RegionsOfInterest"/> that is reachable, not the attack target and not enemy-held,
+/// else at the own building region nearest the target; with no attack wanted it waits at the DefendRegion
+/// objective's region, else at home. Defenders of a region holding own buildings never retreat.</item>
 /// <item><c>attack</c>: everything else once an attack is wanted (an
-/// <see cref="ObjectiveKind.AttackRegion"/> objective, or attack conditions on any
+/// <see cref="ObjectiveKind.AttackRegion"/> or <see cref="ObjectiveKind.DenyExpansion"/> objective, the
+/// higher-ranked one giving the target, or attack conditions on any
 /// non-defend posture) and ready (all attack conditions hold and own army value reaches
 /// the playbook's <c>attackArmyValue</c> or <see cref="OperationalOptions.MinAttackArmyValue"/>).
 /// An attack in progress continues until army value drops below
@@ -55,6 +61,8 @@ public sealed partial class OperationalPlanner
     private RegionId? scoutTarget;
     private RegionId? attackTarget;
     private bool attacking;
+    private bool defending;
+    private GameTime defendingSince;
     private GameTime? harassCycleStart;
     private GameTime? harassArrivedAt;
     private bool harassReturning;
@@ -96,7 +104,11 @@ public sealed partial class OperationalPlanner
 
         // Persistent squads first: they keep their members while their objective lasts.
         Objective? scout = intent.Objectives.Where(static o => o.Kind == ObjectiveKind.Scout).OrderBy(static o => o.Priority).FirstOrDefault();
-        if (scout is not null && pool.Count > 1) AssignScout(belief, graph, home, pool, intent.RegionsOfInterest, notes);
+        // A scout objective's own region is visited first, then the intent's regions of interest.
+        IReadOnlyList<RegionId> scoutFirst = scout?.Region is { } scoutRegion
+            ? [scoutRegion, .. intent.RegionsOfInterest.Where(r => r != scoutRegion)]
+            : intent.RegionsOfInterest;
+        if (scout is not null && pool.Count > 1) AssignScout(belief, graph, home, pool, scoutFirst, notes);
         else Disband(ScoutSquad);
 
         Objective? harass = intent.Objectives.Where(static o => o.Kind == ObjectiveKind.Harass && o.Region is not null).OrderBy(static o => o.Priority).FirstOrDefault();
@@ -112,13 +124,30 @@ public sealed partial class OperationalPlanner
 
         Objective? retreat = intent.Objectives.Where(static o => o.Kind == ObjectiveKind.Retreat).OrderBy(static o => o.Priority).FirstOrDefault();
         double threat = ConditionEvaluator.BaseThreatRatio(features);
+        // Defend switch with hysteresis: in at the defend line, out only once the threat has clearly receded and
+        // the army has defended for a minimum time. A level trigger flipped the whole army between attack and
+        // defend every pass while the ratio hovered around the line (contact confidence decays and jumps back).
+        bool defend = threat >= defendAt
+            || (defending && (threat >= defendAt * options.DefendReleaseFraction || belief.Time.SecondsSince(defendingSince) < options.DefendMinSeconds));
+        bool Reachable(RegionId region) => belief.Map.Regions.Any(r => r.Id == region) && !double.IsInfinity(graph.Distance(home, region));
+        Objective? defendObjective = intent.Objectives
+            .Where(o => o.Kind == ObjectiveKind.DefendRegion && o.Region is { } r && Reachable(r))
+            .OrderBy(static o => o.Priority).FirstOrDefault();
+        // The offensive objective: an attack on a region, or denying the enemy an expansion there (both send the
+        // army to the region; denying is an attack on whatever the enemy put there).
+        Objective? attack = intent.Objectives
+            .Where(static o => o.Kind is ObjectiveKind.AttackRegion or ObjectiveKind.DenyExpansion)
+            .OrderBy(static o => o.Priority).FirstOrDefault();
         if (retreat is not null)
         {
             Fill(GetOrCreate(RetreatSquad, ObjectiveKind.Retreat, retreat.Region ?? home, engage: false), pool);
             attacking = false;
+            defending = false;
         }
-        else if (threat >= defendAt)
+        else if (defend)
         {
+            if (!defending) defendingSince = belief.Time;
+            defending = true;
             RegionId threatened = features.Threats.Where(static t => t.IsBase)
                 .OrderBy(static t => t.LocalForceRatio).ThenBy(static t => t.Region.Value)
                 .Select(static t => t.Region).DefaultIfEmpty(home).First();
@@ -126,9 +155,19 @@ public sealed partial class OperationalPlanner
             notes.Add(string.Create(CultureInfo.InvariantCulture, $"squads: defending {threatened} (base threat {threat:0.00})"));
             attacking = false;
         }
+        else if (defendObjective is { Region: { } guarded }
+            && (attack is null || defendObjective.Priority < attack.Priority)
+            && features.Threats.Any(t => t.Region == guarded && t.EnemyValue > 0))
+        {
+            // The strategist ranked defending this region above any attack, and the region is under threat now.
+            defending = false;
+            Fill(GetOrCreate(DefendSquad, ObjectiveKind.DefendRegion, guarded, engage: true), pool);
+            notes.Add($"squads: defending {guarded} (objective outranks the attack)");
+            attacking = false;
+        }
         else
         {
-            Objective? attack = intent.Objectives.Where(static o => o.Kind == ObjectiveKind.AttackRegion).OrderBy(static o => o.Priority).FirstOrDefault();
+            defending = false;
             bool wanted = attack is not null || (intent.Posture != StrategicPosture.Defend && intent.AttackConditions.Count > 0);
             double army = features.Army.ArmyValue.Current;
             double minArmy = intent.PlaybookParameters.TryGetValue("attackArmyValue", out double av) ? av : options.MinAttackArmyValue;
@@ -144,7 +183,8 @@ public sealed partial class OperationalPlanner
             else
             {
                 attacking = false;
-                RegionId staging = wanted ? StagingRegion(belief, features, intent, graph, home, attack?.Region) : home;
+                // With no attack coming, the army waits where the strategist asked it to defend (else at home).
+                RegionId staging = wanted ? StagingRegion(belief, features, intent, graph, home, attack?.Region) : defendObjective?.Region ?? home;
                 Fill(GetOrCreate(DefendSquad, ObjectiveKind.DefendRegion, staging, engage: true), pool);
                 if (wanted) notes.Add(string.Create(CultureInfo.InvariantCulture, $"squads: staging at {staging} (army {army:0}/{minArmy:0}, conditions {(conditions ? "hold" : "not met")})"));
             }
@@ -158,6 +198,9 @@ public sealed partial class OperationalPlanner
 
     private List<SquadOrder> LeaseAndOrder(BeliefSnapshot belief, ILeaseManager leases, Dictionary<string, List<EntityId>> previous, double retreatRatio, double standoff)
     {
+        // Defenders of a region holding own buildings never retreat: the retreat destination is the base itself,
+        // so a "retreat" would only turn them into units under a move order, not returning fire, while it falls.
+        HashSet<RegionId> baseRegions = belief.Own.Where(static e => e.Kind == EntityKind.Building).Select(static e => e.Region).ToHashSet();
         List<SquadOrder> orders = [];
         foreach (SquadState squad in squads.Values.OrderBy(static s => s.SquadId, StringComparer.Ordinal))
         {
@@ -180,7 +223,8 @@ public sealed partial class OperationalPlanner
                 if (ok) held.Add(unit);
             }
             if (held.Count == 0) continue;
-            orders.Add(new SquadOrder(squad.SquadId, squad.Objective, squad.TargetRegion, held, squad.Engage, retreatRatio,
+            double squadRetreat = squad.Objective == ObjectiveKind.DefendRegion && baseRegions.Contains(squad.TargetRegion) ? 0 : retreatRatio;
+            orders.Add(new SquadOrder(squad.SquadId, squad.Objective, squad.TargetRegion, held, squad.Engage, squadRetreat,
                 squad.SquadId == AttackSquad ? standoff : 0));
         }
 
@@ -251,7 +295,8 @@ public sealed partial class OperationalPlanner
         }
         HashSet<RegionId> ownRegions = belief.Own.Where(static e => e.Kind == EntityKind.Building).Select(static e => e.Region).ToHashSet();
         Region? start = belief.Map.Regions
-            .Where(r => r.IsStartLocation && !ownRegions.Contains(r.Id) && r.Id != from && Age(r) > options.ScoutRevisitSeconds)
+            .Where(r => r.IsStartLocation && !ownRegions.Contains(r.Id) && r.Id != from && Age(r) > options.ScoutRevisitSeconds
+                && !double.IsInfinity(graph.Distance(from, r.Id)))
             .OrderByDescending(Age).ThenBy(r => graph.Distance(from, r.Id)).ThenBy(static r => r.Id.Value)
             .FirstOrDefault();
         if (start is not null) return start.Id;

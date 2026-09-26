@@ -11,11 +11,14 @@ namespace Bindery.Ra2.Bot.Tests.Tactics;
 /// </summary>
 internal sealed class FakeRulesDatabase(
     Dictionary<(string, string), double>? effectiveness = null,
-    IEnumerable<string>? armedTypes = null) : IRulesDatabase
+    IEnumerable<string>? armedTypes = null,
+    IEnumerable<string>? unarmedTypes = null) : IRulesDatabase
 {
     private readonly Dictionary<(string, string), double> effectiveness = effectiveness ?? [];
     private readonly SortedDictionary<string, UnitRule> byTypeId = new(
-        (armedTypes ?? []).ToDictionary(static t => t, Armed, StringComparer.Ordinal),
+        (armedTypes ?? []).Select(Armed)
+            .Concat((unarmedTypes ?? []).Select(static t => Armed(t) with { Damage = 0, Weapon = WeaponClass.None, Role = UnitRole.Harvester }))
+            .ToDictionary(static r => r.TypeId, StringComparer.Ordinal),
         StringComparer.Ordinal);
 
     public string RulesetId => "test-fixture";

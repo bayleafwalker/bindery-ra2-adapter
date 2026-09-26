@@ -29,10 +29,16 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
 {
     private enum CombatState { Engaged, Retreating }
 
+    /// <summary>
+    /// Hysteresis state of one squad. <see cref="Members"/> is the membership the state was last evaluated for:
+    /// the planner reuses squad ids ("attack", "defend") for every wave, so a state belongs to the units that
+    /// earned it, not to the id.
+    /// </summary>
     private sealed class SquadCombatState
     {
         public CombatState State = CombatState.Engaged;
         public GameTime Since;
+        public HashSet<EntityId> Members = [];
     }
 
     private readonly Dictionary<string, SquadCombatState> combatStates = [];
@@ -49,11 +55,22 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
 
         RegionGraph graph = GraphFor(belief.Map);
         Dictionary<EntityId, OwnEntity> ownById = belief.Own.ToDictionary(static e => e.Id);
+        // Engagement is decided on what the squad can see now: a mobile contact that left vision seconds ago is
+        // somewhere else by now (attacking it is ignored in RA2, and its value would make the squad flee a ghost).
+        // Buildings do not move, so a structure stays a target for as long as its contact is fresh.
         List<EnemyContact> freshEnemies = belief.Enemies
             .Where(e => !e.ConfirmedDestroyed &&
                         e.Confidence >= options.MinConfidence &&
-                        belief.Time.SecondsSince(e.LastSeenAt) <= options.MaxContactAgeSeconds)
+                        belief.Time.SecondsSince(e.LastSeenAt) <= (e.Kind == EntityKind.Building
+                            ? options.MaxContactAgeSeconds
+                            : Math.Min(options.MaxContactAgeSeconds, options.EngageContactAgeSeconds)))
             .ToList();
+        RegionId? home = HomeRegion(belief);
+
+        // A squad the planner no longer orders is gone: its id may come back later with other units and a new
+        // objective, and must not inherit this state (a stale Retreating would abandon the next attack).
+        HashSet<string> ordered = squads.Select(static s => s.SquadId).ToHashSet(StringComparer.Ordinal);
+        foreach (string gone in combatStates.Keys.Where(k => !ordered.Contains(k)).ToList()) combatStates.Remove(gone);
 
         List<GameCommand> commands = [];
         foreach (SquadOrder order in squads.OrderBy(static s => s.SquadId, StringComparer.Ordinal))
@@ -76,14 +93,29 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
 
             if (!order.Engage)
             {
-                if (RouteCommand(order, owner, held, members, centroid, graph, belief) is { } route) commands.Add(route);
+                commands.AddRange(RouteCommands(order, owner, members, graph, belief));
                 continue;
+            }
+
+            // Out of contact, a retreating squad keeps retreating until it is home: routing it toward the target
+            // would walk it straight back into the fight it fled, and it would bounce at the edge of engagement
+            // range. Home, it is a fresh force again (the planner decides whether the attack still goes on).
+            SquadCombatState? known = KnownState(order.SquadId, members);
+            if (nearby.Count == 0 && known is { State: CombatState.Retreating })
+            {
+                if (home is not { } h || ModeRegion(members) != h)
+                {
+                    commands.Add(RetreatCommand(order, owner, held, belief));
+                    continue;
+                }
+                known.State = CombatState.Engaged;
+                known.Since = belief.Time;
             }
 
             bool siegeable = order.StandoffBufferCells > 0;
             if (nearby.Count == 0 && !siegeable)
             {
-                if (RouteCommand(order, owner, held, members, centroid, graph, belief) is { } route) commands.Add(route);
+                commands.AddRange(RouteCommands(order, owner, members, graph, belief));
                 continue;
             }
 
@@ -94,7 +126,7 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
             double enemyValue = nearby.Where(e => IsArmed(e, rules)).Sum(static e => e.Value);
             double localRatio = enemyValue <= 0 ? double.PositiveInfinity : ownValue / enemyValue;
 
-            SquadCombatState state = GetOrInitState(order.SquadId, belief.Time, localRatio, order.RetreatBelowForceRatio);
+            SquadCombatState state = GetOrInitState(order.SquadId, belief.Time, localRatio, order.RetreatBelowForceRatio, members);
             double heldSeconds = belief.Time.SecondsSince(state.Since);
             if (state.State == CombatState.Engaged && localRatio < order.RetreatBelowForceRatio && heldSeconds >= options.MinStateSeconds)
             {
@@ -116,33 +148,52 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
 
             if (state.State == CombatState.Engaged && nearby.Count == 0)
             {
-                if (RouteCommand(order, owner, held, members, centroid, graph, belief) is { } route) commands.Add(route);
+                commands.AddRange(RouteCommands(order, owner, members, graph, belief));
                 continue;
             }
 
-            if (state.State == CombatState.Retreating)
+            // A squad already in its home region has nowhere to retreat to: a move to its own base centre would
+            // only keep it from returning fire while the base is overrun, so it fights where it stands.
+            bool atHome = home is { } homeRegion && ModeRegion(members) == homeRegion;
+            if (state.State == CombatState.Retreating && !atHome)
             {
-                commands.Add(RetreatCommand(order, owner, held, belief, graph));
+                commands.Add(RetreatCommand(order, owner, held, belief));
             }
             else
             {
-                EntityId? target = ChooseFocusTarget(members, nearby, rules);
-                GameCommand? command = target is { } t
-                    ? new AttackCommand(owner, held, t)
-                    : RouteCommand(order, owner, held, members, centroid, graph, belief);
-                if (command is not null) commands.Add(command);
+                if (ChooseFocusTarget(members, nearby, rules) is { } t) commands.Add(new AttackCommand(owner, held, t));
+                else commands.AddRange(RouteCommands(order, owner, members, graph, belief));
             }
         }
         return commands;
     }
 
-    private SquadCombatState GetOrInitState(string squadId, GameTime now, double localRatio, double retreatBelow)
+    /// <summary>
+    /// This squad's state when it still belongs to (mostly) the same units; otherwise the state is dropped. The
+    /// member set follows the squad tick by tick, so reinforcements trickling in keep the state, while a wave
+    /// that shares less than half its units with the last one starts afresh.
+    /// </summary>
+    private SquadCombatState? KnownState(string squadId, List<OwnEntity> members)
+    {
+        if (!combatStates.TryGetValue(squadId, out SquadCombatState? existing)) return null;
+        int kept = members.Count(m => existing.Members.Contains(m.Id));
+        if (kept * 2 < members.Count)
+        {
+            combatStates.Remove(squadId);
+            return null;
+        }
+        existing.Members = [.. members.Select(static m => m.Id)];
+        return existing;
+    }
+
+    private SquadCombatState GetOrInitState(string squadId, GameTime now, double localRatio, double retreatBelow, List<OwnEntity> members)
     {
         if (combatStates.TryGetValue(squadId, out SquadCombatState? existing)) return existing;
         SquadCombatState state = new()
         {
             State = localRatio < retreatBelow ? CombatState.Retreating : CombatState.Engaged,
             Since = now,
+            Members = [.. members.Select(static m => m.Id)],
         };
         combatStates[squadId] = state;
         return state;
@@ -276,32 +327,36 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
         rules.TryGet(contact.TypeId, out UnitRule rule) && rule.Weapon != WeaponClass.None && rule.Damage > 0;
 
     /// <summary>
-    /// Toward the next waypoint: an attack-move for an engaging order, a plain move for one that does not engage
-    /// (an attack-move stops to fight in any region with an enemy in it, so a squad heading home, a scout or a
-    /// retreat could never leave one); null when the target has no ground route from the squad.
+    /// Toward the next waypoint, one command per region the members stand in: an attack-move for an engaging
+    /// order, a plain move for one that does not engage (an attack-move stops to fight in any region with an enemy
+    /// in it, so a squad heading home, a scout or a retreat could never leave one). Each group routes from its own
+    /// region, so fresh units at base do not drag the front line back to the base's first waypoint (as routing the
+    /// whole squad from its most populated region did). A group with no ground route to the target gets nothing.
     /// </summary>
-    private GameCommand? RouteCommand(
-        SquadOrder order,
-        string owner,
-        List<EntityId> held,
-        List<OwnEntity> members,
-        Cell centroid,
-        RegionGraph graph,
-        BeliefSnapshot belief)
+    private static List<GameCommand> RouteCommands(SquadOrder order, string owner, List<OwnEntity> members, RegionGraph graph, BeliefSnapshot belief)
     {
-        RegionId currentRegion = ModeRegion(members);
-        if (currentRegion != order.TargetRegion && graph.Path(currentRegion, order.TargetRegion).Count == 0) return null;
-        Cell destination = NextWaypoint(currentRegion, order.TargetRegion, graph, belief.Map);
-        return order.Engage ? new AttackMoveCommand(owner, held, destination) : new MoveCommand(owner, held, destination);
+        List<GameCommand> commands = [];
+        foreach (IGrouping<RegionId, OwnEntity> group in members.GroupBy(static m => m.Region).OrderBy(static g => g.Key.Value))
+        {
+            RegionId from = group.Key;
+            if (from != order.TargetRegion && graph.Path(from, order.TargetRegion).Count == 0) continue;
+            Cell destination = NextWaypoint(from, order.TargetRegion, graph, belief.Map);
+            List<EntityId> units = [.. group.Select(static m => m.Id).OrderBy(static u => u.Value)];
+            commands.Add(order.Engage ? new AttackMoveCommand(owner, units, destination) : new MoveCommand(owner, units, destination));
+        }
+        return commands;
     }
 
-    private GameCommand RetreatCommand(SquadOrder order, string owner, List<EntityId> held, BeliefSnapshot belief, RegionGraph graph)
+    /// <summary>The region of the lowest-id region holding an own building (the retreat destination), if any.</summary>
+    private static RegionId? HomeRegion(BeliefSnapshot belief) =>
+        belief.Own.Where(static e => e.Kind == EntityKind.Building)
+            .Select(static e => (RegionId?)e.Region)
+            .OrderBy(static r => r!.Value.Value)
+            .FirstOrDefault();
+
+    private static GameCommand RetreatCommand(SquadOrder order, string owner, List<EntityId> held, BeliefSnapshot belief)
     {
-        RegionId home = belief.Own.Where(static e => e.Kind == EntityKind.Building)
-            .Select(static e => e.Region)
-            .OrderBy(static r => r.Value)
-            .DefaultIfEmpty(order.TargetRegion)
-            .First();
+        RegionId home = HomeRegion(belief) ?? order.TargetRegion;
         Cell fallback = belief.Map.Regions.Count > 0 ? belief.Map.Regions[0].Center : new Cell(0, 0);
         Cell destination = belief.Map.Regions.FirstOrDefault(r => r.Id == home)?.Center ?? fallback;
         return new MoveCommand(owner, held, destination);

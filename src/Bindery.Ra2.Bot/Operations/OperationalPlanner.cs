@@ -65,7 +65,7 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
         ProductionPass pass = new(this, belief, features, intent, playbook);
 
         pass.Run();
-        PlanPlacement(belief, features, pass.Commands, pass.Notes);
+        PlanPlacement(belief, features, intent, pass.Commands, pass.Notes);
         PlanSuperweapons(belief, pass.Commands, pass.Notes);
         List<SquadOrder> squadOrders = PlanSquads(belief, features, intent, graph, leases, pass.Notes);
 
@@ -241,7 +241,7 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
                 return (harvesterStep, $"economy: toward {harvester.TypeId}");
             }
 
-            if (refineries < RefineryTarget() && FirstStepToward(refinery) is { } moreRefinery) return (moreRefinery, $"economy: refinery {refineries + 1}");
+            if (refineries < RefineryTarget() && FirstStepToward(refinery, repeatable: true) is { } moreRefinery) return (moreRefinery, $"economy: refinery {refineries + 1}");
 
             foreach (CompositionTarget target in intent.Composition
                 .Where(static c => c.MinShare > 0 && c.Role != UnitRole.Defense)
@@ -265,16 +265,39 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
 
             if (belief.Power.Surplus < options.PowerBuffer && PowerType() is { } buffer) return (buffer.TypeId, "power: buffer");
 
-            int productionBuildings = belief.Own.Count(static e => e.Kind == EntityKind.Building && e.Role == UnitRole.Production);
+            // The construction yard is a Production building but trains nothing (zero cost: a deploy product), so it
+            // does not count toward the factories the army has.
+            int productionBuildings = belief.Own.Count(e => e.Kind == EntityKind.Building && e.Role == UnitRole.Production
+                && !(rules.TryGet(e.TypeId, out UnitRule r) && r.Cost == 0));
             if (productionBuildings < options.MaxProductionBuildings && credits >= options.ExtraProductionCredits && intent.Budget.Army > 0)
             {
-                UnitRule? extra = rules.All
-                    .Where(r => r.Role == UnitRole.Production && r.Kind == EntityKind.Building && Buildable(r))
-                    .OrderBy(static r => r.Cost).ThenBy(static r => r.TypeId, StringComparer.Ordinal)
-                    .FirstOrDefault();
-                if (extra is not null) return (extra.TypeId, $"production: building {productionBuildings + 1}");
+                if (ExtraFactory() is { } extra) return (extra.TypeId, $"production: building {productionBuildings + 1}");
             }
             return null;
+        }
+
+        /// <summary>
+        /// The factory to add: the cheapest buildable Production building that trains a unit of the composition's
+        /// largest role (a second war factory for a tank army; each factory speeds only its own queue in RA2),
+        /// else the cheapest buildable one. Picking the cheapest outright always added barracks.
+        /// </summary>
+        private UnitRule? ExtraFactory()
+        {
+            List<UnitRule> factories = rules.All
+                .Where(r => r.Role == UnitRole.Production && r.Kind == EntityKind.Building && Buildable(r))
+                .OrderBy(static r => r.Cost).ThenBy(static r => r.TypeId, StringComparer.Ordinal)
+                .ToList();
+            foreach (CompositionTarget target in intent.Composition
+                .Where(static c => c.MinShare > 0 && c.Role != UnitRole.Defense)
+                .OrderByDescending(static c => c.MinShare).ThenBy(static c => c.Role.ToString(), StringComparer.Ordinal))
+            {
+                List<UnitRule> units = rules.All
+                    .Where(r => r.Role == target.Role && r.Kind != EntityKind.Building && r.Cost > 0 && r.Factions.Contains(faction))
+                    .ToList();
+                UnitRule? trainer = factories.FirstOrDefault(f => units.Any(u => u.Prerequisites.Any(group => group.Contains(f.TypeId))));
+                if (trainer is not null) return trainer;
+            }
+            return factories.FirstOrDefault();
         }
 
         private int RefineryTarget()
@@ -293,7 +316,11 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
         /// step of its prerequisite path, or the goal itself when it is a building buildable now; null when the
         /// goal is already available (a unit that can be built, a building that is owned) or unreachable.
         /// </summary>
-        private string? FirstStepToward(UnitRule? goal)
+        /// <remarks>
+        /// With <paramref name="repeatable"/> an owned goal building is still returned when buildable: a second
+        /// refinery is a copy of one the base already has, and "owned" would otherwise read as "available".
+        /// </remarks>
+        private string? FirstStepToward(UnitRule? goal, bool repeatable = false)
         {
             if (goal is null) return null;
             IReadOnlyList<string>? path = rules.PathTo(faction, own, goal.TypeId);
@@ -305,7 +332,7 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
                 return null; // the first missing step is not buildable yet (should not happen for a well-formed path)
             }
             bool building = goal.Kind == EntityKind.Building && goal.Queue == QueueKind.Building;
-            return building && !own.Contains(goal.TypeId) && Buildable(goal) ? goal.TypeId : null;
+            return building && (repeatable || !own.Contains(goal.TypeId)) && Buildable(goal) ? goal.TypeId : null;
         }
 
         private UnitRule? PowerType() =>
@@ -495,27 +522,72 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
 
     // ----- Placement: place any ready building/defense item. -----
 
-    private void PlanPlacement(BeliefSnapshot belief, StrategicFeatures features, List<GameCommand> commands, List<string> notes)
+    /// <summary>The last placement order per queue: which item, onto which cell, when.</summary>
+    private readonly Dictionary<QueueKind, (string TypeId, Cell Cell, GameTime At)> pendingPlacement = [];
+
+    /// <summary>Cells the game refused a building on, until when they stay excluded.</summary>
+    private readonly Dictionary<Cell, GameTime> refusedCells = [];
+
+    /// <remarks>
+    /// <para>Placement has no command-result feedback, so refusal is inferred: an item still ready
+    /// <see cref="OperationalOptions.PlacementRetrySeconds"/> after it was ordered onto a cell was not placed there,
+    /// and that cell is excluded for <see cref="OperationalOptions.RejectedPlacementMemorySeconds"/>. Until then the
+    /// same order is repeated (it may still be in flight). Without this the queue deadlocked: the search is a pure
+    /// function of the base, so it chose the refused cell again every pass and nothing else was ever built.</para>
+    /// <para>Every cell chosen this pass joins the avoid list, so the building and the defense placed in one pass
+    /// never get the same cell.</para>
+    /// <para>A refinery goes toward the ore it should mine: the Expand objective's field, else the nearest field
+    /// with no own refinery by it, else the nearest field. The search is anchored on the own building nearest that
+    /// field (placement must stay by the base), so each new refinery creeps toward the untaken ore instead of
+    /// crowding the home field.</para>
+    /// </remarks>
+    private void PlanPlacement(BeliefSnapshot belief, StrategicFeatures features, StrategicIntent intent, List<GameCommand> commands, List<string> notes)
     {
-        List<Cell> ownBuildings = belief.Own.Where(static e => e.Kind == EntityKind.Building).Select(static e => e.Position).ToList();
-        if (ownBuildings.Count == 0) return;
-        Cell anchor = new(
-            (int)Math.Round(ownBuildings.Average(static c => c.X)),
-            (int)Math.Round(ownBuildings.Average(static c => c.Y)));
+        foreach (Cell expired in refusedCells.Where(kv => kv.Value <= belief.Time).Select(static kv => kv.Key).ToList()) refusedCells.Remove(expired);
+
+        List<OwnEntity> buildings = belief.Own.Where(static e => e.Kind == EntityKind.Building).ToList();
+        if (buildings.Count == 0) return;
+        List<Cell> avoid = [.. buildings.Select(static e => e.Position), .. refusedCells.Keys.OrderBy(static c => c.X).ThenBy(static c => c.Y)];
+        Cell centroid = new(
+            (int)Math.Round(buildings.Average(static e => e.Position.X)),
+            (int)Math.Round(buildings.Average(static e => e.Position.Y)));
 
         foreach (QueueKind kind in new[] { QueueKind.Building, QueueKind.Defense })
         {
             ProductionQueueState? queue = belief.Queues.FirstOrDefault(q => q.Kind == kind);
             QueueItem? ready = queue?.Items.FirstOrDefault(static i => i.Ready);
-            if (ready is not { } item) continue;
+            if (ready is not { } item)
+            {
+                pendingPlacement.Remove(kind);
+                continue;
+            }
 
+            // A building of this type now standing on the pending cell means that order was placed, and this is the
+            // next copy (a second power plant), not the same item waiting.
+            if (pendingPlacement.TryGetValue(kind, out (string TypeId, Cell Cell, GameTime At) pending) && pending.TypeId == item.TypeId
+                && !buildings.Any(b => b.TypeId == item.TypeId && b.Position.DistanceTo(pending.Cell) < options.BuildGridStep))
+            {
+                if (belief.Time.SecondsSince(pending.At) < options.PlacementRetrySeconds)
+                {
+                    avoid.Add(pending.Cell);
+                    commands.Add(new PlaceBuildingCommand(options.ControllerId, item.TypeId, pending.Cell));
+                    notes.Add($"placement: {item.TypeId} at {pending.Cell} (awaiting the game)");
+                    continue;
+                }
+                refusedCells[pending.Cell] = belief.Time.Plus(options.RejectedPlacementMemorySeconds);
+                avoid.Add(pending.Cell);
+                notes.Add($"placement: {item.TypeId} refused at {pending.Cell}, searching elsewhere");
+            }
+
+            Cell anchor = centroid;
             Cell? bias = null;
             if (rules.TryGet(item.TypeId, out UnitRule rule) && rule.Role == UnitRole.Economy)
             {
-                bias = belief.Map.OreFields
-                    .OrderBy(o => o.Center.DistanceTo(anchor))
-                    .Select(static o => (Cell?)o.Center)
-                    .FirstOrDefault();
+                if (RefineryField(belief, intent, buildings, centroid) is { } field)
+                {
+                    bias = field.Center;
+                    anchor = buildings.OrderBy(b => b.Position.DistanceTo(field.Center)).ThenBy(static b => b.Id.Value).First().Position;
+                }
             }
             else if (kind == QueueKind.Defense)
             {
@@ -524,15 +596,38 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
                 Region? region = worst is null ? null : belief.Map.Regions.FirstOrDefault(r => r.Id == worst.Region);
                 // Unthreatened: face the nearest non-own start location, where attacks come from.
                 region ??= belief.Map.Regions
-                    .Where(r => r.IsStartLocation && r.Center.DistanceTo(anchor) > r.Radius)
-                    .OrderBy(r => r.Center.DistanceTo(anchor)).ThenBy(static r => r.Id.Value)
+                    .Where(r => r.IsStartLocation && r.Center.DistanceTo(centroid) > r.Radius)
+                    .OrderBy(r => r.Center.DistanceTo(centroid)).ThenBy(static r => r.Id.Value)
                     .FirstOrDefault();
                 if (region is not null) bias = region.Center;
             }
 
-            Cell chosen = BuildPlacement.ChooseCell(anchor, bias, ownBuildings, belief.Map.Width, belief.Map.Height, options.BuildSearchRings, options.BuildGridStep);
+            Cell chosen = BuildPlacement.ChooseCell(anchor, bias, avoid, belief.Map.Width, belief.Map.Height, options.BuildSearchRings, options.BuildGridStep);
+            avoid.Add(chosen);
+            pendingPlacement[kind] = (item.TypeId, chosen, belief.Time);
             commands.Add(new PlaceBuildingCommand(options.ControllerId, item.TypeId, chosen));
             notes.Add($"placement: {item.TypeId} at {chosen}");
         }
     }
+
+    /// <summary>
+    /// The ore field a new refinery should serve: the highest-priority Expand objective's field, else the field
+    /// nearest the base with no own refinery within <see cref="RefineryReachCells"/>, else the field nearest the base.
+    /// </summary>
+    private static OreField? RefineryField(BeliefSnapshot belief, StrategicIntent intent, List<OwnEntity> buildings, Cell centroid)
+    {
+        foreach (Objective expand in intent.Objectives.Where(static o => o.Kind == ObjectiveKind.Expand && o.Region is not null).OrderBy(static o => o.Priority))
+        {
+            OreField? wanted = belief.Map.OreFields.Where(o => o.Region == expand.Region)
+                .OrderBy(o => o.Center.DistanceTo(centroid)).ThenBy(static o => o.Region.Value).FirstOrDefault();
+            if (wanted is not null) return wanted;
+        }
+        List<Cell> refineries = buildings.Where(static b => b.Role == UnitRole.Economy).Select(static b => b.Position).ToList();
+        IOrderedEnumerable<OreField> byDistance = belief.Map.OreFields
+            .OrderBy(o => o.Center.DistanceTo(centroid)).ThenBy(static o => o.Region.Value);
+        return byDistance.FirstOrDefault(o => !refineries.Any(r => r.DistanceTo(o.Center) <= RefineryReachCells)) ?? byDistance.FirstOrDefault();
+    }
+
+    /// <summary>A refinery within this many cells of a field's centre already serves that field.</summary>
+    private const double RefineryReachCells = 10;
 }

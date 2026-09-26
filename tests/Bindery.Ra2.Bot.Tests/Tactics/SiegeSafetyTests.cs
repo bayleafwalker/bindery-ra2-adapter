@@ -15,6 +15,7 @@ public sealed class SiegeSafetyTests
     private static readonly RegionId Staging = new(1);
     private static readonly RegionId Sea = new(3);
     private static readonly RegionId Target = new(2);
+    private static readonly RegionId Base = new(4);
 
     private static MapInfo Map(bool waterBetween) => new(
         "siege-safety",
@@ -31,10 +32,11 @@ public sealed class SiegeSafetyTests
             [
                 new Region(Staging, "staging", new Cell(0, 10), 8, false, false, false),
                 new Region(Target, "target", new Cell(24, 10), 8, true, false, false),
+                new Region(Base, "base", new Cell(0, 1), 3, true, false, false),
             ],
         waterBetween
             ? [new RegionLink(Staging, Target, 40, true, false), new RegionLink(Staging, Sea, 11, false, true), new RegionLink(Sea, Target, 13, false, true)]
-            : [new RegionLink(Staging, Target, 24, true, false)],
+            : [new RegionLink(Staging, Target, 24, true, false), new RegionLink(Base, Staging, 9, true, false)],
         []);
 
     private static readonly EnemyContact Tower = new(
@@ -63,7 +65,9 @@ public sealed class SiegeSafetyTests
     {
         MapInfo map = Map(waterBetween: false);
         SquadController controller = new(new SquadControllerOptions());
-        OwnEntity yard = Own(map, 9, "NACNST", UnitRole.Production, new Cell(1, 5), EntityKind.Building);
+        // The base is its own region behind the staging area: a squad already in its home region has nowhere to
+        // retreat to and fights instead (see SquadRetreatAndRoutingTests).
+        OwnEntity yard = Own(map, 9, "NACNST", UnitRole.Production, new Cell(0, 1), EntityKind.Building);
         OwnEntity v3 = Own(map, 1, "V3", UnitRole.Artillery, new Cell(4, 10));
         OwnEntity rhino = Own(map, 2, "HTNK", UnitRole.AntiArmor, new Cell(4, 11));
         List<EnemyContact> tanks = [.. Enumerable.Range(0, 10).Select(i => new EnemyContact(
@@ -77,7 +81,7 @@ public sealed class SiegeSafetyTests
 
             Assert.DoesNotContain(commands, static c => c is AttackCommand or AttackMoveCommand);
             MoveCommand retreat = Assert.IsType<MoveCommand>(Assert.Single(commands));
-            Assert.Equal(Staging, map.RegionOf(retreat.Destination)!.Id);
+            Assert.Equal(Base, map.RegionOf(retreat.Destination)!.Id);
         }
     }
 
