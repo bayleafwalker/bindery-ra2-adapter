@@ -233,7 +233,10 @@ public sealed class BotRuntime : IDisposable
             if (owner is not null && !string.Equals(owner, controller, StringComparison.Ordinal)) Leases.Release(key, owner);
             Leases.TryAcquire(key, controller, BudgetLeasePriority, now, 0, ttl);
         }
-        int unpaid = options.ProductionChargedWhileBuilding ? UnpaidProduction(belief) : 0;
+        // Reported queues say what they owe; unreported ones (retail RA2) only the planner's own orders can.
+        int unpaid = !options.ProductionChargedWhileBuilding ? 0
+            : belief.QueuesKnown ? UnpaidProduction(belief)
+            : Math.Max(0, plan.UnreportedProductionDebt);
         Ledger.BeginPeriod(now, belief.Credits - unpaid, features.Economy.IncomePerMinute.Current, intent.Budget);
 
         List<object> reservations = [];

@@ -44,10 +44,27 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
     private readonly Dictionary<string, RegionGraph> graphByMap = [];
 
     /// <summary>
-    /// While queues are not reported: per queue, until when the item the planner last ordered into it keeps it busy.
-    /// This is the planner's own ledger of issued orders, the only evidence it has that a queue is occupied.
+    /// While queues are not reported: per queue, the item the planner last ordered into it. This is the planner's own
+    /// ledger of issued orders, the only evidence it has that a queue is occupied and that money is committed.
     /// </summary>
-    private readonly Dictionary<QueueKind, GameTime> busyWhileUnreported = [];
+    private readonly Dictionary<QueueKind, UnreportedOrder> unreportedOrders = [];
+
+    /// <summary>An order issued while queues are unreported: when, what it costs, and until when it keeps its queue busy.</summary>
+    private readonly record struct UnreportedOrder(GameTime OrderedAt, int Cost, double BuildSeconds, GameTime BusyUntil)
+    {
+        /// <summary>Cost times the share of the build time not yet elapsed: the game charges while it builds.</summary>
+        public double OwedAt(GameTime now) => BuildSeconds <= 0
+            ? 0
+            : Math.Max(0, Cost) * (1 - Math.Clamp(now.SecondsSince(OrderedAt) / BuildSeconds, 0, 1));
+    }
+
+    /// <summary>What the orders issued while queues were unreported still owe at <paramref name="now"/>, rounded up.</summary>
+    private int UnreportedDebt(GameTime now)
+    {
+        double owed = 0;
+        foreach (UnreportedOrder order in unreportedOrders.Values) owed += order.OwedAt(now);
+        return (int)Math.Min(int.MaxValue, Math.Ceiling(owed - 1e-9));
+    }
 
     public OperationalPlanner(IRulesDatabase rules, IPlaybookLibrary playbooks, OperationalOptions options)
     {
@@ -76,7 +93,8 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
         List<SquadOrder> squadOrders = PlanSquads(belief, features, intent, graph, leases, pass.Notes);
 
         SortedDictionary<string, int> sortedReservations = new(pass.Reservations, StringComparer.Ordinal);
-        return new OperationalPlan(belief.Time, intent.IntentId, pass.Commands, squadOrders, sortedReservations, pass.Notes);
+        return new OperationalPlan(belief.Time, intent.IntentId, pass.Commands, squadOrders, sortedReservations, pass.Notes,
+            belief.QueuesKnown ? 0 : pass.Owed);
     }
 
     private RegionGraph GraphFor(MapInfo map)
@@ -100,9 +118,12 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
             .ToHashSet(StringComparer.Ordinal);
         private readonly IReadOnlySet<string> placed = belief.OwnBuildingTypes;
         private readonly Faction faction = belief.Faction;
-        // Where production is paid as it builds, the credits on hand still include what queued items owe.
-        private int credits = Math.Max(0, belief.Credits
-            - (planner.options.ProductionChargedWhileBuilding && belief.QueuesKnown ? ProductionDebt.Unpaid(planner.rules, belief.Queues) : 0));
+        // Where production is paid as it builds, the credits on hand still include what queued items owe: from the
+        // reported queues, or, when none are reported, from the planner's own earlier orders.
+        public int Owed { get; } = !planner.options.ProductionChargedWhileBuilding ? 0
+            : belief.QueuesKnown ? ProductionDebt.Unpaid(planner.rules, belief.Queues)
+            : planner.UnreportedDebt(belief.Time);
+        private int credits;
         private int economyReserve;
         private UnitRule? reservedFor;
 
@@ -116,6 +137,7 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
 
         public void Run()
         {
+            credits = Math.Max(0, belief.Credits - Owed);
             reservedFor = EconomyReserve();
             // A reserve that can never be paid (less money than the link costs and no income to close the gap) only
             // idles the base; it is dropped so the money at least buys an army.
@@ -139,7 +161,7 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
             if (!belief.QueuesKnown)
             {
                 // Nothing reported is not the same as idle: only the planner's own orders say a queue is busy.
-                if (planner.busyWhileUnreported.TryGetValue(kind, out GameTime busyUntil) && belief.Time < busyUntil) return false;
+                if (planner.unreportedOrders.TryGetValue(kind, out UnreportedOrder last) && belief.Time < last.BusyUntil) return false;
                 return rules.All.Any(r => r.Queue == kind && Buildable(r));
             }
             ProductionQueueState? state = belief.Queues.FirstOrDefault(q => q.Kind == kind);
@@ -179,7 +201,8 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
             Commands.Add(new ProduceCommand(options.ControllerId, rule.TypeId, rule.Queue));
             if (!belief.QueuesKnown)
             {
-                planner.busyWhileUnreported[rule.Queue] = belief.Time.Plus(Math.Max(0, rule.BuildSeconds) + options.UnknownQueueReorderSeconds);
+                planner.unreportedOrders[rule.Queue] = new UnreportedOrder(belief.Time, rule.Cost, rule.BuildSeconds,
+                    belief.Time.Plus(Math.Max(0, rule.BuildSeconds) + options.UnknownQueueReorderSeconds));
             }
             string pool = BudgetPools.ForRole(rule.Role);
             Reservations[pool] = Reservations.GetValueOrDefault(pool) + rule.Cost;

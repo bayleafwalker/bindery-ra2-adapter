@@ -97,13 +97,21 @@ public sealed record SquadOrder(string SquadId, ObjectiveKind Objective, RegionI
 /// issued <see cref="ProductionCommands"/>, and the command gate spends them; an empty map grants every
 /// pool its full share.
 /// </param>
+/// <param name="UnreportedProductionDebt">
+/// While the source reports no queues (retail RA2): what the planner's own earlier production orders still owe,
+/// estimated as each order's cost times the share of its build time not yet elapsed. Where the game charges while
+/// building, the bank still holds this money, and nothing else in the observation says it is committed; the
+/// runtime subtracts it from the ledger's capacity as it subtracts <see cref="Operations.ProductionDebt"/> for
+/// reported queues. Zero when queues are reported or production is paid on order.
+/// </param>
 public sealed record OperationalPlan(
     GameTime Time,
     string IntentId,
     IReadOnlyList<GameCommand> ProductionCommands,
     IReadOnlyList<SquadOrder> Squads,
     IReadOnlyDictionary<string, int> BudgetReservations,
-    IReadOnlyList<string> Notes);
+    IReadOnlyList<string> Notes,
+    int UnreportedProductionDebt = 0);
 
 public interface IOperationalPlanner
 {

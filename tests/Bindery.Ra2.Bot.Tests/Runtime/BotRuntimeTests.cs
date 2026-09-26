@@ -277,4 +277,22 @@ public sealed class BotRuntimeTests
         // The tank being built still owes 900 × 0.75 = 675; the finished power plant owes nothing.
         Assert.Equal(expected, runtime.Ledger.Capacity);
     }
+
+    /// <summary>
+    /// Retail RA2 reports no queues, so the reported-queue debt is always zero there; what the planner's own orders
+    /// still owe (<see cref="OperationalPlan.UnreportedProductionDebt"/>) is the only evidence of committed money,
+    /// and the ledger must not fund it again.
+    /// </summary>
+    [Theory]
+    [InlineData(true, 1000 - 675 + 10)]
+    [InlineData(false, 1000 + 10)]
+    public void Ledger_capacity_excludes_what_unreported_orders_still_owe(bool chargedWhileBuilding, int expected)
+    {
+        FakePlanner planner = new() { UnreportedDebt = 675 };
+        using BotRuntime runtime = Runtimes.Create(Selector(), planner: planner,
+            options: new BotOptions(RunDeterministicStrategistsInline: true, ProductionChargedWhileBuilding: chargedWhileBuilding));
+        runtime.Tick(Frames.At(0, credits: 1000) with { QueuesKnown = false });
+
+        Assert.Equal(expected, runtime.Ledger.Capacity);
+    }
 }

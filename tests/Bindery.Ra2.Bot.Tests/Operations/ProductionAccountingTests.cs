@@ -55,6 +55,42 @@ public sealed class ProductionAccountingTests
         Assert.Single(Plan(planner, At(Refinery.BuildSeconds + 10)).ProductionCommands.OfType<ProduceCommand>());
     }
 
+    private static readonly UnitRule Tank = Fixture.Combat("tank", UnitRole.AntiArmor, QueueKind.Vehicle, 900, 10);
+    private static readonly UnitRule Rifle = Fixture.Combat("rifle", UnitRole.AntiInfantry, QueueKind.Infantry, 600, 30);
+
+    /// <summary>
+    /// Retail RA2 reports no queues and charges an item as it builds. Three seconds after ordering a 600-credit,
+    /// 30 s rifleman from 1000 credits the bank still reads 940, but 540 of that is owed to the rifleman: the
+    /// planner (and the runtime's ledger, from <see cref="OperationalPlan.UnreportedProductionDebt"/>) must not
+    /// spend it again on a 900-credit tank in another queue.
+    /// </summary>
+    [Fact]
+    public void Unreported_orders_still_owe_their_unbuilt_share_and_it_is_not_spent_again()
+    {
+        OperationalPlanner planner = new(new FakeRulesDatabase([Tank, Rifle]), new FakePlaybookLibrary([]), new OperationalOptions());
+        OperationalPlan PlanAt(double seconds, int credits, UnitRole wanted)
+        {
+            BeliefSnapshot belief = Fixture.Belief(credits: credits, time: GameTime.FromSeconds(seconds)) with { QueuesKnown = false };
+            StrategicFeatures features = Fixture.Features(belief);
+            features = features with { Economy = features.Economy with { Refineries = 1, Harvesters = 2, IncomePerMinute = Trend.Flat(500) } };
+            StrategicIntent intent = Fixture.Intent(composition: [new CompositionTarget(wanted, 1, 1)], budget: new BudgetShares(0, 1, 0, 0));
+            return planner.Plan(belief, features, intent, new FakeLeaseManager());
+        }
+
+        OperationalPlan first = PlanAt(0, 1000, UnitRole.AntiInfantry);
+        Assert.Equal("rifle", Assert.Single(first.ProductionCommands.OfType<ProduceCommand>()).TypeId);
+        Assert.Equal(0, first.UnreportedProductionDebt);
+
+        OperationalPlan second = PlanAt(3, 940, UnitRole.AntiArmor);
+        Assert.Equal(540, second.UnreportedProductionDebt);
+        Assert.Empty(second.ProductionCommands.OfType<ProduceCommand>());
+
+        // Once the rifleman must be paid for, the money is free again.
+        OperationalPlan later = PlanAt(Rifle.BuildSeconds, 940, UnitRole.AntiArmor);
+        Assert.Equal(0, later.UnreportedProductionDebt);
+        Assert.Equal("tank", Assert.Single(later.ProductionCommands.OfType<ProduceCommand>()).TypeId);
+    }
+
     [Fact]
     public void Reported_empty_queues_are_free()
     {

@@ -183,7 +183,7 @@ internal sealed class FakeBeliefModel : IBeliefModel
                 frame.Map.RegionOf(e.Position)!.Id, e.HealthFraction, Fx.Rules.Get(e.TypeId).Cost, e.Deployed))
             .ToList();
         Current = new BeliefSnapshot(version, frame.Time, frame.Mode, frame.Self, frame.Faction, frame.Credits, frame.Power, own,
-            [], [], frame.Queues, new Dictionary<RegionId, GameTime>(), frame.Events, frame.Map);
+            [], [], frame.Queues, new Dictionary<RegionId, GameTime>(), frame.Events, frame.Map) { QueuesKnown = frame.QueuesKnown };
         return Current;
     }
 }
@@ -209,6 +209,8 @@ internal sealed class FakePlanner : IOperationalPlanner
 
     public IReadOnlyDictionary<string, int> Reservations { get; set; } = new Dictionary<string, int>();
 
+    public int UnreportedDebt { get; set; }
+
     public OperationalPlan Plan(BeliefSnapshot belief, StrategicFeatures features, StrategicIntent intent, ILeaseManager leases)
     {
         Calls.Add(belief.Time);
@@ -220,7 +222,8 @@ internal sealed class FakePlanner : IOperationalPlanner
             [new ProduceCommand("ops", "mtnk", QueueKind.Vehicle), new ProduceCommand("ops", "mtnk", QueueKind.Vehicle)],
             [new SquadOrder("s1", ObjectiveKind.AttackRegion, Fx.R1, squadUnits, true, 0.6)],
             Reservations,
-            [$"intent {intent.PlaybookId}"]);
+            [$"intent {intent.PlaybookId}"],
+            UnreportedDebt);
     }
 }
 
