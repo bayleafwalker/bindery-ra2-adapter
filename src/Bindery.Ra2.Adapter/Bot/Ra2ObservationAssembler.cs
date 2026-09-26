@@ -145,7 +145,13 @@ public sealed class Ra2ObservationAssembler
             // itself asserts visibility. Missing or false both exclude it;
             // only "missing" is a contract violation worth reporting.
             bool present = TryGetBool(payload, Ra2BotTelemetryContract.FieldVisible, observation, "entity_excluded", out bool visible);
-            if (!present || !visible) return;
+            if (!present || !visible)
+            {
+                // No longer observed: it leaves the frame (belief keeps its memory), and a later removal of it is
+                // a death in fog, which the player does not see.
+                entities.Remove(id);
+                return;
+            }
         }
 
         entities[id] = new EntityState(id, owner, typeId, position, health, maxHealth);
@@ -156,8 +162,22 @@ public sealed class Ra2ObservationAssembler
     {
         if (!TryGetEntityId(observation.Payload, Ra2BotTelemetryContract.FieldId, observation, "removal_skipped", out EntityId id)) return;
 
+        JsonElement payload = observation.Payload;
         entities.Remove(id, out EntityState? removed);
-        GameEventKind kind = observation.EventType == "game.unit.killed" ? GameEventKind.EntityKilledByUs : GameEventKind.EntityDestroyed;
+        bool own = removed is { } r && r.Owner == self;
+        if (!own)
+        {
+            // Fog boundary: an enemy's removal is reported only for an entity currently observed (it is dropped from
+            // tracked state when it goes out of sight) and not marked invisible by the payload itself.
+            if (removed is null) return;
+            if (payload.TryGetProperty(Ra2BotTelemetryContract.FieldVisible, out JsonElement v) && v.ValueKind == JsonValueKind.False) return;
+        }
+
+        // A kill is ours only when the payload names us as the killer; the event name alone says nothing about who
+        // killed what, and an own unit's death is always a loss.
+        bool killedByUs = !own && payload.TryGetProperty(Ra2BotTelemetryContract.FieldKiller, out JsonElement k)
+            && k.ValueKind == JsonValueKind.Number && k.TryGetInt32(out int killer) && killer == self.Value;
+        GameEventKind kind = killedByUs ? GameEventKind.EntityKilledByUs : GameEventKind.EntityDestroyed;
         pendingEvents.Add(new GameEvent(kind, new GameTime(frame), id, removed?.Owner, removed?.TypeId, removed?.Position));
     }
 

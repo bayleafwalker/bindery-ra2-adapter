@@ -217,7 +217,7 @@ public sealed class BotBridgeTests
     // --- destruction removes the entity and emits the right event kind ---
 
     [Fact]
-    public void UnitKilled_RemovesEntityFromSubsequentFrames()
+    public void UnitKilled_OfOwnUnit_IsALossNotAKill()
     {
         Ra2ObservationAssembler assembler = new(new PlayerId(0), Faction.Allied, Map, frameCadence: 15);
         assembler.Ingest(Event(
@@ -230,7 +230,53 @@ public sealed class BotBridgeTests
 
         ObservationFrame frame = Assert.Single(frames);
         Assert.Empty(frame.Entities);
-        Assert.Contains(frame.Events, e => e.Kind == GameEventKind.EntityKilledByUs && e.Entity == new EntityId(7));
+        Assert.DoesNotContain(frame.Events, static e => e.Kind == GameEventKind.EntityKilledByUs);
+        Assert.Contains(frame.Events, e => e.Kind == GameEventKind.EntityDestroyed && e.Entity == new EntityId(7) && e.Owner == new PlayerId(0));
+    }
+
+    [Fact]
+    public void UnitKilled_OfVisibleEnemy_IsOurKillOnlyWhenTheKillerIsUs()
+    {
+        Ra2ObservationAssembler assembler = new(new PlayerId(0), Faction.Allied, Map, frameCadence: 15);
+        assembler.Ingest(Event("game.unit.created", new { frame = 1, owner = 1, id = 8, type = "E2", x = 10, y = 10, health = 50, maxHealth = 50, visible = true }));
+        assembler.Ingest(Event("game.unit.created", new { frame = 2, owner = 1, id = 9, type = "E2", x = 11, y = 10, health = 50, maxHealth = 50, visible = true }));
+
+        List<ObservationFrame> frames = [];
+        frames.AddRange(assembler.Ingest(Event("game.unit.killed", new { frame = 3, id = 8, killer = 0 })));
+        frames.AddRange(assembler.Ingest(Event("game.unit.killed", new { frame = 15, id = 9 })));
+
+        List<GameEvent> events = [.. frames.SelectMany(static f => f.Events)];
+        Assert.Contains(events, static e => e.Kind == GameEventKind.EntityKilledByUs && e.Entity == new EntityId(8));
+        Assert.DoesNotContain(events, static e => e.Kind == GameEventKind.EntityKilledByUs && e.Entity == new EntityId(9));
+        Assert.Contains(events, static e => e.Kind == GameEventKind.EntityDestroyed && e.Entity == new EntityId(9));
+    }
+
+    [Fact]
+    public void AnEnemyThatDrivesIntoFog_LeavesTheFrame_AndItsDeathInFogIsNotReported()
+    {
+        Ra2ObservationAssembler assembler = new(new PlayerId(0), Faction.Allied, Map, frameCadence: 15);
+        assembler.Ingest(Event("game.unit.created", new { frame = 1, owner = 1, id = 8, type = "HTNK", x = 10, y = 10, health = 50, maxHealth = 50, visible = true }));
+        assembler.Ingest(Event("game.unit.created", new { frame = 2, owner = 1, id = 8, type = "HTNK", x = 12, y = 10, health = 50, maxHealth = 50, visible = false }));
+
+        List<ObservationFrame> frames = [];
+        frames.AddRange(assembler.Ingest(Event("game.economy.credits", new { frame = 16, owner = 0, credits = 1000 })));
+        frames.AddRange(assembler.Ingest(Event("game.unit.destroyed", new { frame = 20, id = 8 })));
+        frames.AddRange(assembler.Ingest(Event("game.economy.credits", new { frame = 31, owner = 0, credits = 1000 })));
+
+        Assert.NotEmpty(frames);
+        Assert.All(frames, static f => Assert.DoesNotContain(f.Entities, static e => e.Id == new EntityId(8)));
+        Assert.DoesNotContain(frames.SelectMany(static f => f.Events), static e => e.Entity == new EntityId(8) && e.Kind != GameEventKind.EntityCreated);
+    }
+
+    [Fact]
+    public void AnEnemyDeathTheTelemetryMarksInvisible_IsNotReported()
+    {
+        Ra2ObservationAssembler assembler = new(new PlayerId(0), Faction.Allied, Map, frameCadence: 15);
+        assembler.Ingest(Event("game.unit.created", new { frame = 1, owner = 1, id = 8, type = "HTNK", x = 10, y = 10, health = 50, maxHealth = 50, visible = true }));
+
+        IReadOnlyList<ObservationFrame> frames = assembler.Ingest(Event("game.unit.destroyed", new { frame = 15, id = 8, visible = false }));
+
+        Assert.DoesNotContain(frames.SelectMany(static f => f.Events), static e => e.Entity == new EntityId(8) && e.Kind != GameEventKind.EntityCreated);
     }
 
     // --- command envelope mapping, for every GameCommand subtype ---

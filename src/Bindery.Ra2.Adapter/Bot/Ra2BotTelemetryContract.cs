@@ -27,11 +27,16 @@ namespace Bindery.Ra2.Adapter.Bot;
 /// </description></item>
 /// <item><description>
 /// <c>game.unit.destroyed</c>, <c>game.building.destroyed</c>,
-/// <c>game.unit.killed</c>: <c>frame</c>, <c>id</c>. The entity, if previously
-/// known, is removed from tracked state and a matching
-/// <see cref="GameEvent"/> is emitted; the event does not require
-/// <c>owner</c>/<c>type</c>/position (they are filled from prior state when
-/// known, and left null otherwise).
+/// <c>game.unit.killed</c>: <c>frame</c>, <c>id</c>; optional <c>killer</c>
+/// (player id) and <c>visible</c> (bool). The entity is removed from tracked
+/// state. An own entity's removal is always an
+/// <see cref="GameEventKind.EntityDestroyed"/> (a loss). An enemy's removal is
+/// reported only when the entity is currently observed (an enemy upsert with
+/// <c>visible</c> false drops it from tracked state) and the payload does not
+/// say <c>visible</c> false; it is <see cref="GameEventKind.EntityKilledByUs"/>
+/// only when <c>killer</c> is the controlled player, else
+/// <see cref="GameEventKind.EntityDestroyed"/>. Owner, type and position come
+/// from tracked state.
 /// </description></item>
 /// <item><description>
 /// <c>game.economy.credits</c>: <c>frame</c>, <c>owner</c>, <c>credits</c> (int).
@@ -78,4 +83,5 @@ public static class Ra2BotTelemetryContract
     public const string FieldProduced = "produced";
     public const string FieldDrained = "drained";
     public const string FieldVisible = "visible";
+    public const string FieldKiller = "killer";
 }
