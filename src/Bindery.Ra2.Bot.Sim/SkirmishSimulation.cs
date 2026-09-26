@@ -29,6 +29,7 @@ public sealed class SkirmishSimulation
     private readonly List<SimEntity> entities = [];
     private readonly Dictionary<RegionId, double> oreRemaining = [];
     private readonly List<(PlayerId Player, GameCommand Command)> pending = [];
+    private readonly Dictionary<QueueKind, HashSet<string>> factoryTypes;
     private List<GameEvent> frameEvents = [];
     // Each player's objects are numbered in a range of their own. One shared counter would let a player read the
     // enemy's hidden production off the gap between two of its own ids, which RA2 never shows.
@@ -58,6 +59,7 @@ public sealed class SkirmishSimulation
         if (settings.CombatNoise is < 0 or >= 1) throw new ArgumentOutOfRangeException(nameof(settings), "Combat noise must be in [0, 1).");
         Graph = new RegionGraph(map.Map);
         Players = settings.Players.Select(p => p.Id).ToList();
+        factoryTypes = FactoryTypesByQueue(rules);
 
         foreach (OreField field in map.Map.OreFields)
         {
@@ -185,7 +187,7 @@ public sealed class SkirmishSimulation
         foreach (QueueRuntime q in state.Queues.Values.OrderBy(q => q.Kind))
         {
             List<QueueItem> items = q.Items.Select((i, idx) => new QueueItem(i.TypeId, Math.Clamp(i.Progress, 0, 1), i.Ready, OnHold: idx > 0)).ToList();
-            queues.Add(new ProductionQueueState(q.Kind, items, CountFactories(state)));
+            queues.Add(new ProductionQueueState(q.Kind, items, CountFactories(state, q.Kind)));
         }
 
         List<GameEvent> events = mode == ObservationMode.Oracle
@@ -872,10 +874,11 @@ public sealed class SkirmishSimulation
         {
             if (state.Defeated) continue;
             PowerState power = ComputePower(state);
-            int factories = CountFactories(state);
-            double multiplier = factories <= 0 ? 0 : Math.Sqrt(factories) * (power.LowPower ? 0.5 : 1.0);
             foreach (QueueRuntime queue in state.Queues.Values.OrderBy(q => q.Kind))
             {
+                // A queue runs on the factories of its own kind only, and pauses while it has none (RA2).
+                int factories = CountFactories(state, queue.Kind);
+                double multiplier = factories <= 0 ? 0 : Math.Sqrt(factories) * (power.LowPower ? 0.5 : 1.0);
                 if (queue.Items.Count == 0 || multiplier <= 0) continue;
                 QueueItemRuntime active = queue.Items[0];
                 if (active.AwaitingPlacement) continue;
@@ -893,7 +896,7 @@ public sealed class SkirmishSimulation
                     else
                     {
                         queue.Items.RemoveAt(0);
-                        Cell spawnAt = RallyPointFor(state.Id);
+                        Cell spawnAt = RallyPointFor(state.Id, queue.Kind);
                         Region region = map.Map.RegionOf(spawnAt) ?? RegionById(map.StartRegions[0]);
                         SpawnEntity(state.Id, rule.TypeId, spawnAt, region.Id);
                     }
@@ -930,17 +933,47 @@ public sealed class SkirmishSimulation
         return timers;
     }
 
-    private Cell RallyPointFor(PlayerId owner)
+    /// <summary>Where a finished unit appears: beside the newest factory of its queue (any building if it has none).</summary>
+    private Cell RallyPointFor(PlayerId owner, QueueKind queue)
     {
-        SimEntity? factory = entities.Where(e => e.Owner == owner && e.Alive && rules.TryGet(e.TypeId, out UnitRule r) && r.Kind == EntityKind.Building)
-                                      .OrderBy(e => e.Id.Value).LastOrDefault();
+        SimEntity? factory = entities.Where(e => e.Owner == owner && e.Alive && IsFactoryFor(e.TypeId, queue)).OrderBy(e => e.Id.Value).LastOrDefault()
+            ?? entities.Where(e => e.Owner == owner && e.Alive && rules.TryGet(e.TypeId, out UnitRule r) && r.Kind == EntityKind.Building)
+                       .OrderBy(e => e.Id.Value).LastOrDefault();
         if (factory is not null) return new Cell(factory.Position.X + 1 + rng.NextInt(3), factory.Position.Y + 1 + rng.NextInt(3));
         int index = players.Keys.OrderBy(p => p.Value).ToList().IndexOf(owner);
         return RegionCenter(map.StartRegions[Math.Max(0, index)]);
     }
 
-    private int CountFactories(SimPlayerState state) =>
-        entities.Count(e => e.Owner == state.Id && e.Alive && rules.TryGet(e.TypeId, out UnitRule r) && r.Role == UnitRole.Production);
+    private int CountFactories(SimPlayerState state, QueueKind queue) =>
+        entities.Count(e => e.Owner == state.Id && e.Alive && IsFactoryFor(e.TypeId, queue));
+
+    /// <summary>
+    /// Whether a type is a factory for a queue: a production building listed among the prerequisites of that queue's
+    /// items (barracks for infantry, war factory for vehicles), and for the building and defense queues the
+    /// production buildings that serve no unit queue (the construction yard). A queue the rules give no factory
+    /// falls back to every production building.
+    /// </summary>
+    private bool IsFactoryFor(string typeId, QueueKind queue) =>
+        rules.TryGet(typeId, out UnitRule r) && r.Role == UnitRole.Production && r.Kind == EntityKind.Building
+        && (!factoryTypes.TryGetValue(queue, out HashSet<string>? types) || types.Count == 0 || types.Contains(typeId));
+
+    private static Dictionary<QueueKind, HashSet<string>> FactoryTypesByQueue(IRulesDatabase rules)
+    {
+        HashSet<string> production = rules.All.Where(static r => r.Role == UnitRole.Production && r.Kind == EntityKind.Building)
+                                              .Select(static r => r.TypeId).ToHashSet(StringComparer.Ordinal);
+        Dictionary<QueueKind, HashSet<string>> byQueue = [];
+        foreach (QueueKind queue in Enum.GetValues<QueueKind>())
+        {
+            if (queue is QueueKind.Building or QueueKind.Defense) continue;
+            byQueue[queue] = rules.All.Where(r => r.Queue == queue)
+                                      .SelectMany(static r => r.Prerequisites.SelectMany(static g => g))
+                                      .Where(production.Contains).ToHashSet(StringComparer.Ordinal);
+        }
+        HashSet<string> yards = production.Where(t => !byQueue.Values.Any(s => s.Contains(t))).ToHashSet(StringComparer.Ordinal);
+        byQueue[QueueKind.Building] = yards;
+        byQueue[QueueKind.Defense] = yards;
+        return byQueue;
+    }
 
     private PowerState ComputePower(SimPlayerState state)
     {
