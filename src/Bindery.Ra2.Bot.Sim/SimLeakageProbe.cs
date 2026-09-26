@@ -8,6 +8,10 @@ namespace Bindery.Ra2.Bot.Sim;
 /// enemy production queues, and enemy units placed in a region the observer
 /// cannot currently see are all facts the observer has no legitimate way to
 /// know. If perturbing them changes what the observer sees, fog is leaking.
+/// Two of the perturbations only show through combat: hidden enemies are
+/// wounded, and an enemy unit is placed just across a border inside the reach
+/// of the observer's longest-range weapon. A leak through fire or kill events
+/// takes seconds to appear, so a probe compares over a long window.
 /// </summary>
 public static class SimLeakageProbe
 {
@@ -23,6 +27,7 @@ public static class SimLeakageProbe
 
             sim.DebugAdjustCredits(other, 12_345);
             sim.DebugEnqueue(other, QueueKind.Building, "__leakage-probe__");
+            sim.DebugSpawnAcrossBorder(other, observer);
 
             RegionId hiddenRegion = visible.Contains(sim.StartRegionOf(other)) ? unseenRegion : sim.StartRegionOf(other);
             if (!visible.Contains(hiddenRegion))
@@ -31,6 +36,7 @@ public static class SimLeakageProbe
                 if (anyType is not null) sim.DebugSpawnSilently(other, anyType, hiddenRegion);
             }
         }
+        sim.DebugWoundHidden(observer);
     }
 
     private static string? FirstKnownUnitType(SkirmishSimulation sim) =>

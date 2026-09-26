@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Globalization;
 using Bindery.Ra2.Bot.Sim;
 using Bindery.Ra2.Bot.Strategy;
 
@@ -6,22 +7,26 @@ namespace Bindery.Ra2.Bot.Arena;
 
 /// <param name="StatesMatchedBeforePerturbation">The two lockstep simulations had identical state hashes when the probe perturbed one of them (a determinism check; the comparison means nothing otherwise).</param>
 /// <param name="FramesCompared">Frames after the perturbation on which the arm's strategist context was compared.</param>
-/// <param name="Differences">Frames on which the context hash differed (must be 0).</param>
-public sealed record LeakageProbeResult(string Arm, string Map, int Seed, double PerturbedAtSeconds, bool StatesMatchedBeforePerturbation, int FramesCompared, int Differences, string? Note = null);
+/// <param name="Differences">Frames on which the context hash differed while everything the arm could see was still identical (must be 0).</param>
+/// <param name="ComparedSeconds">How long the comparison ran before the window closed or the arm legitimately saw a difference.</param>
+public sealed record LeakageProbeResult(string Arm, string Map, int Seed, double PerturbedAtSeconds, bool StatesMatchedBeforePerturbation, int FramesCompared, int Differences, string? Note = null, double ComparedSeconds = 0);
 
 /// <summary>
 /// The spec's hidden-information probe, run per arm on the real bot: two simulations run in
 /// lockstep from the same seed with identical (deterministic) bots; at
 /// <c>perturbAtSeconds</c> one of them has its hidden state perturbed by
-/// <see cref="SimLeakageProbe.PerturbHidden"/> (enemy credits, enemy queue, an enemy unit in a
-/// region the arm cannot see). For the next <c>compareSeconds</c> the arm's
-/// <see cref="StrategistContextHash"/> must be identical in both. Differences after that window
-/// could be legitimate (the perturbed enemy acts differently and is eventually seen), so the
-/// window is short.
+/// <see cref="SimLeakageProbe.PerturbHidden"/> (enemy credits, enemy queue, wounded hidden
+/// enemies, an enemy unit in a region the arm cannot see and one just across a border inside
+/// its weapon reach). The arm's <see cref="StrategistContextHash"/> is then compared on every
+/// frame for up to <c>compareSeconds</c>, and the comparison stops early only when the objects
+/// the arm can see differ between the two simulations: from then on a difference can be
+/// legitimate (the perturbed enemy acted differently and was seen). A leak through combat or
+/// events takes seconds to show, so the window is long, and a context difference while the
+/// visible objects still agree is a leak.
 /// </summary>
 public static class LeakageProbe
 {
-    public static LeakageProbeResult Run(ArmSpec arm, SimMap map, int seed, IRulesDatabase rules, IArenaAgentFactory factory, double perturbAtSeconds = 90, double compareSeconds = 1, string opponent = "balanced")
+    public static LeakageProbeResult Run(ArmSpec arm, SimMap map, int seed, IRulesDatabase rules, IArenaAgentFactory factory, double perturbAtSeconds = 90, double compareSeconds = 60, string opponent = "balanced")
     {
         if (arm.Oracle)
         {
@@ -45,9 +50,15 @@ public static class LeakageProbe
             SimLeakageProbe.PerturbHidden(b.Sim, MatchRunner.ArmPlayer);
 
             int compared = 0, differences = 0;
+            string? note = null;
             long end = perturbFrame + GameTime.FromSeconds(compareSeconds).Frame;
             while (a.Sim.Time.Frame < end && !a.Sim.MatchEnded && !b.Sim.MatchEnded)
             {
+                if (VisibleObjects(a.Sim) != VisibleObjects(b.Sim))
+                {
+                    note = string.Create(CultureInfo.InvariantCulture, $"stopped at {a.Sim.Time.Seconds:0} s: the arm saw a legitimate difference");
+                    break;
+                }
                 a.Frame();
                 b.Frame();
                 StrategistContext? ca = a.Arm.Runtime.CurrentStrategistContext, cb = b.Arm.Runtime.CurrentStrategistContext;
@@ -55,7 +66,8 @@ public static class LeakageProbe
                 compared++;
                 if (StrategistContextHash.Compute(ca) != StrategistContextHash.Compute(cb)) differences++;
             }
-            return new LeakageProbeResult(arm.ToString(), map.Map.MapId, seed, perturbAtSeconds, matched, compared, differences);
+            double seconds = (a.Sim.Time.Frame - perturbFrame) / (double)GameTime.FramesPerSecond;
+            return new LeakageProbeResult(arm.ToString(), map.Map.MapId, seed, perturbAtSeconds, matched, compared, differences, note, seconds);
         }
         finally
         {
@@ -63,6 +75,10 @@ public static class LeakageProbe
             b.Dispose();
         }
     }
+
+    /// <summary>The objects the arm sees (own and visible enemy, with health and position), as one comparable string.</summary>
+    private static string VisibleObjects(SkirmishSimulation sim) =>
+        string.Join(';', sim.Observe(MatchRunner.ArmPlayer, ObservationMode.Belief).Entities.Select(static e => e.ToString()));
 
     private sealed class Side : IDisposable
     {

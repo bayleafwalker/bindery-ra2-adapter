@@ -22,9 +22,12 @@ public sealed class FogAndFreshnessTests
         SimLeakageProbe.PerturbHidden(probed.Sim, MatchHarness.ArmPlayer);
         Assert.NotEqual(control.Sim.ComputeStateHash(), probed.Sim.ComputeStateHash());
 
+        // A leak through fire or kill events takes seconds to show, so compare for a minute, stopping only when the
+        // objects the arm can see first differ (from then on the perturbed enemy may legitimately have been seen).
         int compared = 0;
-        for (int i = 0; i < GameTime.FramesPerSecond * 2; i++)
+        for (int i = 0; i < GameTime.FramesPerSecond * 60 && !control.Sim.MatchEnded && !probed.Sim.MatchEnded; i++)
         {
+            if (VisibleObjects(control) != VisibleObjects(probed)) break;
             control.Frame();
             probed.Frame();
             StrategistContext a = control.Arm.CurrentStrategistContext!;
@@ -32,8 +35,11 @@ public sealed class FogAndFreshnessTests
             Assert.Equal(StrategistContextHash.ToJson(a), StrategistContextHash.ToJson(b));
             compared++;
         }
-        Assert.Equal(GameTime.FramesPerSecond * 2, compared);
+        Assert.True(compared >= GameTime.FramesPerSecond * 5, $"only {compared} frames compared");
     }
+
+    private static string VisibleObjects(MatchHarness match) =>
+        string.Join(';', match.Sim.Observe(MatchHarness.ArmPlayer, ObservationMode.Belief).Entities.Select(static e => e.ToString()));
 
     /// <summary>An LLM-like strategist (source Llm) that always proposes one playbook.</summary>
     private sealed class FakeLlm(string playbookId) : IStrategist

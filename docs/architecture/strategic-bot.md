@@ -148,8 +148,14 @@ harder or less deterministic benchmark first.
 - **Inference cost**: input/output tokens and USD per match at the published
   per-million-token rate for the configured model.
 - **Hidden-information leakage**: count of validator `fog.*` rejections, plus
-  the arena probe that perturbs hidden simulator state and diffs the
-  strategist context hash (must be 0 differences).
+  the arena probe that perturbs hidden simulator state (enemy credits and
+  queue, wounded hidden enemies, a hidden unit in an unseen region and one just
+  across a border inside the arm's weapon reach) at 90 s and 240 s and diffs the
+  strategist context hash for up to 60 s, stopping early only when the objects
+  the arm can see first differ (must be 0 differences). Sim-level lockstep tests
+  (`SimFogLeakTests`) cover the combat and event paths the real bot may not reach
+  in that window. Entity ids are numbered per owner, so an id never reveals how
+  much the enemy has built.
 
 ## Integration record
 

@@ -106,4 +106,23 @@ public sealed class SimFogLeakTests
             Assert.Equal(JsonSerializer.Serialize(control.Observe(Soviet)), JsonSerializer.Serialize(probed.Observe(Soviet)));
         }
     }
+
+    [Fact]
+    public void The_leakage_probe_places_a_hidden_enemy_inside_the_observer_weapon_reach_and_wounds_hidden_enemies()
+    {
+        SkirmishSimulation sim = NewSim();
+        sim.DebugSpawnAt(Soviet, "NAPOWR", new Cell(-4, 10));
+        sim.DebugSpawnAt(Soviet, "V3", new Cell(9, 10));
+        EntityId hiddenPlant = sim.DebugSpawnAt(Allied, "GAPOWR", new Cell(30, 10));
+        List<ObservedEntity> before = [.. sim.Observe(Soviet, ObservationMode.Oracle).Entities];
+
+        SimLeakageProbe.PerturbHidden(sim, Soviet);
+
+        List<ObservedEntity> after = [.. sim.Observe(Soviet, ObservationMode.Oracle).Entities];
+        Assert.False(EastVisibleToSoviet(sim));
+        Assert.Contains(after, e => e.Owner == Allied && before.All(b => b.Id != e.Id)
+            && sim.Map.RegionOf(e.Position)!.Id == new RegionId(1) && e.Position.DistanceTo(new Cell(9, 10)) <= 10);
+        Assert.True(after.Single(e => e.Id == hiddenPlant).Health < before.Single(e => e.Id == hiddenPlant).Health);
+        Assert.Equal(before.Where(e => e.Owner == Soviet), after.Where(e => e.Owner == Soviet));
+    }
 }

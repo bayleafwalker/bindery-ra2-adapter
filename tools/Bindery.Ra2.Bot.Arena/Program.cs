@@ -34,6 +34,9 @@ public sealed record SkippedArm(string Arm, string Reason);
 /// </remarks>
 public static class Program
 {
+    /// <summary>Game times at which each arm's leakage probe perturbs hidden state.</summary>
+    internal static readonly double[] LeakageProbeTimes = [90, 240];
+
     public static int Main(string[] args)
     {
         ArgumentNullException.ThrowIfNull(args);
@@ -193,10 +196,12 @@ public static class Program
                 context.DistillSource = "llm arm in this run (training maps)";
             }
 
-            LeakageProbeResult probe = LeakageProbe.Run(arm, maps[0].Map, 1, rules, factory);
+            // Two perturbation times: early, and after the armies have usually met, when leaks through fire and kill
+            // events can show.
+            LeakageProbeResult[] armProbes = [.. LeakageProbeTimes.Select(t => LeakageProbe.Run(arm, maps[0].Map, 1, rules, factory, perturbAtSeconds: t))];
             if (arm.Name == "bandit") context.Bandit.AbandonEpisode();
-            probes.Add(probe);
-            Console.WriteLine($"{arm}: {armResults.Length} matches, {armResults.Count(static r => r.Winner == 0)} wins; leakage probe {probe.Differences}/{probe.FramesCompared} differing frames.");
+            probes.AddRange(armProbes);
+            Console.WriteLine($"{arm}: {armResults.Length} matches, {armResults.Count(static r => r.Winner == 0)} wins; leakage probe {armProbes.Sum(static p => p.Differences)}/{armProbes.Sum(static p => p.FramesCompared)} differing frames.");
         }
 
         List<MatchRecord> ordered = [.. results.OrderBy(r => r.Arm, StringComparer.Ordinal)

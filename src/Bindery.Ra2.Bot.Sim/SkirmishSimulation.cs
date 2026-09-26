@@ -30,7 +30,14 @@ public sealed class SkirmishSimulation
     private readonly Dictionary<RegionId, double> oreRemaining = [];
     private readonly List<(PlayerId Player, GameCommand Command)> pending = [];
     private List<GameEvent> frameEvents = [];
-    private uint nextEntityId = 1;
+    // Each player's objects are numbered in a range of their own. One shared counter would let a player read the
+    // enemy's hidden production off the gap between two of its own ids, which RA2 never shows.
+    private const uint EntityIdsPerPlayer = 0x0100_0000;
+    private readonly Dictionary<PlayerId, uint> nextEntityIdByOwner = [];
+
+    // Probe spawns take ids from a separate range, so a perturbed simulation hands out the same ids to everything
+    // built afterwards as its unperturbed twin (a shifted id would be a visible difference that is not a leak).
+    private uint nextProbeEntityId = 0xF000_0000;
 
     public SkirmishSimulation(SimMap map, IRulesDatabase rules, SimSettings settings)
     {
@@ -234,7 +241,7 @@ public sealed class SkirmishSimulation
         Cell position = RegionCenter(region);
         SimEntity entity = new()
         {
-            Id = new EntityId(nextEntityId++),
+            Id = new EntityId(nextProbeEntityId++),
             Owner = owner,
             TypeId = typeId,
             Position = position,
@@ -246,14 +253,68 @@ public sealed class SkirmishSimulation
         entities.Add(entity);
     }
 
+    /// <summary>
+    /// Wounds every enemy of <paramref name="observer"/> that stands in a region it cannot see (a tenth of full
+    /// health, never below 1): hidden health is a fact the observer has no way to know.
+    /// </summary>
+    internal void DebugWoundHidden(PlayerId observer)
+    {
+        HashSet<RegionId> visible = VisibleRegionsFor(observer);
+        foreach (SimEntity e in entities.Where(e => e.Alive && e.Owner != observer && !visible.Contains(e.Region)).OrderBy(static e => e.Id.Value))
+        {
+            e.Health = Math.Max(1, e.Health - Math.Max(1, e.MaxHealth / 10));
+        }
+    }
+
+    /// <summary>
+    /// Places a unit of <paramref name="owner"/> just inside the unseen region nearest to the observer's
+    /// longest-range armed object, in a cell that object's weapon reaches when one does: the case where a leak
+    /// needs combat (cross-border fire, a kill event) to show. The unit is the cheapest ground unit that weapon
+    /// can hit. Returns the spawned id, or null when the observer has no armed object or every region is seen.
+    /// </summary>
+    internal EntityId? DebugSpawnAcrossBorder(PlayerId owner, PlayerId observer)
+    {
+        HashSet<RegionId> visible = VisibleRegionsFor(observer);
+        List<Region> unseen = [.. map.Map.Regions.Where(r => !visible.Contains(r.Id)).OrderBy(static r => r.Id.Value)];
+        SimEntity? gun = entities
+            .Where(e => e.Alive && e.Owner == observer && rules.TryGet(e.TypeId, out UnitRule r) && r.Weapon is not (WeaponClass.None or WeaponClass.AntiAir) && r.Range > 0 && r.Damage > 0)
+            .OrderByDescending(e => rules.Get(e.TypeId).Range).ThenBy(static e => e.Id.Value)
+            .FirstOrDefault();
+        if (gun is null || unseen.Count == 0) return null;
+        UnitRule? victim = rules.All
+            .Where(r => r.Kind is EntityKind.Infantry or EntityKind.Vehicle && r.Strength > 0 && rules.Effectiveness(gun.TypeId, r.TypeId) > 0)
+            .OrderBy(static r => r.Cost).ThenBy(static r => r.TypeId, StringComparer.Ordinal)
+            .FirstOrDefault();
+        if (victim is null) return null;
+
+        Cell? best = null;
+        double bestDistance = double.MaxValue;
+        foreach (Region region in unseen)
+        {
+            // Walk from the region's centre toward the gun and keep the last cell still inside the region.
+            Cell c = region.Center;
+            double length = Math.Max(1, c.DistanceTo(gun.Position));
+            Cell inside = c;
+            for (int step = 1; step <= (int)length; step++)
+            {
+                Cell next = new(c.X + (int)Math.Round((gun.Position.X - c.X) * step / length), c.Y + (int)Math.Round((gun.Position.Y - c.Y) * step / length));
+                if (map.Map.RegionOf(next)?.Id != region.Id) break;
+                inside = next;
+            }
+            double distance = inside.DistanceTo(gun.Position);
+            if (distance < bestDistance) { bestDistance = distance; best = inside; }
+        }
+        return best is { } cell ? DebugSpawnAt(owner, victim.TypeId, cell, probeId: true) : null;
+    }
+
     /// <summary>Spawns an entity at an exact cell (its region is the cell's), without a creation event; for focused tests.</summary>
-    internal EntityId DebugSpawnAt(PlayerId owner, string typeId, Cell cell)
+    internal EntityId DebugSpawnAt(PlayerId owner, string typeId, Cell cell, bool probeId = false)
     {
         UnitRule rule = rules.Get(typeId);
         Region region = map.Map.RegionOf(cell) ?? throw new ArgumentException("Cell is outside every region.", nameof(cell));
         SimEntity entity = new()
         {
-            Id = new EntityId(nextEntityId++),
+            Id = probeId ? new EntityId(nextProbeEntityId++) : NextEntityId(owner),
             Owner = owner,
             TypeId = typeId,
             Position = cell,
@@ -268,6 +329,14 @@ public sealed class SkirmishSimulation
 
     // ----- setup helpers -----
 
+    private EntityId NextEntityId(PlayerId owner)
+    {
+        uint next = nextEntityIdByOwner.GetValueOrDefault(owner) + 1;
+        if (next >= EntityIdsPerPlayer) throw new InvalidOperationException($"Player {owner} ran out of entity ids.");
+        nextEntityIdByOwner[owner] = next;
+        return new EntityId(checked(((uint)owner.Value * EntityIdsPerPlayer) + next));
+    }
+
     private Region RegionById(RegionId id) => map.Map.Regions.First(r => r.Id == id);
 
     private Cell RegionCenter(RegionId id) => RegionById(id).Center;
@@ -277,7 +346,7 @@ public sealed class SkirmishSimulation
         UnitRule rule = rules.Get(typeId);
         SimEntity entity = new()
         {
-            Id = new EntityId(nextEntityId++),
+            Id = NextEntityId(owner),
             Owner = owner,
             TypeId = typeId,
             Position = position,
