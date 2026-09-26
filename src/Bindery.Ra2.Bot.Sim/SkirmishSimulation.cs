@@ -256,6 +256,10 @@ public sealed class SkirmishSimulation
 
     internal IReadOnlySet<RegionId> VisibleRegionsForProbe(PlayerId player) => VisibleRegionsFor(player);
 
+    /// <summary>Whether a harvester is on its way to a refinery with a load; for focused economy tests.</summary>
+    internal bool DebugIsReturningWithLoad(EntityId harvester) =>
+        entities.Find(e => e.Id == harvester) is { Phase: HarvesterPhase.ToRefinery, CarriedValue: > 0 };
+
     internal void DebugAdjustCredits(PlayerId player, int delta) => players[player].Credits += delta;
 
     internal void DebugEnqueue(PlayerId player, QueueKind kind, string typeId)
@@ -743,35 +747,42 @@ public sealed class SkirmishSimulation
         {
             if (!e.Alive || !rules.TryGet(e.TypeId, out UnitRule rule) || rule.Role != UnitRole.Harvester) continue;
             SimPlayerState state = players[e.Owner];
-            StepHarvester(e, rule, state);
+            StepHarvester(e, state);
         }
     }
 
-    private void StepHarvester(SimEntity e, UnitRule rule, SimPlayerState state)
+    /// <summary>
+    /// One second of a harvester's cycle. Trips to the ore and back are driven by the normal movement system, so
+    /// the harvester is present in every region on its route, where it can be seen and shot. A load is paid out
+    /// only at a refinery that still stands; with none, the harvester keeps its load and waits, and it does not
+    /// start a new load while its owner has no refinery at all. A harvester under a move order finishes the move
+    /// before resuming its cycle.
+    /// </summary>
+    private void StepHarvester(SimEntity e, SimPlayerState state)
     {
         switch (e.Phase)
         {
             case HarvesterPhase.Idle:
+                if (e.RemainingPath.Count > 0) return;
+                if (e.CarriedValue > 0)
+                {
+                    StartToRefinery(e);
+                    return;
+                }
+                if (NearestRefineryRegion(e.Owner, e.Region) is null) return;
                 RegionId? oreRegion = e.AssignedOreRegion is { } assigned && oreRemaining.GetValueOrDefault(assigned) > 0
                     ? assigned
                     : NearestOreRegion(e.Region);
-                if (oreRegion is null) return;
-                double toOre = Graph.TravelSeconds(e.Region, oreRegion.Value, rule.Speed);
-                if (double.IsInfinity(toOre)) return;
+                if (oreRegion is null || !RouteTo(e, oreRegion.Value)) return;
                 e.AssignedOreRegion = oreRegion;
                 e.Phase = HarvesterPhase.ToOre;
-                e.PhaseSecondsRemaining = Math.Max(toOre, 1.0 / GameTime.FramesPerSecond);
                 break;
 
             case HarvesterPhase.ToOre:
-                e.PhaseSecondsRemaining -= 1;
-                if (e.PhaseSecondsRemaining <= 0 && e.AssignedOreRegion is { } target)
-                {
-                    e.Region = target;
-                    e.SnapTo(RegionCenter(target));
-                    e.Phase = HarvesterPhase.Harvesting;
-                    e.PhaseSecondsRemaining = HarvesterHarvestSeconds;
-                }
+                if (e.RemainingPath.Count > 0) return;
+                if (e.AssignedOreRegion is not { } target || e.Region != target) { e.Phase = HarvesterPhase.Idle; return; }
+                e.Phase = HarvesterPhase.Harvesting;
+                e.PhaseSecondsRemaining = HarvesterHarvestSeconds;
                 break;
 
             case HarvesterPhase.Harvesting:
@@ -783,45 +794,59 @@ public sealed class SkirmishSimulation
                     if (e.AssignedOreRegion is { } depletedRegion) oreRemaining[depletedRegion] = Math.Max(0, available - load);
                     e.CarriedValue = load;
                     e.Phase = HarvesterPhase.Idle;
-                    if (load > 0)
-                    {
-                        RegionId? refineryRegion = NearestRefineryRegion(e.Owner, e.Region);
-                        if (refineryRegion is not null)
-                        {
-                            double toRefinery = Graph.TravelSeconds(e.Region, refineryRegion.Value, rule.Speed);
-                            if (!double.IsInfinity(toRefinery))
-                            {
-                                e.TargetRefineryRegion = refineryRegion;
-                                e.Phase = HarvesterPhase.ToRefinery;
-                                e.PhaseSecondsRemaining = Math.Max(toRefinery, 1.0 / GameTime.FramesPerSecond);
-                            }
-                        }
-                    }
+                    if (load > 0) StartToRefinery(e);
                 }
                 break;
 
             case HarvesterPhase.ToRefinery:
-                e.PhaseSecondsRemaining -= 1;
-                if (e.PhaseSecondsRemaining <= 0 && e.TargetRefineryRegion is { } refinery)
+                if (e.RemainingPath.Count > 0) return;
+                if (e.TargetRefineryRegion is not { } refinery || e.Region != refinery || !HasRefineryIn(e.Owner, refinery))
                 {
-                    e.Region = refinery;
-                    e.SnapTo(RegionCenter(refinery));
-                    e.Phase = HarvesterPhase.Unloading;
-                    e.PhaseSecondsRemaining = HarvesterUnloadSeconds;
+                    // Stopped, or the refinery it was heading for is gone: look again next second.
+                    e.Phase = HarvesterPhase.Idle;
+                    return;
                 }
+                e.Phase = HarvesterPhase.Unloading;
+                e.PhaseSecondsRemaining = HarvesterUnloadSeconds;
                 break;
 
             case HarvesterPhase.Unloading:
                 e.PhaseSecondsRemaining -= 1;
                 if (e.PhaseSecondsRemaining <= 0)
                 {
+                    e.Phase = HarvesterPhase.Idle;
+                    if (e.TargetRefineryRegion is not { } at || !HasRefineryIn(e.Owner, at)) return; // keeps the load
                     state.Credits += (int)Math.Round(e.CarriedValue * state.IncomeMultiplier);
                     e.CarriedValue = 0;
-                    e.Phase = HarvesterPhase.Idle;
                 }
                 break;
         }
     }
+
+    /// <summary>Sends a loaded harvester to its owner's nearest refinery; with none, it stays idle and keeps the load.</summary>
+    private void StartToRefinery(SimEntity e)
+    {
+        RegionId? refineryRegion = NearestRefineryRegion(e.Owner, e.Region);
+        if (refineryRegion is null || !RouteTo(e, refineryRegion.Value)) return;
+        e.TargetRefineryRegion = refineryRegion;
+        e.Phase = HarvesterPhase.ToRefinery;
+    }
+
+    /// <summary>Paths a unit to a region's centre through the regions between; false when it cannot get there.</summary>
+    private bool RouteTo(SimEntity e, RegionId destination)
+    {
+        IReadOnlyList<RegionId> path = Graph.Path(e.Region, destination);
+        if (path.Count == 0) return false;
+        e.RemainingPath.Clear();
+        for (int i = 1; i < path.Count; i++) e.RemainingPath.Add(path[i]);
+        e.FinalDestination = RegionCenter(destination);
+        e.HoldForCombat = false;
+        if (e.RemainingPath.Count == 0) e.RemainingPath.Add(destination); // walk to the centre of the region it is in
+        return true;
+    }
+
+    private bool HasRefineryIn(PlayerId owner, RegionId region) =>
+        entities.Any(e => e.Owner == owner && e.Alive && e.Region == region && rules.TryGet(e.TypeId, out UnitRule r) && r.Role == UnitRole.Economy);
 
     private RegionId? NearestOreRegion(RegionId from)
     {
