@@ -108,6 +108,13 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
         public void Run()
         {
             reservedFor = EconomyReserve();
+            // A reserve that can never be paid (less money than the link costs and no income to close the gap) only
+            // idles the base; it is dropped so the money at least buys an army.
+            if (reservedFor is not null && reservedFor.Cost > credits && features.Economy.IncomePerMinute.Current <= 0)
+            {
+                Notes.Add($"reserve dropped: {reservedFor.TypeId} costs {reservedFor.Cost}, {credits} left and no income");
+                reservedFor = null;
+            }
             economyReserve = reservedFor?.Cost ?? 0;
             if (HasRoom(QueueKind.Building)) PlanBuilding();
             if (HasRoom(QueueKind.Defense)) PlanDefense();
@@ -202,15 +209,23 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
             Queue(rule, choice.Reason);
         }
 
+        /// <summary>True when the economy reserve would refuse <paramref name="typeId"/> (see <see cref="Queue"/>).</summary>
+        private bool BlockedByReserve(string typeId) =>
+            reservedFor is not null && economyReserve > 0 && typeId != reservedFor.TypeId
+            && rules.TryGet(typeId, out UnitRule rule) && rule.Role != UnitRole.Power && rule.Cost > credits - economyReserve;
+
         private (string TypeId, string Reason)? NextBuilding()
         {
             if (belief.Power.LowPower && PowerType() is { } emergency) return (emergency.TypeId, "power: low power");
 
             // Barracks before the refinery: infantry is the only army available before the war factory, the
             // starting credits otherwise sit idle for minutes, and every production building also shortens the
-            // build time of what follows (the refinery and war factory).
+            // build time of what follows (the refinery and war factory). Not when it would dip into the economy
+            // reserve: the reserve would refuse it every plan, nothing would be queued, and no income would ever
+            // arrive; the reserved link comes first then.
             if (!rules.All.Any(r => r.Queue == QueueKind.Infantry && r.Kind != EntityKind.Building && Buildable(r))
-                && CheapestOfQueue(QueueKind.Infantry) is { } infantry && FirstStepToward(infantry) is { } barracks)
+                && CheapestOfQueue(QueueKind.Infantry) is { } infantry && FirstStepToward(infantry) is { } barracks
+                && !BlockedByReserve(barracks))
             {
                 return (barracks, $"opening: toward {infantry.TypeId}");
             }
