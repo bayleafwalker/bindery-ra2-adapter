@@ -49,7 +49,8 @@ public static class SimMaps
         return new SimMap(map, [new RegionId(start0), new RegionId(start1)]);
     }
 
-    // 8 regions: two symmetric lanes meeting at a contested, ore-rich centre.
+    // 9 regions: two symmetric lanes meeting at a contested, ore-rich centre; each start has its own home ore field
+    // (the east start had none, so the start the arm always takes began with a 33-cell head start to income).
     private static SimMap BuildTwinValley()
     {
         Region[] regions =
@@ -62,13 +63,14 @@ public static class SimMaps
             R(5, "lane-north-east", 75, 25, 7),
             R(6, "lane-south-east", 75, 75, 7),
             R(7, "start-east", 90, 50, 8, start: true),
+            R(8, "ore-east", 75, 50, 6, ore: true),
         ];
         RegionLink[] links =
         [
             L(0, 1, 15), L(1, 2, 26), L(1, 3, 26), L(2, 4, 22), L(3, 4, 22),
-            L(4, 5, 22), L(4, 6, 22), L(5, 7, 26), L(6, 7, 26),
+            L(4, 5, 22), L(4, 6, 22), L(5, 8, 26), L(6, 8, 26), L(8, 7, 15),
         ];
-        OreField[] ore = [Ore(1, 25, 50), Ore(4, 55, 50, 16_000)];
+        OreField[] ore = [Ore(1, 25, 50), Ore(4, 55, 50, 16_000), Ore(8, 75, 50)];
         return Build("twin-valley", 100, 100, regions, links, ore, 0, 7);
     }
 
@@ -119,7 +121,7 @@ public static class SimMaps
         [
             // The straits are crossed by bridges (ground and naval): without them the two sides have no ground
             // route to each other, and the fixture has no naval units, so every match could only time out.
-            L(0, 1, 14), L(0, 2, 14), L(2, 3, 8, ground: true, naval: true),
+            L(0, 1, 14), L(0, 2, 14), L(2, 1, 20), L(2, 3, 8, ground: true, naval: true),
             L(3, 4, 8, ground: true, naval: true), L(4, 5, 18),
             L(4, 6, 8, ground: true, naval: true), L(6, 7, 8, ground: true, naval: true),
             L(7, 8, 20), L(7, 9, 14), L(9, 8, 14),
@@ -128,7 +130,8 @@ public static class SimMaps
         return Build("island-bridges", 100, 100, regions, links, ore, 0, 9);
     }
 
-    // 12 regions: a wide, mostly-open steppe with many alternate routes.
+    // 13 regions: a wide, mostly-open steppe with many alternate routes, the east half a mirror of the west (each
+    // start touches two ore fields; the east start used to touch one).
     private static SimMap BuildOpenSteppe()
     {
         Region[] regions =
@@ -141,10 +144,11 @@ public static class SimMaps
             R(5, "ore-sw", 30, 70, 6, ore: true),
             R(6, "mid-south", 50, 80, 7),
             R(7, "centre", 50, 50, 9, ore: true),
-            R(8, "mid-east-north", 70, 20, 7),
+            R(8, "flank-ne", 80, 15, 7),
             R(9, "ore-ne", 70, 30, 6, ore: true),
-            R(10, "mid-east-south", 70, 80, 7),
+            R(10, "flank-se", 80, 85, 7),
             R(11, "start-east", 92, 50, 8, start: true),
+            R(12, "ore-se", 70, 70, 6, ore: true),
         ];
         RegionLink[] links =
         [
@@ -152,10 +156,11 @@ public static class SimMaps
             L(1, 3, 18), L(2, 3, 16), L(2, 7, 22),
             L(4, 6, 18), L(5, 6, 16), L(5, 7, 22),
             L(3, 7, 20), L(6, 7, 20),
-            L(3, 8, 20), L(6, 10, 20), L(7, 9, 20),
-            L(8, 9, 16), L(10, 9, 22), L(8, 11, 24), L(10, 11, 24), L(9, 11, 22),
+            L(11, 8, 20), L(11, 10, 20), L(11, 9, 24), L(11, 12, 24),
+            L(8, 3, 18), L(9, 3, 16), L(9, 7, 22),
+            L(10, 6, 18), L(12, 6, 16), L(12, 7, 22),
         ];
-        OreField[] ore = [Ore(2, 30, 30), Ore(5, 30, 70), Ore(7, 50, 50, 16_000), Ore(9, 70, 30)];
+        OreField[] ore = [Ore(2, 30, 30), Ore(5, 30, 70), Ore(7, 50, 50, 16_000), Ore(9, 70, 30), Ore(12, 70, 70)];
         return Build("open-steppe", 100, 100, regions, links, ore, 0, 11);
     }
 
