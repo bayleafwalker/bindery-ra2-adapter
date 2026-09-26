@@ -92,6 +92,26 @@ public sealed class Ra2BotHostTests
     }
 
     [Fact]
+    public async Task Cancelling_the_run_returns_the_report_so_far_with_the_match_not_ended()
+    {
+        IRulesDatabase rules = RulesDatabase.LoadEmbeddedFixture();
+        using BotRuntime runtime = StandardBot.Create(rules, PlaybookLibrary.LoadDefault(), new PlaybookSelector());
+        RecordingTransport transport = new();
+        RecordedSource source = new(Recording());
+        Ra2BotHost host = new(runtime, new Ra2ObservationAssembler(new PlayerId(0), Faction.Allied, Map), new Ra2CommandSink(transport));
+        using CancellationTokenSource cancel = new();
+        host.FrameTicked += (_, ticked) => { if (ticked.Frame.Time.Frame >= 45) cancel.Cancel(); };
+
+        Ra2BotHostReport report = await host.RunAsync(source, cancel.Token);
+
+        Assert.False(report.MatchEnded);
+        Assert.InRange(report.Frames, 3, 8);
+        Assert.Equal(runtime.Metrics.Frames, report.Frames);
+        Assert.Equal(transport.Sent.Count, report.CommandsSent);
+        Assert.Equal(source.Yielded, report.RawEvents);
+    }
+
+    [Fact]
     public async Task Host_flushes_each_frame_before_the_next_frame_is_ticked()
     {
         IRulesDatabase rules = RulesDatabase.LoadEmbeddedFixture();

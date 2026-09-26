@@ -62,28 +62,36 @@ public sealed class Ra2BotHost
         ArgumentNullException.ThrowIfNull(source);
         long raw = 0, frames = 0, sent = 0;
         bool ended = false;
-        await foreach (RawObservation observation in source.ReadAsync(cancellationToken).ConfigureAwait(false))
+        try
         {
-            raw++;
-            foreach (NormalizedObservation normalized in normalizer.Normalize([observation]))
+            await foreach (RawObservation observation in source.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                foreach (ObservationFrame frame in assembler.Ingest(normalized))
+                raw++;
+                foreach (NormalizedObservation normalized in normalizer.Normalize([observation]))
                 {
-                    IReadOnlyList<GameCommand> commands = runtime.Tick(frame);
-                    foreach (GameCommand command in commands) sink.Submit(command);
-                    await sink.FlushAsync(cancellationToken).ConfigureAwait(false);
-                    frames++;
-                    sent += commands.Count;
-                    FrameTicked?.Invoke(this, new Ra2BotHostFrame(frame, commands));
-                    if (frame.Events.Any(static e => e.Kind == GameEventKind.MatchEnded))
+                    foreach (ObservationFrame frame in assembler.Ingest(normalized))
                     {
-                        ended = true;
-                        break;
+                        IReadOnlyList<GameCommand> commands = runtime.Tick(frame);
+                        foreach (GameCommand command in commands) sink.Submit(command);
+                        await sink.FlushAsync(cancellationToken).ConfigureAwait(false);
+                        frames++;
+                        sent += commands.Count;
+                        FrameTicked?.Invoke(this, new Ra2BotHostFrame(frame, commands));
+                        if (frame.Events.Any(static e => e.Kind == GameEventKind.MatchEnded))
+                        {
+                            ended = true;
+                            break;
+                        }
                     }
+                    if (ended) break;
                 }
                 if (ended) break;
             }
-            if (ended) break;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // A cancelled run still reports what it did (frames, commands, the missing-telemetry audit). Commands
+            // submitted but not flushed when the flush was cancelled are not sent: the caller stopped the match.
         }
         return new Ra2BotHostReport(raw, frames, sent, ended, assembler.MissingFields);
     }
