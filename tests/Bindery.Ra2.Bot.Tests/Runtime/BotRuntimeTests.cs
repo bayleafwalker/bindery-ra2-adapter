@@ -255,4 +255,26 @@ public sealed class BotRuntimeTests
         Assert.Equal(0, replay.Misses);
         Assert.Equal(recorded.ComputeHash(), replayed.ComputeHash());
     }
+    /// <summary>
+    /// Retail RA2 charges while building, so credits on hand still include what queued items owe. The ledger must
+    /// size the period from credits less that remainder, or each pass funds the same money again on another queue.
+    /// The simulator debits at order time and must not subtract it twice.
+    /// </summary>
+    [Theory]
+    [InlineData(true, 1000 - 675 + 10)]
+    [InlineData(false, 1000 + 10)]
+    public void Ledger_capacity_excludes_what_queued_production_still_owes(bool chargedWhileBuilding, int expected)
+    {
+        using BotRuntime runtime = Runtimes.Create(Selector(),
+            options: new BotOptions(RunDeterministicStrategistsInline: true, ProductionChargedWhileBuilding: chargedWhileBuilding));
+        ProductionQueueState[] queues =
+        [
+            new(QueueKind.Vehicle, [new QueueItem("mtnk", 0.25, false, false)], 1),
+            new(QueueKind.Building, [new QueueItem("gapowr", 1.0, true, false)], 1),
+        ];
+        runtime.Tick(Frames.At(0, credits: 1000) with { Queues = queues });
+
+        // The tank being built still owes 900 × 0.75 = 675; the finished power plant owes nothing.
+        Assert.Equal(expected, runtime.Ledger.Capacity);
+    }
 }
