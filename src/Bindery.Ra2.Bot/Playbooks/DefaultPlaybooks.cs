@@ -79,7 +79,7 @@ internal static class DefaultPlaybooks
         TechGoals: ["GAWEAP", "FV"],
         AttackConditions: [new Condition(ConditionMetric.OwnArmyValue, Comparison.Ge, 1200)],
         AbortTriggers: [new Condition(ConditionMetric.BaseThreatRatio, Comparison.Ge, 1.5)],
-        Parameters: [new PlaybookParameter("harvesterTarget", 2, 6, 3, "Harvester count to reach before committing to the push.")],
+        Parameters: [new PlaybookParameter("harvesterTarget", 2, 6, 3, "Harvesters kept in production ahead of army units (never fewer than one per refinery).")],
         MinCommitSeconds: 40);
 
     private static Playbook AlliedPrismTurtle { get; } = new(
@@ -113,7 +113,13 @@ internal static class DefaultPlaybooks
         TechGoals: ["GAAIRC", "E3"],
         AttackConditions: [new Condition(ConditionMetric.EnemyArmyValueEstimate, Comparison.Lt, 1000)],
         AbortTriggers: [new Condition(ConditionMetric.LossesValue15s, Comparison.Ge, 500)],
-        Parameters: [new PlaybookParameter("harassIntervalSeconds", 30, 120, 60, "Seconds between harassment sorties.")],
+        // retreatBelowForceRatio is declared here, where breaking off early matters most: the validator drops any
+        // parameter the active playbook does not declare, so an undeclared name never reaches the planner.
+        Parameters:
+        [
+            new PlaybookParameter("harassIntervalSeconds", 30, 120, 60, "Seconds between harassment sorties."),
+            new PlaybookParameter("retreatBelowForceRatio", 0.3, 1.0, 0.6, "Local force ratio below which a raiding squad breaks off and retreats."),
+        ],
         MinCommitSeconds: 30);
 
     private static Playbook SovietRhinoRush { get; } = new(
@@ -143,7 +149,7 @@ internal static class DefaultPlaybooks
         TechGoals: ["NAWEAP", "HTK"],
         AttackConditions: [new Condition(ConditionMetric.OwnArmyValue, Comparison.Ge, 1200)],
         AbortTriggers: [new Condition(ConditionMetric.BaseThreatRatio, Comparison.Ge, 1.5)],
-        Parameters: [new PlaybookParameter("harvesterTarget", 2, 6, 3, "Harvester count to reach before committing to the push.")],
+        Parameters: [new PlaybookParameter("harvesterTarget", 2, 6, 3, "Harvesters kept in production ahead of army units (never fewer than one per refinery).")],
         MinCommitSeconds: 45);
 
     private static Playbook SovietV3Siege { get; } = new(
