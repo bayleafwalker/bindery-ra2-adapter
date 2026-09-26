@@ -64,7 +64,7 @@ public sealed class FullMatchTests
         // the arm's own macro. The economy check is on timing, not on a count, because the arm may win before a
         // second harvester would finish: once the war factory stands, a harvester must be queued promptly.
         using MatchHarness match = MatchHarness.CreateVsScripted(new PlaybookSelector(), "ai-turtle", seed: 1);
-        int maxRefineries = 0, maxCombat = 0;
+        int maxRefineries = 0, maxCombat = 0, maxHarvesters = 0;
         double? factoryAt = null, harvesterAt = null;
         bool attacked = false;
         match.RunUntil(900, () =>
@@ -73,11 +73,12 @@ public sealed class FullMatchTests
             ObservationFrame view = match.Sim.Observe(MatchHarness.ArmPlayer, ObservationMode.Oracle);
             IReadOnlyList<ObservedEntity> own = match.OwnEntities(MatchHarness.ArmPlayer);
             int refineries = 0, combat = 0;
-            bool harvester = view.Queues.SelectMany(static q => q.Items).Any(static i => MatchHarness.Rules.Get(i.TypeId).Role == UnitRole.Harvester);
+            int harvesters = view.Queues.SelectMany(static q => q.Items).Count(static i => MatchHarness.Rules.Get(i.TypeId).Role == UnitRole.Harvester);
+            bool harvester = harvesters > 0;
             foreach (ObservedEntity e in own)
             {
                 UnitRule rule = MatchHarness.Rules.Get(e.TypeId);
-                if (rule.Role == UnitRole.Harvester) harvester = true;
+                if (rule.Role == UnitRole.Harvester) { harvester = true; harvesters++; }
                 else if (rule.Role == UnitRole.Economy && rule.Kind == EntityKind.Building) refineries++;
                 else if (rule.Kind != EntityKind.Building && rule.Damage > 0) combat++;
                 if (rule.Kind == EntityKind.Building && rule.Queue == QueueKind.Building && rule.Role == UnitRole.Production
@@ -88,6 +89,7 @@ public sealed class FullMatchTests
             }
             if (harvester) harvesterAt ??= match.Sim.Time.Seconds;
             maxRefineries = Math.Max(maxRefineries, refineries);
+            maxHarvesters = Math.Max(maxHarvesters, harvesters);
             maxCombat = Math.Max(maxCombat, combat);
             attacked |= match.Arm.Squads.Any(static s => s.Objective == ObjectiveKind.AttackRegion && s.Engage);
         });
@@ -97,6 +99,12 @@ public sealed class FullMatchTests
         if (factoryAt is { } built && match.Sim.Time.Seconds - built > 20)
         {
             Assert.True(harvesterAt is { } h && h - built <= 20, $"war factory at {built:0} s, first harvester queued at {harvesterAt?.ToString("0") ?? "never"}");
+        }
+        // A count, not only timing: with a war factory standing for a minute the economy goes past one harvester
+        // (the default target is three per refinery), unless the match ended first.
+        if (factoryAt is { } standing && match.Sim.Time.Seconds - standing > 60)
+        {
+            Assert.True(maxHarvesters >= 2, $"harvesters owned or queued at once: {maxHarvesters}, war factory from {standing:0} s to {match.Sim.Time.Seconds:0} s");
         }
         Assert.True(maxCombat >= 5, $"combat units at once: {maxCombat}");
         Assert.True(attacked, "the army never went on the attack");
