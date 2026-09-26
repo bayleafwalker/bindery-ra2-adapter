@@ -138,6 +138,7 @@ public sealed class SkirmishSimulation
             AdvanceEconomy();
             AdvanceProduction();
             AdvanceSuperweapons();
+            DropTargetsInFog();
             ResolveCombat();
             AdvanceRepair();
         }
@@ -564,10 +565,16 @@ public sealed class SkirmishSimulation
         return any;
     }
 
+    /// <summary>
+    /// An attack order names an enemy the issuer can see now (RA2 cannot target an object in fog); otherwise it is
+    /// rejected. Accepting it would walk the units to the target's true, hidden region, so a belief-mode bot could
+    /// follow enemies through fog, or find objects it never saw by guessing their ids.
+    /// </summary>
     private bool ApplyAttack(PlayerId player, AttackCommand c)
     {
         SimEntity? target = entities.Find(e => e.Id == c.Target && e.Alive);
         if (target is null) return false;
+        if (target.Owner != player && !IsVisibleTo(target, VisibleRegionsFor(player))) return false;
         bool any = false;
         foreach (EntityId id in c.Units)
         {
@@ -950,6 +957,27 @@ public sealed class SkirmishSimulation
             }
         }
     }
+
+    /// <summary>
+    /// Clears an explicit target that has died or left its owner's sight: the order ends there, as in RA2, and the
+    /// unit keeps whatever path it had toward where the target was last seen instead of tracking it through fog.
+    /// </summary>
+    private void DropTargetsInFog()
+    {
+        Dictionary<PlayerId, HashSet<RegionId>> visibleTo = [];
+        foreach (SimEntity e in entities)
+        {
+            if (!e.Alive || e.ExplicitTarget is not { } targetId) continue;
+            SimEntity? target = entities.Find(t => t.Id == targetId);
+            if (target is null || !target.Alive) { e.ExplicitTarget = null; continue; }
+            if (target.Owner == e.Owner) continue;
+            HashSet<RegionId> visible = visibleTo.TryGetValue(e.Owner, out HashSet<RegionId>? set) ? set : visibleTo[e.Owner] = VisibleRegionsFor(e.Owner);
+            if (!IsVisibleTo(target, visible)) e.ExplicitTarget = null;
+        }
+    }
+
+    /// <summary>Whether an object stands in a region the given visible set covers, judged by its cell, as Observe does.</summary>
+    private bool IsVisibleTo(SimEntity e, HashSet<RegionId> visible) => map.Map.RegionOf(e.Position) is { } at && visible.Contains(at.Id);
 
     private SimEntity? ChooseTarget(SimEntity attacker, UnitRule attackerRule, List<SimEntity> present)
     {
