@@ -962,13 +962,17 @@ public sealed class SkirmishSimulation
     /// across a border, and a defense reach only as far as its range. Damage is applied per region of the target,
     /// in region order, then target id order. Cross-border fire needs the target's region to be visible to the
     /// attacker's owner, as RA2 cannot acquire a target in fog: otherwise a long-range unit would kill enemies its
-    /// owner never saw, and the kill event would tell the owner their type and cell.
+    /// owner never saw, and the kill event would tell the owner their type and cell. A building that drains power
+    /// does not fire while its owner is on low power.
     /// </summary>
     private void ResolveCombat()
     {
         Dictionary<PlayerId, HashSet<RegionId>> visibleTo = [];
         HashSet<RegionId> VisibleTo(PlayerId player) =>
             visibleTo.TryGetValue(player, out HashSet<RegionId>? set) ? set : visibleTo[player] = VisibleRegionsFor(player);
+
+        // Low power takes powered base defenses offline, as in RA2 (the usual way to break a turtle).
+        Dictionary<PlayerId, bool> lowPower = players.Values.ToDictionary(static p => p.Id, p => ComputePower(p).LowPower);
 
         Dictionary<RegionId, List<SimEntity>> byRegion = [];
         foreach (SimEntity e in entities)
@@ -985,6 +989,7 @@ public sealed class SkirmishSimulation
             foreach (SimEntity attacker in present.OrderBy(e => e.Id.Value))
             {
                 if (!rules.TryGet(attacker.TypeId, out UnitRule rule) || rule.Weapon == WeaponClass.None || rule.Range <= 0 || rule.Damage <= 0) continue;
+                if (rule.Kind == EntityKind.Building && rule.Power < 0 && lowPower.GetValueOrDefault(attacker.Owner)) continue;
                 SimEntity? target = ChooseTarget(attacker, rule, present) ?? ChooseTargetInRange(attacker, rule, alive, VisibleTo(attacker.Owner));
                 if (target is null) continue;
                 double amount = rule.Damage * rules.Effectiveness(attacker.TypeId, target.TypeId);
