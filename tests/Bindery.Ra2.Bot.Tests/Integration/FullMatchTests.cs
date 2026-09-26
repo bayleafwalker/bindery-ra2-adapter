@@ -30,7 +30,7 @@ public sealed class FullMatchTests
             match.ArmLog.ComputeHash(),
             match.Sim.ComputeStateHash(),
             match.Arm.Metrics.Activations,
-            match.Arm.Metrics.ComponentFailures + match.Opponent.Metrics.ComponentFailures,
+            match.Arm.Metrics.ComponentFailures + match.Opponent!.Metrics.ComponentFailures,
             [.. match.ArmDropped],
             [.. match.ArmLog.Records]);
     }
@@ -59,31 +59,48 @@ public sealed class FullMatchTests
     [Fact]
     public void The_bot_builds_an_economy_and_an_army_and_attacks()
     {
-        using MatchHarness match = MatchHarness.Create(new PlaybookSelector(), "turtle", seed: 1);
-        int maxHarvesters = 0, maxRefineries = 0, maxCombat = 0;
+        // Against the independent scripted opponent: a live pinned-playbook opponent now runs the same improved
+        // planner and, as Soviet, out-rushes the Allied arm before its war factory stands, which says nothing about
+        // the arm's own macro. The economy check is on timing, not on a count, because the arm may win before a
+        // second harvester would finish: once the war factory stands, a harvester must be queued promptly.
+        using MatchHarness match = MatchHarness.CreateVsScripted(new PlaybookSelector(), "ai-turtle", seed: 1);
+        int maxRefineries = 0, maxCombat = 0;
+        double? factoryAt = null, harvesterAt = null;
         bool attacked = false;
         match.RunUntil(900, () =>
         {
             if (match.Sim.Time.Frame % GameTime.FramesPerSecond != 0) return;
+            ObservationFrame view = match.Sim.Observe(MatchHarness.ArmPlayer, ObservationMode.Oracle);
             IReadOnlyList<ObservedEntity> own = match.OwnEntities(MatchHarness.ArmPlayer);
-            int harvesters = 0, refineries = 0, combat = 0;
+            int refineries = 0, combat = 0;
+            bool harvester = view.Queues.SelectMany(static q => q.Items).Any(static i => MatchHarness.Rules.Get(i.TypeId).Role == UnitRole.Harvester);
             foreach (ObservedEntity e in own)
             {
                 UnitRule rule = MatchHarness.Rules.Get(e.TypeId);
-                if (rule.Role == UnitRole.Harvester) harvesters++;
+                if (rule.Role == UnitRole.Harvester) harvester = true;
                 else if (rule.Role == UnitRole.Economy && rule.Kind == EntityKind.Building) refineries++;
                 else if (rule.Kind != EntityKind.Building && rule.Damage > 0) combat++;
+                if (rule.Kind == EntityKind.Building && rule.Queue == QueueKind.Building && rule.Role == UnitRole.Production
+                    && MatchHarness.Rules.All.Any(r => r.Role == UnitRole.Harvester && r.Prerequisites.Any(p => p.Contains(e.TypeId))))
+                {
+                    factoryAt ??= match.Sim.Time.Seconds;
+                }
             }
-            maxHarvesters = Math.Max(maxHarvesters, harvesters);
+            if (harvester) harvesterAt ??= match.Sim.Time.Seconds;
             maxRefineries = Math.Max(maxRefineries, refineries);
             maxCombat = Math.Max(maxCombat, combat);
             attacked |= match.Arm.Squads.Any(static s => s.Objective == ObjectiveKind.AttackRegion && s.Engage);
         });
 
         Assert.True(maxRefineries >= 1, $"refineries: {maxRefineries}");
-        Assert.True(maxHarvesters >= 2, $"harvesters: {maxHarvesters}");
+        Assert.True(factoryAt is not null || match.Sim.Winner == MatchHarness.ArmPlayer, "no war factory and no win");
+        if (factoryAt is { } built && match.Sim.Time.Seconds - built > 20)
+        {
+            Assert.True(harvesterAt is { } h && h - built <= 20, $"war factory at {built:0} s, first harvester queued at {harvesterAt?.ToString("0") ?? "never"}");
+        }
         Assert.True(maxCombat >= 5, $"combat units at once: {maxCombat}");
         Assert.True(attacked, "the army never went on the attack");
+        Assert.Equal(MatchHarness.ArmPlayer, match.Sim.Winner);
         Assert.True(match.ArmLog.OfKind(DecisionRecordKinds.Plan).Count > 100);
     }
 

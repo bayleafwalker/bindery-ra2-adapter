@@ -31,13 +31,27 @@ internal sealed class MatchHarness : IDisposable
             ["turtle"] = new Dictionary<Faction, string> { [Faction.Allied] = "allied-prism-turtle", [Faction.Soviet] = "soviet-turtle" },
         };
 
-    private MatchHarness(SkirmishSimulation sim, BotRuntime arm, DecisionLog armLog, BotRuntime opponent)
+    private MatchHarness(SkirmishSimulation sim, BotRuntime arm, DecisionLog armLog, BotRuntime? opponent, Bindery.Ra2.Bot.Sim.Opponents.ScriptedSkirmishAi? scripted = null)
     {
         Sim = sim;
         Arm = arm;
         ArmLog = armLog;
         Opponent = opponent;
+        Scripted = scripted;
     }
+
+    /// <summary>A match against the independent scripted opponent (<c>ai-*</c> style at hard difficulty) instead of a pinned playbook.</summary>
+    public static MatchHarness CreateVsScripted(IStrategist armPrimary, string aiStyle, SimMap? map = null, int seed = 1, double maxSeconds = 1200)
+    {
+        SimSettings settings = new(seed, maxSeconds, [new SimPlayer(ArmPlayer, Faction.Allied), new SimPlayer(OpponentPlayer, Faction.Soviet)]);
+        SkirmishSimulation sim = new(map ?? SimMaps.TwinValley, Rules, settings);
+        DecisionLog armLog = new();
+        BotRuntime arm = StandardBot.Create(Rules, Playbooks, armPrimary, log: armLog);
+        Bindery.Ra2.Bot.Sim.Opponents.ScriptedSkirmishAi scripted = new(Rules, OpponentPlayer, Faction.Soviet, sim.Map, aiStyle, Bindery.Ra2.Bot.Sim.Opponents.OpponentDifficulty.Hard, seed);
+        return new MatchHarness(sim, arm, armLog, null, scripted);
+    }
+
+    public Bindery.Ra2.Bot.Sim.Opponents.ScriptedSkirmishAi? Scripted { get; }
 
     public SkirmishSimulation Sim { get; }
 
@@ -45,7 +59,7 @@ internal sealed class MatchHarness : IDisposable
 
     public DecisionLog ArmLog { get; }
 
-    public BotRuntime Opponent { get; }
+    public BotRuntime? Opponent { get; }
 
     public List<DroppedCommand> ArmDropped { get; } = [];
 
@@ -72,7 +86,8 @@ internal sealed class MatchHarness : IDisposable
         ObservationFrame opponentFrame = Sim.Observe(OpponentPlayer);
         foreach (GameCommand command in Arm.Tick(armFrame)) Sim.Submit(ArmPlayer, command);
         ArmDropped.AddRange(Arm.LastDropped);
-        foreach (GameCommand command in Opponent.Tick(opponentFrame)) Sim.Submit(OpponentPlayer, command);
+        IReadOnlyList<GameCommand> opponentCommands = Scripted?.Tick(opponentFrame) ?? Opponent?.Tick(opponentFrame) ?? [];
+        foreach (GameCommand command in opponentCommands) Sim.Submit(OpponentPlayer, command);
         Sim.Step();
     }
 
@@ -93,6 +108,6 @@ internal sealed class MatchHarness : IDisposable
     public void Dispose()
     {
         Arm.Dispose();
-        Opponent.Dispose();
+        Opponent?.Dispose();
     }
 }

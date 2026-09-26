@@ -90,6 +90,8 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
         private readonly IReadOnlySet<string> placed = belief.OwnBuildingTypes;
         private readonly Faction faction = belief.Faction;
         private int credits = Math.Max(0, belief.Credits);
+        private int economyReserve;
+        private UnitRule? reservedFor;
 
         public List<GameCommand> Commands { get; } = [];
 
@@ -101,6 +103,8 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
 
         public void Run()
         {
+            reservedFor = EconomyReserve();
+            economyReserve = reservedFor?.Cost ?? 0;
             if (HasRoom(QueueKind.Building)) PlanBuilding();
             if (HasRoom(QueueKind.Defense)) PlanDefense();
             if (HasRoom(QueueKind.Vehicle)) PlanVehicle();
@@ -133,6 +137,14 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
         private bool Queue(UnitRule rule, string reason)
         {
             if (!Buildable(rule)) return false;
+            // Only the reserved link itself, and power it (or the base) cannot run without, may use the reserve.
+            bool exempt = reservedFor is null || rule.TypeId == reservedFor.TypeId
+                || (rule.Role == UnitRole.Power && (belief.Power.LowPower || belief.Power.Surplus + Math.Min(0, reservedFor.Power) < 0));
+            if (!exempt && economyReserve > 0 && rule.Cost > credits - economyReserve)
+            {
+                Notes.Add($"saving: {rule.TypeId} would dip below the {economyReserve} kept for the economy ({reason})");
+                return false;
+            }
             if (rule.Cost > credits)
             {
                 Notes.Add($"saving: {rule.TypeId} costs {rule.Cost}, {credits} left ({reason})");
@@ -144,6 +156,32 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
             credits -= rule.Cost;
             Notes.Add($"{reason}: queued {rule.TypeId} ({pool})");
             return true;
+        }
+
+        /// <summary>
+        /// The link whose cost every other purchase (army, defence, tech, spare power) must leave untouched while the economy's critical chain is
+        /// unfinished and its next link is not yet paid for: the first refinery, the step that unlocks harvesters
+        /// (the war factory), then the first two harvesters. Without it cheap infantry drains the starting credits
+        /// and the base never gets an income; with it, only money beyond that next link goes to units.
+        /// </summary>
+        private UnitRule? EconomyReserve()
+        {
+            int queuedHarvesters = belief.Queues.SelectMany(static q => q.Items).Count(i => rules.TryGet(i.TypeId, out UnitRule r) && r.Role == UnitRole.Harvester);
+            UnitRule? refinery = Cheapest(UnitRole.Economy, QueueKind.Building);
+            if (features.Economy.Refineries == 0)
+            {
+                return refinery is not null && !own.Contains(refinery.TypeId) ? refinery : null;
+            }
+            UnitRule? harvester = CheapestOfRole(UnitRole.Harvester);
+            if (harvester is null) return null;
+            if (!Buildable(harvester))
+            {
+                // The step toward harvesters still to pay for; once it is queued, the first harvester itself.
+                string? step = FirstStepToward(harvester);
+                if (step is not null) return rules.TryGet(step, out UnitRule stepRule) ? stepRule : null;
+                return rules.PathTo(faction, own, harvester.TypeId) is not null ? harvester : null;
+            }
+            return features.Economy.Harvesters + queuedHarvesters < 2 ? harvester : null;
         }
 
         // -- Building queue --
@@ -163,6 +201,15 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
         private (string TypeId, string Reason)? NextBuilding()
         {
             if (belief.Power.LowPower && PowerType() is { } emergency) return (emergency.TypeId, "power: low power");
+
+            // Barracks before the refinery: infantry is the only army available before the war factory, the
+            // starting credits otherwise sit idle for minutes, and every production building also shortens the
+            // build time of what follows (the refinery and war factory).
+            if (!rules.All.Any(r => r.Queue == QueueKind.Infantry && r.Kind != EntityKind.Building && Buildable(r))
+                && CheapestOfQueue(QueueKind.Infantry) is { } infantry && FirstStepToward(infantry) is { } barracks)
+            {
+                return (barracks, $"opening: toward {infantry.TypeId}");
+            }
 
             UnitRule? refinery = Cheapest(UnitRole.Economy, QueueKind.Building);
             int refineries = features.Economy.Refineries;
@@ -251,6 +298,12 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
                 .OrderBy(static r => r.Cost).ThenBy(static r => r.TypeId, StringComparer.Ordinal)
                 .FirstOrDefault();
 
+        /// <summary>The cheapest armed unit of this faction produced by <paramref name="queue"/>.</summary>
+        private UnitRule? CheapestOfQueue(QueueKind queue) =>
+            rules.All.Where(r => r.Queue == queue && r.Kind != EntityKind.Building && r.Cost > 0 && r.Damage > 0 && r.Factions.Contains(faction))
+                .OrderBy(static r => r.Cost).ThenBy(static r => r.TypeId, StringComparer.Ordinal)
+                .FirstOrDefault();
+
         private UnitRule? CheapestOfRole(UnitRole role) =>
             rules.All.Where(r => r.Role == role && r.Cost > 0 && r.Factions.Contains(faction))
                 .OrderBy(static r => r.Cost).ThenBy(static r => r.TypeId, StringComparer.Ordinal)
@@ -324,13 +377,22 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
             CompositionTarget? shortest = listed.OrderByDescending(c => c.MinShare - Current(c.Role)).FirstOrDefault();
             if (shortest is not null && shortest.MinShare - Current(shortest.Role) > 0) return shortest.Role;
 
-            double unlistedMax = Math.Max(0, 1 - intent.Composition.Sum(static c => c.MinShare));
+            // When no listed combat role can be produced anywhere yet (before the war factory, only infantry
+            // exists), the shares are unattainable: a queue that can fight builds its best role rather than
+            // standing idle on credits while the base is defenceless.
+            bool listedAttainable = intent.Composition.Any(c => c.Role != UnitRole.Defense && c.MinShare > 0
+                && rules.All.Any(r => r.Role == c.Role && r.Kind != EntityKind.Building && Buildable(r) && (enemyAir || r.Weapon != WeaponClass.AntiAir)));
+            double unlistedMax = listedAttainable ? Math.Max(0, 1 - intent.Composition.Sum(static c => c.MinShare)) : 1.0;
             UnitRole[] combat = [UnitRole.AntiArmor, UnitRole.AntiInfantry, UnitRole.Artillery, UnitRole.AntiAir];
             List<CompositionTarget> candidates = [.. listed];
             foreach (UnitRole role in combat)
             {
                 if (intent.Composition.Any(c => c.Role == role) || !CanMake(role)) continue;
                 candidates.Add(new CompositionTarget(role, 0, intent.Composition.Count == 0 ? 1 : unlistedMax));
+            }
+            if (!listedAttainable && candidates.Count > 0)
+            {
+                return candidates.OrderBy(c => Current(c.Role)).ThenBy(static c => c.Role.ToString(), StringComparer.Ordinal).First().Role;
             }
             CompositionTarget? roomiest = candidates.OrderByDescending(c => c.MaxShare - Current(c.Role)).ThenBy(static c => c.Role.ToString(), StringComparer.Ordinal).FirstOrDefault();
             if (roomiest is not null && roomiest.MaxShare - Current(roomiest.Role) > 0) return roomiest.Role;
