@@ -75,6 +75,31 @@ public sealed class SkirmishSimulationProductionTests
         Assert.Equal(creditsBefore, sim.Observe(player, ObservationMode.Oracle).Credits);
     }
 
+    // A refund for a building that is ready to place must take the placement away with it, or the building is free.
+    [Fact]
+    public void Cancelling_a_building_ready_to_place_refunds_it_and_it_can_no_longer_be_placed()
+    {
+        TestRules rules = new();
+        SkirmishSimulation sim = new(TestMaps.TwoPlayerCombat(), rules, SimTestHelpers.TwoPlayers(seed: 11, maxSeconds: 60));
+        PlayerId player = new(0);
+        SimTestHelpers.DeployStartingMcv(sim, player);
+        int creditsBefore = sim.Observe(player, ObservationMode.Oracle).Credits;
+        sim.Submit(player, new ProduceCommand("test", TestRules.Power, QueueKind.Building));
+        sim.Advance(5);
+        Assert.True(sim.Observe(player).Queues.Single(q => q.Kind == QueueKind.Building).Items.Single().Ready);
+
+        sim.Submit(player, new CancelProductionCommand("test", TestRules.Power, QueueKind.Building));
+        sim.Step();
+        Assert.Equal(creditsBefore, sim.Observe(player, ObservationMode.Oracle).Credits);
+
+        ObservedEntity yard = sim.Observe(player).Entities.Single(e => e.Owner == player && e.TypeId == TestRules.ConYard);
+        sim.Submit(player, new PlaceBuildingCommand("test", TestRules.Power, new Cell(yard.Position.X + 2, yard.Position.Y)));
+        sim.Step();
+
+        Assert.Equal(1, sim.RejectedCommandCount(player));
+        Assert.DoesNotContain(sim.Observe(player).Entities, e => e.TypeId == TestRules.Power);
+    }
+
     // Invariant: a not-owned entity ID must be rejected, never quietly re-attributed to the caller.
     [Fact]
     public void Commands_on_an_entity_the_player_does_not_own_are_rejected()

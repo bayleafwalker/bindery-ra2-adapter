@@ -489,6 +489,13 @@ public sealed class SkirmishSimulation
         int index = queue.Items.FindLastIndex(i => i.TypeId == c.TypeId);
         if (index < 0) return false;
         if (rules.TryGet(c.TypeId, out UnitRule rule)) state.Credits += rule.Cost;
+        // A finished building also waits in PendingPlacements; refunding it must take that placement away too, or
+        // the refunded building could still be placed for free.
+        if (queue.Items[index].AwaitingPlacement)
+        {
+            int placement = state.PendingPlacements.FindIndex(p => p.TypeId == c.TypeId && p.Queue == c.Queue);
+            if (placement >= 0) state.PendingPlacements.RemoveAt(placement);
+        }
         queue.Items.RemoveAt(index);
         return true;
     }
