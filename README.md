@@ -117,6 +117,18 @@ the bot's planner), and the pinned-playbook styles `rush`, `turtle`, `tech`,
 or `all`. The arm is a full `BotRuntime` and plays Allied on odd seeds and
 Soviet on even ones. `--trace <dir>` writes a per-match diagnostic (state every
 10 s, destroyed entities, the arm's decision log).
+`--benchmark contested` is the setting that can rank arms: mirror opponents on
+the live stack (`live-balanced`, `live-rush`, `live-tech`, `live-turtle`,
+`live-harass` unless `--opponents` is given), the Allied side (whichever seat)
+starting with 20,000 credits against 10,000 to offset the fixture's Soviet edge,
+and ±25% seeded combat noise; the selector wins about half of it. The knobs are
+also separate flags (`--opponent-income`, `--opponent-credits`,
+`--allied-income`, `--allied-credits`, `--combat-noise`). The default
+`standard` benchmark is saturated (every arm wins everything) and the report
+says so. `report.md` pairs every arm's matches with the `--baseline` arm
+(default `selector`) by opponent, map and seed and prints a per-metric table:
+mean difference with a 95% bootstrap interval, better/worse/tied pairs, exact
+sign-test p and Holm-adjusted p.
 `--oracle` gives the arm full-state frames (results are labelled), and
 `--dataset <file>` trains the distilled arm on an exported dataset (otherwise on
 the run's selector decisions). The output directory holds `results.json`,

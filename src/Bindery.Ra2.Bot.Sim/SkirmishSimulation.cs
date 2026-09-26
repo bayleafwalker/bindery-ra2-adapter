@@ -23,6 +23,7 @@ public sealed class SkirmishSimulation
     private readonly IRulesDatabase rules;
     private readonly SimSettings settings;
     private readonly Xorshift rng;
+    private readonly Xorshift combatRng;
     private readonly Dictionary<PlayerId, SimPlayerState> players = [];
     private readonly Dictionary<RegionId, PlayerId> startRegionOwner = [];
     private readonly List<SimEntity> entities = [];
@@ -45,6 +46,9 @@ public sealed class SkirmishSimulation
         this.rules = rules;
         this.settings = settings;
         rng = new Xorshift(settings.Seed);
+        // A separate stream, so turning combat noise on never shifts the rally-point sequence.
+        combatRng = new Xorshift(unchecked(settings.Seed * 7919 + 104729));
+        if (settings.CombatNoise is < 0 or >= 1) throw new ArgumentOutOfRangeException(nameof(settings), "Combat noise must be in [0, 1).");
         Graph = new RegionGraph(map.Map);
         Players = settings.Players.Select(p => p.Id).ToList();
 
@@ -58,7 +62,7 @@ public sealed class SkirmishSimulation
             SimPlayer player = settings.Players[i];
             RegionId start = map.StartRegions[i];
             startRegionOwner[start] = player.Id;
-            SimPlayerState state = new() { Id = player.Id, Faction = player.Faction, Credits = settings.StartingCredits };
+            SimPlayerState state = new() { Id = player.Id, Faction = player.Faction, Credits = player.StartingCredits ?? settings.StartingCredits, IncomeMultiplier = player.IncomeMultiplier };
             players[player.Id] = state;
 
             UnitRule? mcvRule = rules.All
@@ -633,7 +637,7 @@ public sealed class SkirmishSimulation
                 e.PhaseSecondsRemaining -= 1;
                 if (e.PhaseSecondsRemaining <= 0)
                 {
-                    state.Credits += e.CarriedValue;
+                    state.Credits += (int)Math.Round(e.CarriedValue * state.IncomeMultiplier);
                     e.CarriedValue = 0;
                     e.Phase = HarvesterPhase.Idle;
                 }
@@ -776,6 +780,7 @@ public sealed class SkirmishSimulation
                 if (target is null) continue;
                 double amount = rule.Damage * rules.Effectiveness(attacker.TypeId, target.TypeId);
                 if (amount <= 0) continue;
+                if (settings.CombatNoise > 0) amount *= 1 + settings.CombatNoise * (2 * combatRng.NextDouble() - 1);
                 Dictionary<EntityId, double> totalDamage = damageByRegion.TryGetValue(target.Region, out Dictionary<EntityId, double>? d) ? d : damageByRegion[target.Region] = [];
                 totalDamage[target.Id] = totalDamage.GetValueOrDefault(target.Id) + amount;
                 if (!topAttacker.TryGetValue(target.Id, out (EntityId Attacker, double Amount) best) || amount > best.Amount)

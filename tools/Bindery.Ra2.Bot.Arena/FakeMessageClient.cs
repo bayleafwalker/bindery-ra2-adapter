@@ -10,22 +10,38 @@ namespace Bindery.Ra2.Bot.Arena;
 /// The <c>--llm-fake</c> client: a deterministic stand-in for the Anthropic API that
 /// reads the same prompt a real model would get and answers with a schema-valid
 /// <see cref="IntentDraft"/> derived from it. It exercises the whole LLM pipeline
-/// (prompt building, structured-output parsing, mapping, validation, latency and
-/// arbitration) without a credential. Results produced with it are labelled
-/// <c>llm-fake</c>; they measure the pipeline, not a model.
+/// (prompt building, structured-output parsing, mapping, vocabulary tiers, validation,
+/// latency and arbitration) without a credential. Results produced with it are labelled
+/// <c>llm-fake</c>; they measure the pipeline and a scripted policy, not a model.
 /// </summary>
 /// <remarks>
-/// Policy, read from the prompt's JSON only: defend at a base threat of 1.3 or more; else,
-/// with an army at least 1.5 times the (non-zero) enemy estimate, the faction's armour
-/// push; else, before 240 s, the faction's mixed opening (IFV mix / flak mix); else the
-/// armour push. A known enemy-held region becomes an attack objective for pressure
-/// postures; otherwise it asks for a scout. In Refine mode it keeps the active playbook
-/// and moves each numeric parameter 10% toward aggression when ahead and toward caution
-/// when behind, within the catalogue's declared range. Token usage is estimated as
-/// characters / 4 so the cost columns are exercised; it is not a measurement.
+/// <para>The policy (<see cref="PolicyId"/>) is deliberately not the deterministic selector's, so an arena run can
+/// tell the two apart; it reads the prompt's JSON only (features, counters, catalogue, personality):</para>
+/// <list type="number">
+/// <item>Defend (<c>generic-defend</c>) at a base threat of 1.2 or more (the selector waits for 1.3).</item>
+/// <item>Enemy aircraft among the seen types (from the counters table): the faction's anti-air answer
+/// (<c>allied-harass</c> rocketeers, <c>soviet-flak-mix</c>).</item>
+/// <item>Before <see cref="EarlyPushSeconds"/>: the faction's armour timing (<c>allied-grizzly-timing</c> /
+/// <c>soviet-rhino-rush</c>), where the selector opens with the mixed army.</item>
+/// <item>Afterwards: armour while ahead (own army at least 1.3 times the estimate), the faction's tech playbook with
+/// two refineries and an even army, else the mixed army.</item>
+/// </list>
+/// <para>A known personality shifts the choice: aggressive keeps the armour timing, turtle and tech take their
+/// playbooks once safe, harasser takes the harass / siege playbook. Parameters are set from the situation (attack
+/// army value at 1.1 times the enemy estimate plus 300, within the declared range; shorter harass intervals; a
+/// wider siege buffer), the counters table's best role gets at least a 30% composition share, regions of interest
+/// are the first expansion candidate and the known enemy region, and an attack aborts on a 1500-value loss in
+/// 15 s. The vocabulary tier of the strategist decides which of these fields survive.</para>
+/// <para>In Refine mode it keeps the active playbook and moves each numeric parameter 10% toward aggression when
+/// ahead and toward caution when behind, within the catalogue's declared range. Token usage is estimated as
+/// characters / 4 so the cost columns are exercised; it is not a measurement.</para>
 /// </remarks>
 public sealed class FakeMessageClient : IMessageClient
 {
+    public const string PolicyId = "fake-counter-v2";
+
+    public const double EarlyPushSeconds = 300;
+
     public int Calls { get; private set; }
 
     public Task<ModelReply> CompleteAsync(ModelRequest request, CancellationToken cancellationToken)
@@ -35,7 +51,7 @@ public sealed class FakeMessageClient : IMessageClient
         Calls++;
         JsonNode match = JsonNode.Parse(request.UserContent[0].Text)!;
         JsonNode situation = JsonNode.Parse(request.UserContent[^1].Text)!;
-        bool refine = string.Equals(request.SystemPrompt, IntentPromptBuilder.SystemPrompt(StrategistMode.Refine), StringComparison.Ordinal);
+        bool refine = request.SystemPrompt.Contains("Mode: REFINE", StringComparison.Ordinal);
 
         IntentDraft draft = refine ? Refine(match, situation) : Strategic(match, situation);
         string text = JsonSerializer.Serialize(draft, IntentDraftSchema.ParseOptions);
@@ -44,14 +60,24 @@ public sealed class FakeMessageClient : IMessageClient
         return Task.FromResult(new ModelReply(text, "end_turn", null, usage, request.Model));
     }
 
+    private static string? Personality(JsonNode match) => match["personality"] switch
+    {
+        JsonObject o => o["id"]?.GetValue<string>(),
+        JsonValue v when v.TryGetValue(out string? s) => s,
+        _ => null,
+    };
+
     private static IntentDraft Strategic(JsonNode match, JsonNode situation)
     {
         string faction = match["faction"]!.GetValue<string>();
         bool allied = faction == nameof(Faction.Allied);
+        string? personality = Personality(match);
         JsonNode features = situation["features"]!;
         double seconds = Number(features["gameSeconds"]);
         double own = Number(features["army"]?["armyValue"]?["now"]);
         double enemy = Number(features["enemy"]?["estimatedArmyValue"]?["now"]);
+        double refineries = Number(features["economy"]?["refineries"]);
+        JsonArray counters = situation["counters"]?.AsArray() ?? [];
 
         double threat = 0;
         int? baseRegion = null;
@@ -72,28 +98,59 @@ public sealed class FakeMessageClient : IMessageClient
             .Select(static c => (int?)c!["region"]!.GetValue<int>())
             .OrderBy(static r => r)
             .FirstOrDefault();
+        int? expansion = (features["mapControl"]?["expansionCandidates"]?.AsArray() ?? [])
+            .Select(static r => (int?)r!.GetValue<int>())
+            .FirstOrDefault();
+        bool enemyAir = counters.Any(static c => c?["enemyKind"]?.GetValue<string>() == nameof(EntityKind.Aircraft));
+
+        string armour = allied ? "allied-grizzly-timing" : "soviet-rhino-rush";
+        string mixed = allied ? "allied-ifv-mix" : "soviet-flak-mix";
+        string tech = allied ? "allied-boom" : "soviet-apoc-tech";
+        string turtle = allied ? "allied-prism-turtle" : "soviet-turtle";
+        string harass = allied ? "allied-harass" : "soviet-v3-siege";
+        string antiAir = allied ? "allied-harass" : "soviet-flak-mix";
 
         string playbookId;
         string rationale;
-        if (threat >= 1.3)
+        if (threat >= 1.2)
         {
             playbookId = "generic-defend";
-            rationale = $"Base threat ratio {threat:0.00}: defend.";
+            rationale = $"Base threat ratio {threat:0.00}: defend before it grows.";
         }
-        else if (enemy > 0 && own >= 1.5 * enemy)
+        else if (enemyAir)
         {
-            playbookId = allied ? "allied-grizzly-timing" : "soviet-rhino-rush";
-            rationale = $"Army {own:0} vs estimated {enemy:0}: press the advantage.";
+            playbookId = antiAir;
+            rationale = "Enemy aircraft seen (counters table): anti-air answer.";
         }
-        else if (seconds < 240)
+        else if (personality == "turtle" && seconds >= 60)
         {
-            playbookId = allied ? "allied-ifv-mix" : "soviet-flak-mix";
-            rationale = "Opening: mixed army while the economy comes up.";
+            playbookId = turtle;
+            rationale = "Turtle personality: defences first, attack only with a clear lead.";
+        }
+        else if (personality == "harasser" && seconds >= 90)
+        {
+            playbookId = harass;
+            rationale = "Harasser personality: raid economy, avoid the main army.";
+        }
+        else if (seconds < EarlyPushSeconds || personality == "aggressive" && seconds < 2 * EarlyPushSeconds)
+        {
+            playbookId = armour;
+            rationale = $"Early armour timing before the enemy techs (t={seconds:0} s).";
+        }
+        else if (enemy > 0 && own >= 1.3 * enemy)
+        {
+            playbookId = armour;
+            rationale = $"Army {own:0} vs estimated {enemy:0}: press the advantage with armour.";
+        }
+        else if ((refineries >= 2 && (enemy <= 0 || own >= 0.8 * enemy)) || personality == "tech")
+        {
+            playbookId = tech;
+            rationale = $"Two refineries and an even army ({own:0} vs {enemy:0}): tech up.";
         }
         else
         {
-            playbookId = allied ? "allied-grizzly-timing" : "soviet-rhino-rush";
-            rationale = "Midgame: armour timing.";
+            playbookId = mixed;
+            rationale = "Behind or even without the economy for tech: mixed army.";
         }
 
         JsonNode playbook = Catalogue(match, playbookId);
@@ -106,17 +163,103 @@ public sealed class FakeMessageClient : IMessageClient
         bool aggressive = posture is nameof(StrategicPosture.Pressure) or nameof(StrategicPosture.AllIn) or nameof(StrategicPosture.Harass);
         if (aggressive && enemyRegion is { } target)
         {
-            objectives.Add(new DraftObjective { Kind = nameof(ObjectiveKind.AttackRegion), RegionId = target, TypeId = null, Priority = 2 });
+            string kind = posture == nameof(StrategicPosture.Harass) ? nameof(ObjectiveKind.Harass) : nameof(ObjectiveKind.AttackRegion);
+            objectives.Add(new DraftObjective { Kind = kind, RegionId = target, TypeId = null, Priority = 2 });
         }
         else
         {
             objectives.Add(new DraftObjective { Kind = nameof(ObjectiveKind.Scout), RegionId = null, TypeId = null, Priority = 3 });
         }
+        if (posture == nameof(StrategicPosture.Expand) && expansion is { } site)
+        {
+            objectives.Add(new DraftObjective { Kind = nameof(ObjectiveKind.Expand), RegionId = site, TypeId = null, Priority = 3 });
+        }
 
-        List<DraftParameter> parameters = (playbook["parameters"]?.AsArray() ?? [])
-            .Select(static p => new DraftParameter { Name = p!["name"]!.GetValue<string>(), Value = Number(p["default"]) })
+        List<DraftParameter> parameters = [];
+        foreach (JsonNode? p in playbook["parameters"]?.AsArray() ?? [])
+        {
+            if (p is null) continue;
+            string name = p["name"]!.GetValue<string>();
+            double min = Number(p["min"]), max = Number(p["max"]), value = Number(p["default"]);
+            value = name switch
+            {
+                "attackArmyValue" => 1.1 * enemy + 300,
+                "harvesterTarget" => refineries >= 2 ? 5 : 4,
+                "expandAtSeconds" => min + (max - min) * 0.25,
+                "harassIntervalSeconds" => min + (max - min) * 0.25,
+                "siegeRangeBufferCells" => max - 1,
+                "defendThreatRatio" => 0.9,
+                _ => value,
+            };
+            parameters.Add(new DraftParameter { Name = name, Value = Math.Round(Math.Clamp(value, min, max), 3) });
+        }
+
+        List<DraftComposition> composition = Composition(playbook, counters);
+        List<DraftCondition> attack = Conditions(playbook["attackConditions"]);
+        double attackValue = parameters.FirstOrDefault(static p => p.Name == "attackArmyValue")?.Value ?? 0;
+        if (attackValue > 0)
+        {
+            attack = [.. attack.Select(c => c.Metric == nameof(ConditionMetric.OwnArmyValue) ? new DraftCondition { Metric = c.Metric, Op = c.Op, Threshold = attackValue, RegionId = c.RegionId } : c)];
+        }
+        List<DraftCondition> abort = Conditions(playbook["abortTriggers"]);
+        abort.Add(new DraftCondition { Metric = nameof(ConditionMetric.LossesValue15s), Op = nameof(Comparison.Ge), Threshold = 1500, RegionId = null });
+
+        List<int> interest = [];
+        if (expansion is { } e) interest.Add(e);
+        if (enemyRegion is { } r && !interest.Contains(r)) interest.Add(r);
+
+        DraftBudget budget = Budget(playbook["budget"]!);
+        if (refineries < 2 && seconds < EarlyPushSeconds && budget.Army >= 0.1)
+        {
+            budget = new DraftBudget { Economy = budget.Economy + 0.1, Army = budget.Army - 0.1, Tech = budget.Tech, Defense = budget.Defense };
+        }
+
+        return new IntentDraft
+        {
+            PlaybookId = playbookId,
+            Posture = posture,
+            Parameters = parameters,
+            Objectives = objectives,
+            Budget = budget,
+            Composition = composition,
+            RegionsOfInterest = interest,
+            AttackConditions = attack,
+            AbortTriggers = abort,
+            ReplanTriggers = [],
+            ExpiresInSeconds = 90,
+            Confidence = 0.7,
+            Assumptions = [$"fake client ({PolicyId}): policy derived from the prompt features"],
+            Rationale = rationale,
+        };
+    }
+
+    /// <summary>The playbook's composition with the counters table's best role (against the most-seen enemy type) raised to at least a 30% minimum share.</summary>
+    private static List<DraftComposition> Composition(JsonNode playbook, JsonArray counters)
+    {
+        List<DraftComposition> composition = (playbook["composition"]?.AsArray() ?? [])
+            .Select(static c => new DraftComposition { Role = c!["role"]!.GetValue<string>(), MinShare = Number(c["minShare"]), MaxShare = Number(c["maxShare"]) })
             .ToList();
-        return Draft(playbook, playbookId, posture, parameters, objectives, 0.7, rationale);
+        string? counterRole = counters
+            .Where(static c => c?["best"]?.AsArray().Count > 0)
+            .Select(static c => c!["best"]![0]!["role"]?.GetValue<string>())
+            .FirstOrDefault(static r => r is not null);
+        if (counterRole is null) return composition;
+        int index = composition.FindIndex(c => c.Role == counterRole);
+        if (index >= 0)
+        {
+            DraftComposition c = composition[index];
+            composition[index] = new DraftComposition { Role = c.Role, MinShare = Math.Max(c.MinShare, 0.3), MaxShare = Math.Max(c.MaxShare, 0.3) };
+        }
+        else
+        {
+            composition.Add(new DraftComposition { Role = counterRole, MinShare = 0.3, MaxShare = 0.6 });
+        }
+        double total = composition.Sum(static c => c.MinShare);
+        if (total > 1)
+        {
+            composition = [.. composition.Select(c => new DraftComposition { Role = c.Role, MinShare = Math.Round(c.MinShare / total, 3), MaxShare = c.MaxShare })];
+        }
+        return composition;
     }
 
     private static IntentDraft Refine(JsonNode match, JsonNode situation)
@@ -155,25 +298,13 @@ public sealed class FakeMessageClient : IMessageClient
             })
             .ToList();
         string posture = active["posture"]!.GetValue<string>();
-        return Draft(playbook, playbookId, posture, parameters, objectives, 0.6, ahead ? "Ahead: tighten the timing." : "Behind: be more cautious.");
-    }
-
-    private static IntentDraft Draft(JsonNode playbook, string playbookId, string posture, List<DraftParameter> parameters, List<DraftObjective> objectives, double confidence, string rationale)
-    {
-        JsonNode budget = playbook["budget"]!;
         return new IntentDraft
         {
             PlaybookId = playbookId,
             Posture = posture,
             Parameters = parameters,
             Objectives = objectives,
-            Budget = new DraftBudget
-            {
-                Economy = Number(budget["economy"]),
-                Army = Number(budget["army"]),
-                Tech = Number(budget["tech"]),
-                Defense = Number(budget["defense"]),
-            },
+            Budget = Budget(playbook["budget"]!),
             Composition = (playbook["composition"]?.AsArray() ?? [])
                 .Select(static c => new DraftComposition { Role = c!["role"]!.GetValue<string>(), MinShare = Number(c["minShare"]), MaxShare = Number(c["maxShare"]) })
                 .ToList(),
@@ -182,11 +313,19 @@ public sealed class FakeMessageClient : IMessageClient
             AbortTriggers = Conditions(playbook["abortTriggers"]),
             ReplanTriggers = [],
             ExpiresInSeconds = 60,
-            Confidence = confidence,
-            Assumptions = ["fake client: policy derived from the prompt features"],
-            Rationale = rationale,
+            Confidence = 0.6,
+            Assumptions = [$"fake client ({PolicyId}): refine"],
+            Rationale = ahead ? "Ahead: tighten the timing." : "Behind: be more cautious.",
         };
     }
+
+    private static DraftBudget Budget(JsonNode budget) => new()
+    {
+        Economy = Number(budget["economy"]),
+        Army = Number(budget["army"]),
+        Tech = Number(budget["tech"]),
+        Defense = Number(budget["defense"]),
+    };
 
     private static List<DraftCondition> Conditions(JsonNode? node) =>
         (node?.AsArray() ?? [])

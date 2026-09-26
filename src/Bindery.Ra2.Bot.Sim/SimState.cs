@@ -83,6 +83,7 @@ internal sealed class SimPlayerState
     public required PlayerId Id { get; init; }
     public required Faction Faction { get; init; }
     public int Credits { get; set; }
+    public double IncomeMultiplier { get; init; } = 1.0;
     public bool Defeated { get; set; }
     public int RejectedCommands { get; set; }
     public Dictionary<QueueKind, QueueRuntime> Queues { get; } = [];

@@ -23,6 +23,7 @@ public static class ReportBuilder
         // Disclosed because the held-out split holds out maps only: these same opponents chose the selector's
         // default playbook, so a selector (or distilled) win rate against them is partly in-sample.
         sb.AppendLine("Opponents are not held out: the selector's default playbook was chosen from a style-versus-style matrix against these same pinned-playbook opponents (training maps only), so selector and distilled-arm win rates against them are partly in-sample. The held-out split holds out maps, not opponents.");
+        sb.AppendLine($"Benchmark: {options.Benchmark}.");
         List<string> labels = matches.SelectMany(static m => m.Players["arm"].Labels).Distinct(StringComparer.Ordinal).OrderBy(static l => l, StringComparer.Ordinal).ToList();
         if (labels.Count > 0) sb.AppendLine($"Labels in this run: {string.Join(", ", labels.Select(static l => $"`{l}`"))}.");
         sb.AppendLine();
@@ -31,7 +32,9 @@ public static class ReportBuilder
 
         AppendSkipped(sb, skipped);
         AppendWinRate(sb, matches);
+        AppendSaturation(sb, matches, options.Baseline);
         AppendPerOpponent(sb, matches);
+        PairedReport.Append(sb, matches, options.Baseline, $"## Paired differences vs {options.Baseline}");
         AppendGame(sb, matches);
         AppendStrategy(sb, matches);
         AppendCommands(sb, matches);
@@ -65,6 +68,22 @@ public static class ReportBuilder
             int timeouts = group.Count(static m => m.Reason == "timeout");
             sb.AppendLine($"| {group.Key.Arm} | {group.Key.Split} | {wins} | {losses} | {draws} | {total} | {Rate(wins, total)} | {Wilson(wins, total)} | {elimWins} | {timeouts} |");
         }
+        sb.AppendLine();
+    }
+
+    /// <summary>
+    /// A benchmark the baseline wins (or loses) almost always cannot rank other arms: every arm then scores the same.
+    /// The report says so when the baseline's win rate is outside 30–70%.
+    /// </summary>
+    private static void AppendSaturation(StringBuilder sb, IReadOnlyList<MatchRecord> matches, string baseline)
+    {
+        List<MatchRecord> own = [.. matches.Where(m => m.Arm == baseline)];
+        if (own.Count == 0) return;
+        double score = own.Average(static m => m.Winner switch { 0 => 1.0, null => 0.5, _ => 0.0 });
+        bool informative = score is >= 0.3 and <= 0.7;
+        sb.AppendLine(informative
+            ? $"Benchmark check: the baseline `{baseline}` scored {F(score, "0.000")} over {own.Count} matches, inside the 30–70% band, so win-rate differences between arms can show."
+            : $"Benchmark check: the baseline `{baseline}` scored {F(score, "0.000")} over {own.Count} matches, outside the 30–70% band: the benchmark is saturated and win-rate comparisons carry little information (use `--benchmark contested`).");
         sb.AppendLine();
     }
 

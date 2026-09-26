@@ -65,11 +65,11 @@ public static class MatchRunner
 
     public static Faction ArmFaction(int seed) => seed % 2 == 1 ? Faction.Allied : Faction.Soviet;
 
-    public static MatchRecord Run(ArmSpec arm, string opponent, SimMap map, string split, int seed, double maxSeconds, IRulesDatabase rules, IArenaAgentFactory factory, Action<IReadOnlyList<DecisionRecord>>? armLog = null, TextWriter? trace = null)
+    public static MatchRecord Run(ArmSpec arm, string opponent, SimMap map, string split, int seed, double maxSeconds, IRulesDatabase rules, IArenaAgentFactory factory, Action<IReadOnlyList<DecisionRecord>>? armLog = null, TextWriter? trace = null, BenchmarkSettings? benchmark = null)
     {
         Faction armFaction = ArmFaction(seed);
         Faction opponentFaction = armFaction == Faction.Allied ? Faction.Soviet : Faction.Allied;
-        SimSettings settings = new(seed, maxSeconds, [new SimPlayer(ArmPlayer, armFaction), new SimPlayer(OpponentPlayer, opponentFaction)]);
+        SimSettings settings = (benchmark ?? BenchmarkSettings.Standard).ToSimSettings(seed, maxSeconds, ArmPlayer, armFaction, OpponentPlayer, opponentFaction);
         SkirmishSimulation sim = new(map, rules, settings);
 
         ObservationMode mode = arm.Oracle ? ObservationMode.Oracle : ObservationMode.Belief;

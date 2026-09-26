@@ -256,6 +256,7 @@ public sealed class IntentPromptBuilder
                 {
                     ["typeId"] = rule.TypeId,
                     ["name"] = rule.Name,
+                    ["role"] = rule.Role.ToString(),
                     ["effectiveness"] = CanonicalJson.Number(effectiveness),
                     ["damagePerSecond"] = CanonicalJson.Number(rule.Damage * effectiveness),
                     ["cost"] = rule.Cost,

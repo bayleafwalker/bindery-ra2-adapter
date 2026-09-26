@@ -248,4 +248,26 @@ Gaps an operator review found after integration, and how each was closed.
   anti-air weapons hit aircraft only), with effective damage, cost and whether
   each is buildable now. The empty-base rule facts stay in the cacheable match
   context. Contract change: `StrategistContext.OwnedBuildingTypes` (optional).
+- **A benchmark that can tell arms apart.** Under the original setting every
+  arm won 180/180 and the `llm` arm replayed the selector's games. The
+  simulator gains per-player income multipliers and starting credits and seeded
+  combat noise (`SimSettings.CombatNoise`, its own RNG stream). An income bonus
+  for the scripted or frozen opponents did not help them (the selector still won
+  60/60 at 2.5× opponent income: they lose to the early army, not for money);
+  mirror play against the live-stack pinned styles gave 50%, but decided by
+  faction (the Soviet side won every mirror). `--benchmark contested` therefore
+  uses the five live-stack styles, gives the Allied side 20,000 starting credits
+  and ±25% combat noise: calibration (selector, all maps, 6 seeds, 150 matches)
+  73/150 = 0.49, as Allied 28/75, as Soviet 45/75 (noiseless: 69/150).
+  `FakeMessageClient` now plays its own policy (`fake-counter-v2`: armour timing
+  first, anti-air on seen aircraft, tech on two refineries, parameters from the
+  enemy estimate, the counters table's best role in the composition, regions of
+  interest) instead of the selector's. The report pairs matches by opponent,
+  map and seed against `--baseline` and tests every metric (sign test, Holm,
+  bootstrap interval) and flags a saturated baseline. First contested run
+  (`--arms selector,llm --maps all --seeds 4 --llm-fake`, 100 pairs, fake
+  client): selector 49/100, `llm` 32/100; paired score −0.17 [−0.30, −0.03],
+  16 better / 33 worse (sign p 0.021, Holm 0.149); first attack 54 s earlier,
+  trade share −0.11 (Holm 0.035), activations +3.2 per 10 min. These measure the
+  fake policy, not a model.
 
