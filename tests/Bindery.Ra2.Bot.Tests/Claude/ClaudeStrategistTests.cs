@@ -140,7 +140,7 @@ public sealed class ClaudeStrategistTests
         FakeMessageClient client = FakeMessageClient.Replying(ClaudeFixtures.DraftJson(ClaudeFixtures.Draft(playbookId: "allied-harass", posture: "Harass")));
         ClaudeStrategist strategist = new(client, ClaudeStrategistOptions.ForRefine());
 
-        StrategistProposal? proposal = await strategist.ProposeAsync(ClaudeFixtures.Context(active: ClaudeFixtures.ActiveIntent("allied-boom")));
+        StrategistProposal? proposal = await strategist.ProposeAsync(ClaudeFixtures.Context(active: ClaudeFixtures.ActiveIntent("allied-boom") with { Source = IntentSource.Llm }));
 
         Assert.Null(proposal);
         Assert.Equal(ClaudeFailureCodes.RefinePlaybookSwitch, strategist.LastFailure?.Code);
@@ -156,7 +156,7 @@ public sealed class ClaudeStrategistTests
             Budget = new DraftBudget { Economy = 0, Army = 1, Tech = 0, Defense = 0 },
         };
         ClaudeStrategist strategist = new(FakeMessageClient.Replying(ClaudeFixtures.DraftJson(draft), modelId: "claude-haiku-4-5-20251001"), ClaudeStrategistOptions.ForRefine());
-        StrategicIntent active = ClaudeFixtures.ActiveIntent("allied-boom");
+        StrategicIntent active = ClaudeFixtures.ActiveIntent("allied-boom") with { Source = IntentSource.Llm };
 
         StrategistProposal? proposal = await strategist.ProposeAsync(ClaudeFixtures.Context(ClaudeFixtures.Features(version: 11), active));
 

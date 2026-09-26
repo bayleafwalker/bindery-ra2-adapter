@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Globalization;
 using System.Text.Json.Nodes;
+using Bindery.Ra2.Bot.Arbitration;
 using Bindery.Ra2.Bot.Strategy;
 
 namespace Bindery.Ra2.Bot.Claude;
@@ -28,13 +30,16 @@ public sealed record IntentPrompt(string SystemPrompt, string MatchContext, stri
 public sealed class IntentPromptBuilder
 {
     /// <summary>Top-level keys of <see cref="IntentPrompt.MatchContext"/>.</summary>
-    public static readonly IReadOnlyList<string> MatchContextKeys = ["catalogue", "faction", "personality", "ruleFacts"];
+    public static readonly IReadOnlyList<string> MatchContextKeys = ["arbitration", "catalogue", "faction", "personality", "ruleFacts"];
 
     /// <summary>Top-level keys of <see cref="IntentPrompt.Situation"/>.</summary>
-    public static readonly IReadOnlyList<string> SituationKeys = ["activeIntent", "counters", "features", "history", "techProgress"];
+    public static readonly IReadOnlyList<string> SituationKeys = ["activeIntent", "conditionMetrics", "counters", "features", "history", "techProgress"];
 
-    private const string CommonSystemPrompt =
-        """
+    /// <summary>The ratio cap as the prompt spells it (invariant culture, like every number the model sees).</summary>
+    private static readonly string RatioCap = ConditionEvaluator.RatioCap.ToString(CultureInfo.InvariantCulture);
+
+    private static readonly string CommonSystemPrompt =
+        $$"""
         You are the strategic chief of staff for a Red Alert 2 / Yuri's Revenge skirmish bot. A deterministic operational planner and tactical controllers execute whatever you decide; you never control units, buildings, cells or clicks. Your only output is one strategic intent as JSON matching the provided schema, and nothing else.
 
         What you may decide:
@@ -44,8 +49,12 @@ public sealed class IntentPromptBuilder
         How to reason:
         - Base every claim on the features given. Do not assume enemy units, tech or positions that the features do not show. Enemy estimates carry evidence ages (seconds) and confidence in [0, 1]; old or low-confidence evidence is uncertainty, not fact. When scouting is stale or coverage is low, prefer plans that stay safe under that uncertainty, or add a Scout objective, and say so in assumptions.
         - Rule facts (costs, build seconds, prerequisite paths from an empty base) are authoritative; use them for timing and affordability rather than memory of the game. The situation's techProgress says what each tech goal still needs from the buildings you own now, and counters lists your most effective unit types against each enemy unit type you have seen (effectiveness is a damage multiplier, 1 = neutral); use them instead of remembering counters.
-        - Respect commitment: the active intent has a minimum commitment window (minCommitRemainingSeconds). Replacing it inside that window is only accepted when one of its abort triggers has fired or the base is under serious threat, so otherwise propose the same playbook with adjusted parameters.
-        - Changing posture needs clearly higher confidence than the incumbent's. Frequent switching loses games.
+        - Arbitration: the runtime accepts or refuses your proposal by these rules, with the numbers in the match context's arbitration block:
+          - A proposal with the same playbookId and the same posture as the active intent is a renewal: always accepted; it updates parameters and expiry and does not restart the commitment clock. Changing only the posture is not a renewal.
+          - Any other proposal is refused while activeIntent.minCommitRemainingSeconds is above 0, unless one of the active intent's abort triggers holds or BaseThreatRatio is above arbitration.baseThreatOverrideRatio. Inside the window, keep both playbookId and posture and adjust parameters. secondsActive and minCommitRemainingSeconds count from when the current plan was first accepted, across renewals.
+          - After the window, a posture change needs your confidence to be at least arbitration.postureConfidenceMargin above the active intent's confidence; a different playbook with the same posture needs no margin. A playbook without its own commitment uses arbitration.defaultMinCommitSeconds.
+          - A proposal whose own abort triggers already hold is refused.
+          - Frequent switching loses games.
 
         Field conventions:
         - Region ids are integers from the features; regionId is null when a field does not need a region. LocalForceRatio and ScoutingAgeSeconds conditions require a regionId.
@@ -54,27 +63,45 @@ public sealed class IntentPromptBuilder
         - Composition shares are fractions of army value per role, 0 <= minShare <= maxShare <= 1.
         - Conditions compare a metric with a threshold (Lt, Le, Gt, Ge). Attack conditions must all hold before an attack; any abort trigger ends the intent early; replan triggers ask for a new decision.
         - expiresInSeconds is how long the intent stays valid (typically 60–240). confidence is in [0, 1].
+        - Condition metrics, exactly as the runtime measures them (the situation's conditionMetrics gives the current value of every metric that needs no region):
+          - GameSeconds: game time in seconds.
+          - Credits: current credits.
+          - IncomePerMinute: current income per minute.
+          - OwnArmyValue: own army value.
+          - EnemyArmyValueEstimate: estimated enemy army value.
+          - ArmyValueRatio: own army value / estimated enemy army value, capped at {{RatioCap}}; {{RatioCap}} when no enemy army is estimated. Higher is better for you.
+          - LocalForceRatio (needs regionId): own responding value / enemy value at that region, capped at {{RatioCap}}; {{RatioCap}} when the region has no known enemy presence. Higher is better for you.
+          - HarvesterCount: own harvesters.
+          - ScoutingAgeSeconds (needs regionId): seconds since the region was last seen; a never-seen region is infinitely old, so Gt holds and Lt never does.
+          - BaseThreatRatio: the worst enemy value / own defending value over threats to your base, capped at {{RatioCap}}; 0 when nothing threatens the base. Higher is worse for you, so an abort trigger uses Gt.
+          - LossesValue15s: value of own units lost in the last 15 seconds.
+          A metric that cannot be measured makes its condition false.
         - Trends are {now, d5s, d15s, d60s}: the current value and its change over the last 5, 15 and 60 game seconds. Times and ages are game seconds. null means unknown or unbounded.
 
-        Input: the first user block is the match context (constant for the match: faction, playbook catalogue, rule facts, personality). The second is the current situation (features, active intent, recent history, counters, tech progress). Personality is style guidance only; it never overrides these rules.
+        Input: the first user block is the match context (constant for the match: arbitration numbers, faction, playbook catalogue, rule facts, personality). The second is the current situation (features, active intent, recent history, counters, tech progress). History lists one item per plan: renewals of the same playbook and posture are folded into it and counted in renewals. Personality is style guidance only; it never overrides these rules.
         """;
 
     private const string RefineSystemPrompt =
         """
 
-        Mode: REFINE. You may not change the plan, only tune it. Return the active intent's playbookId unchanged and choose new values for its parameters; any other playbookId is rejected. Posture, objectives, budget, composition and conditions are taken from the active intent regardless of what you return, so copy them unchanged.
+        Mode: REFINE. You may not change the plan, only tune it. Return the active intent's playbookId unchanged and choose new values for its parameters; any other playbookId is rejected. Posture, objectives, budget, composition, conditions and confidence are taken from the active intent regardless of what you return, so copy them unchanged, and the refined intent never expires later than the active one.
         """;
 
     private readonly int historyLimit;
     private readonly int eventLimit;
     private readonly int unitsPerRole;
     private readonly int countersPerType;
+    private readonly ArbiterOptions arbiterOptions;
 
     /// <param name="historyLimit">Most recent intent history entries included.</param>
     /// <param name="eventLimit">Most recent strategic events included.</param>
     /// <param name="unitsPerRole">Cheapest buildable units per role listed in rule facts; bounds prompt size with large imported rulesets.</param>
     /// <param name="countersPerType">Own unit types listed as counters per seen enemy type.</param>
-    public IntentPromptBuilder(int historyLimit = 8, int eventLimit = 12, int unitsPerRole = 4, int countersPerType = 3)
+    /// <param name="arbiterOptions">
+    /// The options of the arbiter that will judge the proposals (null: <see cref="ArbiterOptions.Default"/>, which
+    /// is what the runtime uses unless configured otherwise); their numbers go into the match context.
+    /// </param>
+    public IntentPromptBuilder(int historyLimit = 8, int eventLimit = 12, int unitsPerRole = 4, int countersPerType = 3, ArbiterOptions? arbiterOptions = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(historyLimit);
         ArgumentOutOfRangeException.ThrowIfNegative(eventLimit);
@@ -84,6 +111,7 @@ public sealed class IntentPromptBuilder
         this.eventLimit = eventLimit;
         this.unitsPerRole = unitsPerRole;
         this.countersPerType = countersPerType;
+        this.arbiterOptions = arbiterOptions ?? ArbiterOptions.Default;
     }
 
     /// <summary>The byte-stable system prompt for a mode and vocabulary tier. It never contains per-call data.</summary>
@@ -107,6 +135,7 @@ public sealed class IntentPromptBuilder
     {
         JsonObject match = new()
         {
+            ["arbitration"] = Arbitration(),
             ["catalogue"] = Catalogue(context),
             ["faction"] = context.Features.Faction.ToString(),
             ["personality"] = Personality(context.Personality ?? fallbackPersonality, context.Features.Faction),
@@ -115,6 +144,7 @@ public sealed class IntentPromptBuilder
         JsonObject situation = new()
         {
             ["activeIntent"] = ActiveIntent(context),
+            ["conditionMetrics"] = ConditionMetrics(context.Features),
             ["counters"] = Counters(context),
             ["features"] = Features(context.Features),
             ["history"] = History(context.History),
@@ -138,6 +168,19 @@ public sealed class IntentPromptBuilder
             ["preferredPlaybook"] = profile.PreferredPlaybook.TryGetValue(faction, out string? playbook) ? playbook : null,
         };
     }
+
+    /// <summary>
+    /// The arbiter's acceptance numbers, so the model can tell whether a proposal will be accepted instead of
+    /// guessing what "clearly higher confidence" or "serious threat" mean; the rules that use them are in the system
+    /// prompt. Constant for the match, so it sits in the cached prefix.
+    /// </summary>
+    private JsonObject Arbitration() => new()
+    {
+        ["renewal"] = "same playbookId and same posture",
+        ["defaultMinCommitSeconds"] = CanonicalJson.Number(arbiterOptions.DefaultMinCommitSeconds),
+        ["postureConfidenceMargin"] = CanonicalJson.Number(arbiterOptions.PostureConfidenceMargin),
+        ["baseThreatOverrideRatio"] = CanonicalJson.Number(arbiterOptions.BaseThreatOverrideRatio),
+    };
 
     private static IReadOnlyList<Playbook> FactionPlaybooks(StrategistContext context) =>
         context.Playbooks.For(context.Features.Faction).OrderBy(p => p.Id, StringComparer.Ordinal).ToList();
@@ -344,6 +387,22 @@ public sealed class IntentPromptBuilder
         return result;
     }
 
+    /// <summary>
+    /// The current value of every condition metric that needs no region, measured by the same evaluator the
+    /// arbiter and planner use, so the model can see whether a trigger it writes would already fire (a proposal
+    /// whose own abort trigger holds is refused). Unmeasurable values are null.
+    /// </summary>
+    private static JsonObject ConditionMetrics(StrategicFeatures features)
+    {
+        JsonObject result = new();
+        foreach (ConditionMetric metric in Enum.GetValues<ConditionMetric>())
+        {
+            if (ConditionEvaluator.RequiresRegion(metric)) continue;
+            result[metric.ToString()] = ConditionEvaluator.TryMeasure(metric, null, features, out double value, out _) ? CanonicalJson.Number(value) : null;
+        }
+        return result;
+    }
+
     private static JsonObject? ActiveIntent(StrategistContext context)
     {
         if (context.ActiveIntent is not { } intent)
@@ -351,9 +410,7 @@ public sealed class IntentPromptBuilder
             return null;
         }
         GameTime now = context.Features.Time;
-        IntentHistoryEntry? entry = context.History.FirstOrDefault(h => h.IntentId == intent.IntentId && h.EndedAt is null);
-        GameTime acceptedAt = entry?.AcceptedAt ?? intent.IssuedAt;
-        double active = Math.Max(0, now.SecondsSince(acceptedAt));
+        double active = Math.Max(0, now.SecondsSince(CommitmentStart(context.History, intent)));
         double? minCommit = context.Playbooks.TryGet(intent.PlaybookId, out Playbook playbook) ? playbook.MinCommitSeconds : null;
 
         JsonObject parameters = new();
@@ -384,23 +441,76 @@ public sealed class IntentPromptBuilder
         };
     }
 
+    /// <summary>
+    /// When the arbiter's commitment clock for the active intent started. A renewal (same playbook and posture)
+    /// closes the previous history entry as <see cref="RenewedEndReason"/> at the renewal time and opens a new
+    /// entry, but the arbiter does not restart its clock, so the start is the acceptance of the first entry of
+    /// that renewal chain. Measuring from the open entry instead would report a fresh commitment window after
+    /// every renewal and tell the model a switch is refused when the arbiter would accept it. The walk follows
+    /// insertion order backwards, so it terminates even when renewals share a frame. If the chain reaches past the
+    /// arbiter's bounded history the oldest retained entry is used, which can only overstate the remaining window.
+    /// </summary>
+    private static GameTime CommitmentStart(IReadOnlyList<IntentHistoryEntry> history, StrategicIntent intent)
+    {
+        int index = -1;
+        for (int i = history.Count - 1; i >= 0; i--)
+        {
+            if (history[i].EndedAt is null && string.Equals(history[i].IntentId, intent.IntentId, StringComparison.Ordinal))
+            {
+                index = i;
+                break;
+            }
+        }
+        if (index < 0) return intent.IssuedAt;
+
+        IntentHistoryEntry current = history[index];
+        for (int i = index - 1; i >= 0; i--)
+        {
+            if (!Continues(history[i], current)) continue;
+            current = history[i];
+        }
+        return current.AcceptedAt;
+    }
+
+    /// <summary>Arbiter end reason of a history entry that was superseded by a renewal of the same plan.</summary>
+    private const string RenewedEndReason = "renewed";
+
+    /// <summary>True when <paramref name="later"/> is the arbiter's renewal of <paramref name="earlier"/>.</summary>
+    private static bool Continues(IntentHistoryEntry earlier, IntentHistoryEntry later) =>
+        string.Equals(earlier.EndReason, RenewedEndReason, StringComparison.Ordinal)
+        && earlier.EndedAt is { } ended && ended.Frame == later.AcceptedAt.Frame
+        && string.Equals(earlier.PlaybookId, later.PlaybookId, StringComparison.Ordinal)
+        && earlier.Posture == later.Posture;
+
+    /// <summary>
+    /// Recent plans, one item per renewal chain: consecutive renewals of the same playbook and posture are one
+    /// plan, shown with its first acceptance, its latest end and a renewal count. The limit applies to plans, not
+    /// raw entries, because at a 5–30 s cadence nearly every proposal is a renewal and raw entries would push the
+    /// switches and aborts the model needs to judge its own oscillation out of the window.
+    /// </summary>
     private JsonArray History(IReadOnlyList<IntentHistoryEntry> history)
     {
-        JsonArray result = new();
-        IEnumerable<IntentHistoryEntry> recent = history
-            .OrderBy(h => h.AcceptedAt.Frame)
-            .ThenBy(h => h.IntentId, StringComparer.Ordinal)
-            .TakeLast(historyLimit);
-        foreach (IntentHistoryEntry h in recent)
+        List<List<IntentHistoryEntry>> plans = [];
+        foreach (IntentHistoryEntry h in history.OrderBy(static h => h.AcceptedAt.Frame))
         {
+            if (plans.Count > 0 && Continues(plans[^1][^1], h)) plans[^1].Add(h);
+            else plans.Add([h]);
+        }
+
+        JsonArray result = new();
+        foreach (List<IntentHistoryEntry> plan in plans.TakeLast(historyLimit))
+        {
+            IntentHistoryEntry first = plan[0];
+            IntentHistoryEntry last = plan[^1];
             result.Add(new JsonObject
             {
-                ["playbookId"] = h.PlaybookId,
-                ["posture"] = h.Posture.ToString(),
-                ["source"] = h.Source.ToString(),
-                ["acceptedAtSeconds"] = CanonicalJson.Number(h.AcceptedAt.Seconds),
-                ["endedAtSeconds"] = h.EndedAt is { } e ? CanonicalJson.Number(e.Seconds) : null,
-                ["endReason"] = h.EndReason,
+                ["playbookId"] = first.PlaybookId,
+                ["posture"] = first.Posture.ToString(),
+                ["source"] = last.Source.ToString(),
+                ["acceptedAtSeconds"] = CanonicalJson.Number(first.AcceptedAt.Seconds),
+                ["endedAtSeconds"] = last.EndedAt is { } e ? CanonicalJson.Number(e.Seconds) : null,
+                ["endReason"] = last.EndReason,
+                ["renewals"] = plan.Count - 1,
             });
         }
         return result;

@@ -18,6 +18,7 @@ public static class ClaudeFailureCodes
     public const string MappingFailed = "claude.mapping_failed";
     public const string RefinePlaybookSwitch = "claude.refine_playbook_switch";
     public const string RefineNoActiveIntent = "claude.refine_no_active_intent";
+    public const string RefineNotStrategicPlan = "claude.refine_not_strategic_plan";
     public const string Timeout = "claude.timeout";
     public const string Cancelled = "claude.cancelled";
     public const string RateLimited = "claude.rate_limited";
@@ -164,6 +165,18 @@ public sealed class ClaudeStrategist : IStrategist
         {
             return Fail(ClaudeFailureCodes.RefineNoActiveIntent, "Refine mode needs an active intent to refine.", features, noCost, null);
         }
+        if (options.Mode == StrategistMode.Refine && context.ActiveIntent!.Source != IntentSource.Llm)
+        {
+            // A refinement is offered as a primary proposal, and a primary renewal turns a fallback or emergency
+            // placeholder into a committed plan; the fast model would then lock the strategic model out of the
+            // placeholder slot it is supposed to take over at once. Only the strategic model's own plan is tuned.
+            return Fail(
+                ClaudeFailureCodes.RefineNotStrategicPlan,
+                $"Refine mode tunes only the strategic model's own plan; the active intent comes from {context.ActiveIntent.Source}.",
+                features,
+                noCost,
+                null);
+        }
 
         ModelRequest request;
         try
@@ -273,10 +286,14 @@ public sealed class ClaudeStrategist : IStrategist
     }
 
     /// <summary>
-    /// Refine mode changes parameters only: everything else is the active
-    /// intent's, so a fast model cannot shift posture, budget or objectives
-    /// through the back door. Identity, timing and the model's own confidence,
-    /// assumptions and rationale are the new proposal's.
+    /// Refine mode changes parameters only: everything else is the active intent's, so a fast model cannot shift
+    /// posture, budget or objectives through the back door. Confidence stays the strategic model's, because the
+    /// arbiter measures posture hysteresis against the incumbent's confidence and a fast model writing 0.95 there
+    /// would lock the strategic model out of posture changes. Expiry never extends past the active intent's: the
+    /// strategic model decides how long a plan lives, and a refinement that arrives after the plan it was based on
+    /// expired is then already expired and refused instead of re-installing that plan over whatever replaced it.
+    /// Identity and issue time, and the model's own assumptions and rationale, are the new proposal's; an army-value
+    /// attack condition that tracked the old <c>attackArmyValue</c> moves with the new one (<see cref="AttackArmyThreshold"/>).
     /// </summary>
     private static StrategicIntent Refined(StrategicIntent active, StrategicIntent proposed) =>
         active with
@@ -285,9 +302,10 @@ public sealed class ClaudeStrategist : IStrategist
             Source = IntentSource.Llm,
             BasedOnSnapshotVersion = proposed.BasedOnSnapshotVersion,
             IssuedAt = proposed.IssuedAt,
-            ExpiresAt = proposed.ExpiresAt,
+            ExpiresAt = proposed.ExpiresAt < active.ExpiresAt ? proposed.ExpiresAt : active.ExpiresAt,
             PlaybookParameters = proposed.PlaybookParameters,
-            Confidence = proposed.Confidence,
+            AttackConditions = AttackArmyThreshold.Retarget(
+                active.AttackConditions, AttackArmyThreshold.Of(active.PlaybookParameters), AttackArmyThreshold.Of(proposed.PlaybookParameters)),
             Assumptions = proposed.Assumptions,
             Rationale = proposed.Rationale,
         };

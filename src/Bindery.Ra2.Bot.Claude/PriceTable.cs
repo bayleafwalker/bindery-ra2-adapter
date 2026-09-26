@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 namespace Bindery.Ra2.Bot.Claude;
 
-/// <summary>Published per-million-token list prices in USD.</summary>
-public sealed record ModelPrice(double InputPerMTok, double OutputPerMTok);
+/// <summary>Published per-million-token list prices in USD, with the prompt-cache multipliers of the base input price.</summary>
+/// <param name="CacheReadMultiplier">Cache reads as a fraction of the input price (0.1 on most models).</param>
+/// <param name="CacheWriteMultiplier">Five-minute cache writes as a multiple of the input price (the strategist's breakpoints are ephemeral).</param>
+public sealed record ModelPrice(double InputPerMTok, double OutputPerMTok, double CacheReadMultiplier = 0.1, double CacheWriteMultiplier = 1.25);
 
 /// <summary>
-/// List prices for the arena's inference-cost metric. The metric is defined at
-/// the published rate for the configured model, so this is a fixed table, not
-/// a billing reconciliation: cache-read discounts, batch pricing and fallback
-/// re-pricing are deliberately ignored and cache reads are charged as input.
+/// List prices for the arena's inference-cost metric: the published rate for each model, including the prompt
+/// cache's read discount and write premium, because the strategist caches its system prompt and match context and
+/// so nearly every call is a cache read or a cache write. Models that the server-side refusal fallback
+/// (<c>fallbacks: "default"</c>) may serve a request on are listed too, so a fallback-served reply is priced at
+/// its own rate instead of being dropped as unknown. Batch pricing does not apply to the strategist.
 /// </summary>
 public static class PriceTable
 {
@@ -17,8 +20,14 @@ public static class PriceTable
         ["claude-opus-5"] = new(5, 25),
         ["claude-sonnet-5"] = new(2, 10),
         ["claude-haiku-4-5"] = new(1, 5),
-        ["claude-opus-5-5"] = new(4, 20),
-        ["claude-fable-5-1"] = new(10, 50),
+        ["claude-opus-5-5"] = new(4, 20, CacheReadMultiplier: 0.05),
+        ["claude-fable-5-1"] = new(10, 50, CacheReadMultiplier: 0.025),
+        // Server-side fallback targets.
+        ["claude-fable-5"] = new(10, 50),
+        ["claude-opus-4-8"] = new(5, 25),
+        ["claude-opus-4-7"] = new(5, 25),
+        ["claude-opus-4-6"] = new(5, 25),
+        ["claude-sonnet-4-6"] = new(3, 15),
     };
 
     /// <summary>Known model ids, sorted.</summary>
@@ -56,14 +65,18 @@ public static class PriceTable
         return false;
     }
 
-    /// <summary>USD for a token count at list price; null when the model is not in the table.</summary>
-    public static double? CostUsd(string? model, long inputTokens, long outputTokens, long cacheReadTokens = 0)
+    /// <summary>
+    /// USD at list price for uncached input, output, cache-read and cache-write tokens; null when the model is not
+    /// in the table.
+    /// </summary>
+    public static double? CostUsd(string? model, long inputTokens, long outputTokens, long cacheReadTokens = 0, long cacheCreationTokens = 0)
     {
         if (model is null || !TryGet(model, out ModelPrice price))
         {
             return null;
         }
-        return ((inputTokens + cacheReadTokens) * price.InputPerMTok + outputTokens * price.OutputPerMTok) / 1_000_000.0;
+        double input = inputTokens + (cacheReadTokens * price.CacheReadMultiplier) + (cacheCreationTokens * price.CacheWriteMultiplier);
+        return ((input * price.InputPerMTok) + (outputTokens * price.OutputPerMTok)) / 1_000_000.0;
     }
 
     /// <summary>USD for one proposal's <see cref="ProposalCost"/>; null when its model is unknown.</summary>

@@ -142,12 +142,35 @@ public sealed class AnthropicMessageClient : IMessageClient
         }
 
         string? detail = message.StopDetails is { } d ? $"{d.Category?.Raw()}: {d.Explanation}" : null;
-        ModelUsage usage = new(
-            message.Usage.InputTokens,
-            message.Usage.OutputTokens,
-            message.Usage.CacheReadInputTokens ?? 0,
-            message.Usage.CacheCreationInputTokens ?? 0);
-        return new ModelReply(text.ToString(), message.StopReason?.Raw() ?? string.Empty, detail, usage, message.Model.Raw());
+        return new ModelReply(text.ToString(), message.StopReason?.Raw() ?? string.Empty, detail, UsageOf(message.Usage), message.Model.Raw());
+    }
+
+    /// <summary>
+    /// Tokens billed for the whole request. With server-side fallbacks the top-level usage covers only the attempt
+    /// that produced the returned message; a declined attempt (billed at normal rates when it declines mid-output)
+    /// appears only in <c>usage.iterations</c>, the per-attempt source of truth, so the iterations are summed when
+    /// present.
+    /// </summary>
+    internal static ModelUsage UsageOf(Beta.BetaUsage usage)
+    {
+        if (usage.Iterations is not { Count: > 0 } iterations)
+        {
+            return new ModelUsage(usage.InputTokens, usage.OutputTokens, usage.CacheReadInputTokens ?? 0, usage.CacheCreationInputTokens ?? 0);
+        }
+        long input = 0, output = 0, read = 0, write = 0;
+        foreach (Beta.BetaUsageIteration iteration in iterations)
+        {
+            (long i, long o, long r, long w) = iteration.Match(
+                static m => (m.InputTokens, m.OutputTokens, m.CacheReadInputTokens, m.CacheCreationInputTokens),
+                static c => (c.InputTokens, c.OutputTokens, c.CacheReadInputTokens, c.CacheCreationInputTokens),
+                static a => (a.InputTokens, a.OutputTokens, a.CacheReadInputTokens, a.CacheCreationInputTokens),
+                static f => (f.InputTokens, f.OutputTokens, f.CacheReadInputTokens, f.CacheCreationInputTokens));
+            input += i;
+            output += o;
+            read += r;
+            write += w;
+        }
+        return new ModelUsage(input, output, read, write);
     }
 
     /// <summary>Beta request: as <see cref="BuildGaParams"/> plus <c>fallbacks: "default"</c> under the <c>server-side-fallback-2026-07-01</c> beta.</summary>
