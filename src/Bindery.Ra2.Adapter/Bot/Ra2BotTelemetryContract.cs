@@ -23,7 +23,11 @@ namespace Bindery.Ra2.Adapter.Bot;
 /// (string), <c>x</c>, <c>y</c> (cell coordinates), <c>health</c>,
 /// <c>maxHealth</c> (int). When <c>owner</c> is not the controlled player,
 /// <c>visible</c> (bool) is additionally required and must be <c>true</c> for
-/// the entity to appear in a frame: this is the fog boundary. Such an upsert
+/// the entity to appear in a frame: this is the fog boundary. The first
+/// upsert of an id is its <see cref="GameEventKind.EntityCreated"/>; a repeat
+/// upsert of a tracked id refreshes its position, health and owner without a
+/// new event, so own-entity state is only as current as the source re-sends
+/// it (v1 has no separate state event). An enemy upsert
 /// is a <i>sighting</i>: the enemy appears only in the frame whose window
 /// (since the previous frame) holds a sighting of it, so the source re-sends
 /// the upsert at least once per frame cadence for every enemy in sight, and

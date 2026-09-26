@@ -184,8 +184,11 @@ public sealed class Ra2ObservationAssembler
             }
         }
 
+        // A repeated upsert of a tracked entity is a state refresh (position, health, owner): the source re-sends it
+        // to keep that state current, so it is not a second creation.
+        bool tracked = entities.ContainsKey(id);
         entities[id] = new EntityState(id, owner, typeId, position, health, maxHealth, frame);
-        pendingEvents.Add(new GameEvent(GameEventKind.EntityCreated, new GameTime(frame), id, owner, typeId, position));
+        if (!tracked) pendingEvents.Add(new GameEvent(GameEventKind.EntityCreated, new GameTime(frame), id, owner, typeId, position));
     }
 
     private void ApplyEntityRemoval(NormalizedObservation observation, long frame)
