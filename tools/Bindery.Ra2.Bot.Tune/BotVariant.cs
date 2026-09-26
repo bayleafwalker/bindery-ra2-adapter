@@ -3,6 +3,7 @@ using Bindery.Ra2.Bot.Arena;
 using Bindery.Ra2.Bot.Features;
 using Bindery.Ra2.Bot.Operations;
 using Bindery.Ra2.Bot.Playbooks;
+using Bindery.Ra2.Bot.Rules;
 using Bindery.Ra2.Bot.Runtime;
 using Bindery.Ra2.Bot.Strategy;
 using Bindery.Ra2.Bot.Tuning;
@@ -25,12 +26,25 @@ public sealed record BotVariant(string Label, IPlaybookLibrary Playbooks, Operat
         return new BotVariant(label, new PlaybookLibrary(set.ApplyTo(PlaybookLibrary.LoadAuthored().All)), set.ApplyTo(new OperationalOptions()), set.ApplyTo(new FeatureOptions()));
     }
 
+    private static readonly Lazy<RulesDatabase> AuthoredAgainst = new(RulesDatabase.LoadEmbeddedFixture);
+
+    /// <summary>
+    /// <paramref name="playbooks"/> fitted to <paramref name="rules"/>' roster (<see cref="PlaybookRosterAdapter"/>);
+    /// unchanged on the fixture the playbooks were authored against.
+    /// </summary>
+    public static IPlaybookLibrary Fit(IPlaybookLibrary playbooks, IRulesDatabase rules)
+    {
+        ArgumentNullException.ThrowIfNull(playbooks);
+        ArgumentNullException.ThrowIfNull(rules);
+        return rules.RulesetId == AuthoredAgainst.Value.RulesetId ? playbooks : PlaybookRosterAdapter.Adapt(playbooks.All, rules, AuthoredAgainst.Value).Library;
+    }
+
     /// <summary>A selector-driven bot for one side of a match, built exactly like the arena's <c>selector</c> arm.</summary>
     public IArenaAgent CreateAgent(IRulesDatabase rules)
     {
         DecisionLog log = new();
         BotRuntime runtime = StandardBot.Create(
-            rules, Playbooks, new PlaybookSelector(), new PlaybookSelector(id: "selector-fallback"), null, log,
+            rules, Fit(Playbooks, rules), new PlaybookSelector(), new PlaybookSelector(id: "selector-fallback"), null, log,
             StandardBot.SimulatorOptions, Operational, Features);
         return new BotArenaAgent(runtime, log, [$"variant:{Label}"], null);
     }

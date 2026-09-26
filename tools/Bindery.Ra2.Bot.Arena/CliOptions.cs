@@ -22,7 +22,7 @@ public sealed record CliOptions(
     public const string Usage =
         "Usage: arena run --arms a,b --maps training|heldout|all --opponents ai-rush,ai-balanced[:easy|:medium|:hard],rush,turtle,live-rush,ai-horde,...|all|training|heldout --seeds N --out <dir> " +
         "[--oracle [both|all]] [--llm-fake] [--max-seconds N] [--dataset <decisions.ndjson>] [--llm-latency <game seconds>] [--trace <dir>] " +
-        "[--benchmark standard|contested] [--opponent-income X] [--opponent-credits N] [--combat-noise F] [--allied-income X] [--allied-credits N] [--baseline <arm>] [--no-decisions] [--write-adoption <path>] [--personality aggressive,turtle,tech,harasser,none]\n" +
+        "[--benchmark standard|contested] [--opponent-income X] [--opponent-credits N] [--combat-noise F] [--allied-income X] [--allied-credits N] [--baseline <arm>] [--no-decisions] [--write-adoption <path>] [--personality aggressive,turtle,tech,harasser,none] [--rules <rules.json>]\n" +
         "       (arms: selector, bandit, llm-shadow, llm, llm+fast, distilled, llm-t0..llm-t3 or tiers, all; any with -oracle)\n" +
         "       arena replay <out>/decisions/<match>.ndjson [--out <replayed.ndjson>]\n" +
         "       arena analyze <out>/decisions/<match>.ndjson [--out <report.md>] [--narrate] [--llm-fake]";
@@ -35,6 +35,13 @@ public sealed record CliOptions(
 
     /// <summary>Play styles every arm runs under (null for none); <c>--personality aggressive,turtle</c>.</summary>
     public IReadOnlyList<string?> PersonalityList { get; init; } = [null];
+
+    /// <summary>
+    /// A rules JSON (<c>RulesDocument</c>: an imported <c>rulesmd.ini</c> or a roster variant) every side plays on,
+    /// instead of the embedded approximate fixture; the playbooks are fitted to its roster
+    /// (<see cref="Bindery.Ra2.Bot.Playbooks.PlaybookRosterAdapter"/>).
+    /// </summary>
+    public string? RulesPath { get; init; }
 
     /// <summary>Also write the run's <c>vocabulary-adoption.json</c> here (for example the embedded record in the Claude project).</summary>
     public string? WriteAdoption { get; init; }
@@ -103,6 +110,7 @@ public sealed record CliOptions(
         bool writeDecisions = true;
         string? writeAdoption = null;
         List<string?> personalities = [null];
+        string? rulesPath = null;
 
         for (int i = 1; i < args.Count; i++)
         {
@@ -138,6 +146,7 @@ public sealed record CliOptions(
                 case "--baseline": baseline = Next(args, ref i); break;
                 case "--no-decisions": writeDecisions = false; break;
                 case "--write-adoption": writeAdoption = Next(args, ref i); break;
+                case "--rules": rulesPath = Next(args, ref i); break;
                 case "--personality":
                     personalities = [.. Split(args, ref i).Select(static p => p == "none" ? null : p)];
                     foreach (string? p in personalities)
@@ -188,6 +197,7 @@ public sealed record CliOptions(
             WriteDecisions = writeDecisions,
             WriteAdoption = writeAdoption,
             PersonalityList = personalities,
+            RulesPath = rulesPath,
         };
     }
 

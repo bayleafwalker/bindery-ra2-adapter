@@ -49,8 +49,8 @@ public static class Program
     private static void Search(TuneOptions options)
     {
         Stopwatch wall = Stopwatch.StartNew();
-        IRulesDatabase rules = RulesDatabase.LoadEmbeddedFixture();
-        BotAgentFactory arena = new(rules, PlaybookLibrary.LoadAuthored(), new ArenaRunContext(false, null));
+        IRulesDatabase rules = LoadRules(options.Rules);
+        BotAgentFactory arena = new(rules, BotVariant.Fit(PlaybookLibrary.LoadAuthored(), rules), new ArenaRunContext(false, null));
         TuningSpace space = new(PlaybookLibrary.LoadAuthored().All, new(), new());
         EvolutionStrategy es = new(space.DefaultPoint(), options.Sigma, options.Population, options.Seed, options.Parents);
         IReadOnlyList<SimMap> maps = SimMaps.Training;
@@ -117,7 +117,7 @@ public static class Program
         StringBuilder md = new();
         md.AppendLine("# Tuning search");
         md.AppendLine();
-        md.AppendLine($"Mode {options.Mode}; opponents {string.Join(", ", options.Opponents)}; training maps {string.Join(", ", provenance.Maps)}; " +
+        md.AppendLine($"Rules `{rules.RulesetId}`; mode {options.Mode}; opponents {string.Join(", ", options.Opponents)}; training maps {string.Join(", ", provenance.Maps)}; " +
             $"{options.Generations} generations × ({options.Population} samples + mean + default) × {options.Opponents.Count} opponents × {maps.Count} maps × {options.SeedsPerGeneration} seeds; {matchesPlayed} matches in {wall.Elapsed.TotalSeconds:0} s.");
         md.AppendLine();
         md.AppendLine($"Final check on fresh training seeds {string.Join(' ', finalSeeds)} ({finalPer} matches each): final mean {F(finalFitness[0])} ({finalWins[0]} wins), " +
@@ -143,11 +143,19 @@ public static class Program
         Console.WriteLine($"Chose {(meanWins ? "final mean" : "best sample")}: training fitness {F(tunedFitness)} vs untuned {F(finalFitness[2])}. Wrote {options.OutDir} in {wall.Elapsed.TotalSeconds:0}s.");
     }
 
+    /// <summary>The embedded fixture, or the <c>--rules</c> file.</summary>
+    private static IRulesDatabase LoadRules(string? path)
+    {
+        if (path is null) return RulesDatabase.LoadEmbeddedFixture();
+        if (!File.Exists(path)) throw new ArgumentException($"No rules file at {path}.");
+        return RulesDatabase.LoadJson(File.ReadAllText(path));
+    }
+
     private static void Validate(TuneOptions options)
     {
         Stopwatch wall = Stopwatch.StartNew();
-        IRulesDatabase rules = RulesDatabase.LoadEmbeddedFixture();
-        BotAgentFactory arena = new(rules, PlaybookLibrary.LoadAuthored(), new ArenaRunContext(false, null));
+        IRulesDatabase rules = LoadRules(options.Rules);
+        BotAgentFactory arena = new(rules, BotVariant.Fit(PlaybookLibrary.LoadAuthored(), rules), new ArenaRunContext(false, null));
         TunedParameterSet tuned = TunedParameterSet.LoadJson(File.ReadAllText(options.Tuned!));
         IReadOnlyList<SimMap> maps = SimMaps.HeldOut;
         Directory.CreateDirectory(options.OutDir);
@@ -184,7 +192,7 @@ public static class Program
         StringBuilder md = new();
         md.AppendLine("# Held-out validation");
         md.AppendLine();
-        md.AppendLine($"Maps {string.Join(", ", validation.Maps)}; opponents {string.Join(", ", options.Opponents)}; seeds 1–{options.Seeds} (head-to-head 1–{options.Seeds * 2}).");
+        md.AppendLine($"Rules `{rules.RulesetId}`; maps {string.Join(", ", validation.Maps)}; opponents {string.Join(", ", options.Opponents)}; seeds 1–{options.Seeds} (head-to-head 1–{options.Seeds * 2}).");
         md.AppendLine();
         md.AppendLine("| Measure | Untuned | Tuned |");
         md.AppendLine("|---|---|---|");

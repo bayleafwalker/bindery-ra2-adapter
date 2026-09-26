@@ -10,6 +10,7 @@ namespace Bindery.Ra2.Bot.Arena;
 /// <c>decisions/&lt;match&gt;.match.json</c> next to the log <c>decisions/&lt;match&gt;.ndjson</c>.
 /// </summary>
 /// <param name="RecordedHash">The arm's decision log hash when the match was played (<see cref="DecisionLogCodec.Hash"/>).</param>
+/// <param name="RulesFile">The <c>--rules</c> file the match was played on (full path), or null for the embedded fixture; replay loads it again.</param>
 public sealed record MatchManifest(
     string Schema,
     ArmSpec Arm,
@@ -24,7 +25,8 @@ public sealed record MatchManifest(
     string? RecordedHash,
     int? Winner,
     string Reason,
-    double DurationSeconds)
+    double DurationSeconds,
+    string? RulesFile = null)
 {
     public const string CurrentSchema = "bindery.arena.match/v1";
 

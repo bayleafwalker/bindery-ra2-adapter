@@ -32,14 +32,17 @@ public sealed record TuneOptions(
     string? Tuned,
     string? Write)
 {
+    /// <summary>A rules JSON to tune on instead of the embedded fixture (<c>--rules</c>); playbooks are fitted to its roster.</summary>
+    public string? Rules { get; init; }
+
     public const string Usage =
         "Usage:\n" +
         "  tune search --date YYYY-MM-DD --out <dir> [--mode benchmark|selfplay] [--opponents a,b,...|all|self]\n" +
         "              [--generations 16] [--population 12] [--parents 6] [--sigma 0.2] [--seed 1]\n" +
         "              [--seeds-per-generation 2] [--final-seeds 6] [--trade-weight 0.1] [--max-seconds 1200]\n" +
-        "              [--threads N] [--commit <sha>]\n" +
+        "              [--threads N] [--commit <sha>] [--rules <rules.json>]\n" +
         "  tune validate --tuned <tuned-candidate.json> --date YYYY-MM-DD --out <dir> [--seeds 20]\n" +
-        "              [--opponents ...] [--trade-weight 0.1] [--max-seconds 1200] [--threads N] [--write <path>]\n" +
+        "              [--opponents ...] [--trade-weight 0.1] [--max-seconds 1200] [--threads N] [--write <path>] [--rules <rules.json>]\n" +
         "Opponents: ai-rush, ai-balanced, ai-turtle, ai-air (optional :easy|:medium|:hard), rush, turtle, tech, harass,\n" +
         "balanced (frozen baseline stack), live-<style>, bot:default (untuned live bot), bot:champion (search's\n" +
         "previous-generation best; the untuned bot in validation). 'all' = every ai-* and pinned style; 'self' = both bot:*.";
@@ -57,7 +60,7 @@ public sealed record TuneOptions(
         ulong seed = 1;
         int threads = Environment.ProcessorCount;
         string outDir = "tune-out";
-        string? date = null, commit = null, tuned = null, write = null;
+        string? date = null, commit = null, tuned = null, write = null, rulesPath = null;
 
         for (int i = 1; i < args.Count; i++)
         {
@@ -81,6 +84,7 @@ public sealed record TuneOptions(
                 case "--commit": commit = Next(args, ref i); break;
                 case "--tuned": tuned = Next(args, ref i); break;
                 case "--write": write = Next(args, ref i); break;
+                case "--rules": rulesPath = Next(args, ref i); break;
                 default: throw new ArgumentException($"Unknown argument '{args[i]}'.\n{Usage}");
             }
         }
@@ -105,7 +109,10 @@ public sealed record TuneOptions(
             else throw new ArgumentException($"Unknown opponent '{o}'.\n{Usage}");
         }
         return new TuneOptions(command, mode, [.. expanded.Distinct(StringComparer.Ordinal)], generations, population, parents, sigma, seed,
-            seedsPerGeneration, finalSeeds, seeds, tradeWeight, maxSeconds, threads, outDir, date, commit, tuned, write);
+            seedsPerGeneration, finalSeeds, seeds, tradeWeight, maxSeconds, threads, outDir, date, commit, tuned, write)
+        {
+            Rules = rulesPath,
+        };
     }
 
     private static string Next(IReadOnlyList<string> args, ref int i)

@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using Bindery.Ra2.Bot.Rules;
+
 namespace Bindery.Ra2.Bot.Sim.Opponents;
 
 /// <summary>
@@ -12,7 +14,9 @@ namespace Bindery.Ra2.Bot.Sim.Opponents;
 /// reads only its own <see cref="ObservationFrame"/> (fog applies; the enemy's start is inferred from the map's
 /// public start locations and from what it has seen) plus the contracts, <see cref="RegionGraph"/> and
 /// <see cref="IRulesDatabase"/>. It acts once per game second; given the same frames and seed it issues the same
-/// commands.
+/// commands. The scripts are written against the approximate fixture; on another roster (a mod) each type id the
+/// roster does not define is replaced by <see cref="RosterSubstitution"/> (same role, nearest cost) or its step is
+/// dropped, as a retail AI's ai.ini would be edited for a mod.
 /// </remarks>
 public sealed class ScriptedSkirmishAi
 {
@@ -49,12 +53,35 @@ public sealed class ScriptedSkirmishAi
         this.map = map;
         this.difficulty = difficulty;
         graph = new RegionGraph(map);
-        script = OpponentProfiles.For(style, faction);
+        script = Fit(OpponentProfiles.For(style, faction), rules, faction);
         Style = style;
         rng = new Xorshift(unchecked(seed * 7919 + self.Value * 104_729 + style.Length));
     }
 
     public string Style { get; }
+
+    private static readonly Lazy<RulesDatabase> AuthoredAgainst = new(RulesDatabase.LoadEmbeddedFixture);
+
+    /// <summary>
+    /// The script on <paramref name="rules"/>' roster: unchanged when the roster defines every type it names, else
+    /// with each missing type replaced by <see cref="RosterSubstitution"/> or its step dropped.
+    /// </summary>
+    internal static OpponentScript Fit(OpponentScript script, IRulesDatabase rules, Faction faction)
+    {
+        IEnumerable<string> named = script.Build.Select(static s => s.TypeId).Concat(script.Defenses.Select(static s => s.TypeId))
+            .Concat(script.TaskForce.Select(static s => s.TypeId)).Concat((script.Surplus ?? []).Select(static s => s.TypeId));
+        if (named.All(t => rules.TryGet(t, out _))) return script;
+        string? Map(string typeId) => rules.TryGet(typeId, out _) ? typeId : RosterSubstitution.Resolve(typeId, [faction], rules, AuthoredAgainst.Value);
+        List<BuildStep> build = [.. script.Build.Select(s => Map(s.TypeId) is { } t ? s with { TypeId = t } : null).OfType<BuildStep>()];
+        return script with
+        {
+            Build = build,
+            Defenses = [.. script.Defenses.Select(s => Map(s.TypeId) is { } t ? s with { TypeId = t } : null).OfType<BuildStep>()],
+            DefensesAfterStep = Math.Min(script.DefensesAfterStep, Math.Max(0, build.Count - 1)),
+            TaskForce = [.. script.TaskForce.Select(s => Map(s.TypeId) is { } t ? s with { TypeId = t } : null).OfType<TaskForceSlot>()],
+            Surplus = script.Surplus is null ? null : [.. script.Surplus.Select(s => Map(s.TypeId) is { } t ? s with { TypeId = t } : null).OfType<BuildStep>()],
+        };
+    }
 
     /// <summary>Attack waves launched so far.</summary>
     public int WavesLaunched => wavesLaunched;

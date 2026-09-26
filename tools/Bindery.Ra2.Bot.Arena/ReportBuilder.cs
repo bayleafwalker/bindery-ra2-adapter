@@ -12,7 +12,7 @@ namespace Bindery.Ra2.Bot.Arena;
 /// </summary>
 public static class ReportBuilder
 {
-    public static string Build(IReadOnlyList<MatchRecord> matches, IReadOnlyList<LeakageProbeResult> probes, IReadOnlyList<SkippedArm> skipped, CliOptions options, string rulesetId)
+    public static string Build(IReadOnlyList<MatchRecord> matches, IReadOnlyList<LeakageProbeResult> probes, IReadOnlyList<SkippedArm> skipped, CliOptions options, string rulesetId, IReadOnlyList<Bindery.Ra2.Bot.Playbooks.RosterChange>? rosterChanges = null)
     {
         ArgumentNullException.ThrowIfNull(matches);
         StringBuilder sb = new();
@@ -31,6 +31,7 @@ public static class ReportBuilder
         sb.AppendLine();
 
         AppendSkipped(sb, skipped);
+        AppendRoster(sb, options, rulesetId, rosterChanges ?? []);
         AppendWinRate(sb, matches);
         AppendSaturation(sb, matches, options.Baseline);
         AppendPerOpponent(sb, matches);
@@ -50,6 +51,27 @@ public static class ReportBuilder
         AppendStyles(sb, matches);
         AppendLeakage(sb, matches, probes);
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Under <c>--rules</c>, how the authored playbooks were fitted to the roster: each replaced tech goal and each
+    /// dropped playbook, with the rule facts behind it.
+    /// </summary>
+    private static void AppendRoster(StringBuilder sb, CliOptions options, string rulesetId, IReadOnlyList<Bindery.Ra2.Bot.Playbooks.RosterChange> changes)
+    {
+        if (options.RulesPath is null) return;
+        sb.AppendLine("## Roster adaptation");
+        sb.AppendLine();
+        sb.AppendLine($"Rules: `{rulesetId}` from `{Path.GetFileName(options.RulesPath)}`. The playbooks were authored against `bindery-sim-approx`; composition targets name roles and carry over unchanged, and each tech goal the roster does not define is replaced by the same-role unit of nearest cost that every playbook faction can reach, or the playbook is dropped. The scripted `ai-*` opponents fit their build lists the same way; the frozen pinned styles run unadapted (their playbooks fail validation where a type is missing and fall back to the frozen selector).");
+        sb.AppendLine();
+        if (changes.Count == 0) sb.AppendLine("No playbook needed a change.");
+        foreach (Bindery.Ra2.Bot.Playbooks.RosterChange c in changes)
+        {
+            sb.AppendLine(c.Replacement is null
+                ? $"- {c.PlaybookId}: {c.Reason}"
+                : $"- {c.PlaybookId}: {c.TechGoal} → {c.Replacement} ({c.Reason})");
+        }
+        sb.AppendLine();
     }
 
     private static void AppendSkipped(StringBuilder sb, IReadOnlyList<SkippedArm> skipped)

@@ -14,13 +14,6 @@ namespace Bindery.Ra2.Bot.Rules;
 /// </summary>
 public sealed class RulesDatabase : IRulesDatabase
 {
-    /// <summary>
-    /// Manifest resource name for the embedded <c>Data/bindery-sim-approx.json</c>
-    /// fixture, per the default MSBuild embedded-resource naming convention
-    /// (root namespace + folder path + file name).
-    /// </summary>
-    private const string FixtureResourceName = "Bindery.Ra2.Bot.Data.bindery-sim-approx.json";
-
     private readonly Dictionary<string, UnitRule> byTypeId;
     private readonly IReadOnlyDictionary<string, IReadOnlyDictionary<string, double>> effectivenessMatrix;
 
@@ -65,17 +58,36 @@ public sealed class RulesDatabase : IRulesDatabase
     /// Loads the committed approximate fixture (<c>bindery-sim-approx</c>),
     /// embedded in this assembly from <c>Data/bindery-sim-approx.json</c>.
     /// </summary>
-    public static RulesDatabase LoadEmbeddedFixture()
+    public static RulesDatabase LoadEmbeddedFixture() => LoadJson(EmbeddedFixtureJson(FixtureFile));
+
+    /// <summary>File name of the committed approximate fixture under <c>Data/</c>.</summary>
+    public const string FixtureFile = "bindery-sim-approx.json";
+
+    /// <summary>
+    /// File name of the committed roster variant under <c>Data/</c> (<c>bindery-sim-variant-roster</c>): the approximate
+    /// fixture with a unit renamed, two removed, four re-costed and one added, for testing how the bot copes with a
+    /// changed unit roster (see its provenance).
+    /// </summary>
+    public const string VariantFixtureFile = "bindery-sim-variant-roster.json";
+
+    /// <summary>Loads the committed roster variant (<see cref="VariantFixtureFile"/>).</summary>
+    public static RulesDatabase LoadEmbeddedVariantFixture() => LoadJson(EmbeddedFixtureJson(VariantFixtureFile));
+
+    /// <summary>The JSON text of an embedded <c>Data/</c> rules fixture, for tools that pass rules as files.</summary>
+    public static string EmbeddedFixtureJson(string fileName)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
         Assembly assembly = typeof(RulesDatabase).Assembly;
-        using Stream? stream = assembly.GetManifestResourceStream(FixtureResourceName);
+        string resource = "Bindery.Ra2.Bot.Data." + fileName;
+        using Stream? stream = assembly.GetManifestResourceStream(resource);
         if (stream is null)
         {
             string available = string.Join(", ", assembly.GetManifestResourceNames());
             throw new InvalidOperationException(
-                $"Embedded fixture '{FixtureResourceName}' was not found. Available resources: {available}");
+                $"Embedded fixture '{resource}' was not found. Available resources: {available}");
         }
-        return LoadJson(stream);
+        using StreamReader reader = new(stream);
+        return reader.ReadToEnd();
     }
 
     public bool TryGet(string typeId, out UnitRule rule) => byTypeId.TryGetValue(typeId, out rule!);

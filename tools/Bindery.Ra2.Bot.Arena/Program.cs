@@ -87,8 +87,7 @@ public static class Program
     private static void Run(CliOptions options)
     {
         Stopwatch wall = Stopwatch.StartNew();
-        IRulesDatabase rules = RulesDatabase.LoadEmbeddedFixture();
-        IPlaybookLibrary playbooks = PlaybookLibrary.LoadDefault();
+        (IRulesDatabase rules, IPlaybookLibrary playbooks, IReadOnlyList<RosterChange> rosterChanges) = LoadRules(options.RulesPath);
         ArenaRunContext context = new(options.LlmFake, options.LlmLatencySeconds);
         BotAgentFactory factory = new(rules, playbooks, context);
         foreach (ArmSpec arm in options.ArmSpecs())
@@ -208,7 +207,7 @@ public static class Program
         JsonSerializerOptions indented = new(BotJson.Options) { WriteIndented = true };
         File.WriteAllText(Path.Combine(options.OutDir, "results.json"), JsonSerializer.Serialize(ordered, indented));
         File.WriteAllText(Path.Combine(options.OutDir, "probes.json"), JsonSerializer.Serialize(new { probes, skipped }, indented));
-        File.WriteAllText(Path.Combine(options.OutDir, "report.md"), ReportBuilder.Build(ordered, probes, skipped, options, rules.RulesetId));
+        File.WriteAllText(Path.Combine(options.OutDir, "report.md"), ReportBuilder.Build(ordered, probes, skipped, options, rules.RulesetId, rosterChanges));
         if (ordered.Count(static m => BotAgentFactory.TierArms.ContainsKey(m.Arm)) > 0)
         {
             string adoption = TierAdoption(ordered, live: !options.LlmFake, DateTime.UtcNow.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)).ToJson() + "\n";
@@ -217,6 +216,21 @@ public static class Program
         }
 
         Console.WriteLine($"Wrote {ordered.Count} match results, {probes.Count} leakage probes and report.md to {options.OutDir} in {wall.Elapsed.TotalSeconds:0}s.");
+    }
+
+    /// <summary>
+    /// The rules every side plays on and the playbooks fitted to their roster: the embedded approximate fixture and
+    /// the default playbooks when <paramref name="rulesPath"/> is null, else that rules JSON and the default playbooks
+    /// adapted to it (<see cref="PlaybookRosterAdapter"/>; the playbooks were authored against the fixture).
+    /// </summary>
+    public static (IRulesDatabase Rules, IPlaybookLibrary Playbooks, IReadOnlyList<RosterChange> Changes) LoadRules(string? rulesPath)
+    {
+        PlaybookLibrary authored = PlaybookLibrary.LoadDefault();
+        if (rulesPath is null) return (RulesDatabase.LoadEmbeddedFixture(), authored, []);
+        if (!File.Exists(rulesPath)) throw new ArgumentException($"No rules file at {rulesPath}.");
+        RulesDatabase rules = RulesDatabase.LoadJson(File.ReadAllText(rulesPath));
+        RosterAdaptation adapted = PlaybookRosterAdapter.Adapt(authored.All, rules, RulesDatabase.LoadEmbeddedFixture());
+        return (rules, adapted.Library, adapted.Changes);
     }
 
     /// <summary>
@@ -328,7 +342,8 @@ public static class Program
             MatchManifest manifest = new(
                 MatchManifest.CurrentSchema, job.Arm, job.Opponent, job.Map.Map.MapId, job.Split, job.Seed, options.MaxSeconds,
                 options.Benchmark, options.LlmLatencySeconds, job.Arm.Name == "distilled" ? context.DistillSource : null,
-                played.Players["arm"].DecisionLogHash, played.Winner, played.Reason, played.DurationSeconds);
+                played.Players["arm"].DecisionLogHash, played.Winner, played.Reason, played.DurationSeconds,
+                options.RulesPath is null ? null : Path.GetFullPath(options.RulesPath));
             MatchManifest.Write(Path.Combine(options.OutDir, "decisions"), manifest, captured);
         }
         return played;
@@ -364,10 +379,10 @@ public static class Program
         IReadOnlyList<DecisionRecord> recorded;
         using (StreamReader reader = new(ndjsonPath)) recorded = DecisionLogCodec.ReadAll(reader);
 
-        IRulesDatabase rules = RulesDatabase.LoadEmbeddedFixture();
+        (IRulesDatabase rules, IPlaybookLibrary playbooks, _) = LoadRules(manifest.RulesFile);
         // No model is ever asked: a fake context keeps credential resolution out of a replay entirely.
         ArenaRunContext context = new(llmFake: true, manifest.LlmLatencySeconds);
-        BotAgentFactory factory = new(rules, PlaybookLibrary.LoadDefault(), context);
+        BotAgentFactory factory = new(rules, playbooks, context);
         ReplayAgentFactory replayFactory = new(factory, manifest.Arm, recorded);
         SimMap map = SimMaps.All.SingleOrDefault(m => m.Map.MapId == manifest.Map) ?? throw new ArgumentException($"Unknown map '{manifest.Map}'.");
         IReadOnlyList<DecisionRecord> replayed = [];

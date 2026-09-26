@@ -399,3 +399,56 @@ Gaps an operator review found after integration, and how each was closed.
   hashes with no missing recordings. The decision logs of 600 matches take
   272 MB (`--no-decisions` for large runs).
 
+
+## Completeness round 2 (2026-09-26)
+
+All LLM results in this section come from `--llm-fake`; no live model was run.
+
+- **Held-out opponents.** See "Held-out opponents" under the integration
+  record: `ai-horde` and `ai-armor` are evaluation-only, never learned from or
+  tuned against, and reported in their own section of `report.md`.
+- **The distilled arm's teacher always plays the training maps.** Before this,
+  `--maps heldout` left the teacher with 0 examples and every distilled decision
+  escalated to the LLM under the distilled label. Now the teacher runs on
+  `SimMaps.Training` whatever `--maps` says, and a dataset under 20 examples
+  skips the arm with the reason recorded. The operator's command (`--arms
+  llm+fast,distilled --maps heldout --opponents live-rush --benchmark contested
+  --seeds 1 --llm-fake`) now gives 106 examples, 0/46 escalations and $0 per
+  match.
+- **Changed unit rosters.** `arena run --rules <json>` (and `tune search|validate
+  --rules`) plays every side on a `RulesDocument` in place of the embedded
+  fixture; replay reads the file again from the match manifest. The committed
+  variant `Data/bindery-sim-variant-roster.json`
+  (`RulesDatabase.LoadEmbeddedVariantFixture`) renames MTNK to GTNK, removes
+  HTK and V3, re-costs E2, HTNK and FV, and adds TNKD. The authored playbooks
+  name type ids only in tech goals. As written, they fail validation cleanly:
+  the validator rejects the intent with `type.unknown` and the fallback keeps
+  control. `PlaybookRosterAdapter` fits them to the roster through rule facts.
+  Each missing goal is replaced by the same-role unit, reachable by every
+  playbook faction, preferring the same kind and then the nearest cost.
+  A playbook with an irreplaceable goal is dropped, with the reason recorded.
+  On the variant: `allied-grizzly-timing` MTNK → GTNK, `soviet-flak-mix`
+  HTK → E4, and `soviet-v3-siege` is dropped (no artillery left). The scripted
+  `ai-*` opponents fit their build lists the same way. The frozen pinned
+  styles are not adapted.
+
+  Run (contested, all maps, 2 seeds, opponents: the five `live-*` styles plus
+  `ai-horde`, `ai-armor`, `ai-rush` and `rush`; 90 matches per arm, with the
+  same command on the fixture in brackets): selector 57 [59], bandit 58 [67],
+  llm-shadow 57 [59], llm 56 [47], llm+fast 57 [50], distilled 59 [49].
+  0 rejected proposals in every arm on the variant.
+
+  Against the held-out opponents, out of 20 matches per arm: selector 12 [14],
+  bandit 13 [15], llm 11 [10], llm+fast 12 [11], distilled 14 [12].
+
+  **Live model and retail roster.** The fake LLM policy picks playbooks by id
+  from the adapted catalogue, so no fake-client result shows whether a live
+  model reasons from the rule facts and counters in its prompt under a changed
+  roster. That needs a live credential (`ANTHROPIC_API_KEY`, then the same
+  command without `--llm-fake`).
+
+  A retail mod roster needs an operator's `rulesmd.ini` through
+  `RulesmdImporter`, then `--rules` on the JSON it writes. `Ra2BotHost` takes a
+  built runtime, so a caller that builds it on imported rules should pass
+  `PlaybookRosterAdapter.Adapt(PlaybookLibrary.LoadDefault().All, rules,
+  RulesDatabase.LoadEmbeddedFixture()).Library` as the playbooks.
