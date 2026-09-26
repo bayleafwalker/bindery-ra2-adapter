@@ -24,11 +24,21 @@ namespace Bindery.Ra2.Bot.Features;
 /// </param>
 /// <param name="ArmyValueSwingThreshold">Fractional own-army-value change over <see cref="ArmyValueSwingWindowSeconds"/> that raises <see cref="StrategicEventKind.ArmyValueSwing"/>.</param>
 /// <param name="ArmyValueSwingWindowSeconds">Window for the army-value-swing check. Spec default: 15 s.</param>
+/// <param name="ArmyValueSwingMinValue">
+/// Smallest army value a swing is measured against. The fraction is the change over
+/// <c>max(|baseline|, this)</c>, so a first unit or a rebuild from nothing is not a 100% swing unless it adds at
+/// least <see cref="ArmyValueSwingThreshold"/> of this value; 1000 credits is roughly one tank and escort.
+/// </param>
 /// <param name="ScoutingWindowSeconds">A region counts as "covered" for <see cref="ScoutingFeatures.CoverageFraction"/> if seen within this many seconds. Spec default: 60 s.</param>
 /// <param name="EnemyStartUnscoutedGraceSeconds">How long into the match to withhold the "enemy start unscouted" unknown, so it does not fire in the opening seconds.</param>
 /// <param name="EnemyTechUnknownThresholdSeconds">Age, in seconds, of the newest sighting of any enemy building before "enemy tech unknown" fires. Spec example: 120 s.</param>
 /// <param name="EnemyArmyUnseenThresholdSeconds">Age, in seconds, of the newest sighting of any enemy unit before "enemy army not seen" fires. Spec example: 60 s.</param>
 /// <param name="EventDedupWindowSeconds">Minimum gap between two emissions of the same event kind (and region, where applicable) before it is re-emitted.</param>
+/// <param name="IncomeWindowSeconds">
+/// Trailing window over which income is estimated from the credit delta plus the modelled spending. Long enough
+/// that one enqueue debit or harvester unload moves the estimate by at most its value over the window, short
+/// enough that a lost refinery shows within a quarter-minute. Must not exceed <see cref="HistorySeconds"/>.
+/// </param>
 /// <param name="LowPowerGraceSeconds">Same de-dup gap, specifically for <see cref="StrategicEventKind.LowPower"/>, which would otherwise re-fire every compile while power stays negative.</param>
 public sealed record FeatureOptions(
     double HistorySeconds = 65.0,
@@ -41,4 +51,6 @@ public sealed record FeatureOptions(
     double EnemyTechUnknownThresholdSeconds = 120.0,
     double EnemyArmyUnseenThresholdSeconds = 60.0,
     double EventDedupWindowSeconds = 20.0,
-    double LowPowerGraceSeconds = 30.0);
+    double LowPowerGraceSeconds = 30.0,
+    double IncomeWindowSeconds = 15.0,
+    double ArmyValueSwingMinValue = 1000.0);

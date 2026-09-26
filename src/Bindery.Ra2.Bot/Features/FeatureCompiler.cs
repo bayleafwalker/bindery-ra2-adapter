@@ -41,7 +41,10 @@ public sealed partial class FeatureCompiler : IFeatureCompiler
     private readonly Dictionary<(StrategicEventKind Kind, RegionId? Region), GameTime> lastEmitted = [];
     private readonly HashSet<string> allSeenTechEver = new(StringComparer.Ordinal);
     private readonly HashSet<string> previousKnownProduction = new(StringComparer.Ordinal);
-    private readonly Dictionary<RegionId, RegionControl> previousOreControl = [];
+    /// <summary>Ore regions held by an own building at the previous compile, for <see cref="StrategicEventKind.ExpansionTaken"/>.</summary>
+    private readonly HashSet<RegionId> previousOwnExpansions = [];
+    /// <summary>Ore regions holding a remembered enemy building at the previous compile, for <see cref="StrategicEventKind.EnemyExpansionSeen"/>.</summary>
+    private readonly HashSet<RegionId> previousEnemyExpansions = [];
     private readonly Dictionary<string, int> enemySuperweaponsSeen = new(StringComparer.Ordinal);
 
     private string? cachedMapId;
@@ -84,11 +87,11 @@ public sealed partial class FeatureCompiler : IFeatureCompiler
             CompileArmy(snapshot);
 
         EnemyFeatures enemy = CompileEnemy(snapshot, out double enemyArmyValueCurrent);
-        MapControlFeatures mapControl = CompileMapControl(snapshot, out IReadOnlyDictionary<RegionId, RegionControl> controlByRegion);
+        MapControlFeatures mapControl = CompileMapControl(snapshot);
         ScoutingFeatures scouting = CompileScouting(snapshot, enemy);
         EconomyFeatures economy = CompileEconomy(snapshot, out double incomePerMinuteCurrent, out double spendingPerMinuteCurrent);
 
-        IReadOnlyList<ThreatAssessment> threats = CompileThreats(snapshot, graph, clusters, armyValueCurrent);
+        IReadOnlyList<ThreatAssessment> threats = CompileThreats(snapshot, graph, clusters);
         SuperweaponFeatures? superweapons = CompileSuperweapons(snapshot, events);
         if (superweapons is { Enemy.Count: > 0 }) enemy = enemy with { SuperweaponKnown = true };
 
@@ -108,7 +111,7 @@ public sealed partial class FeatureCompiler : IFeatureCompiler
             snapshot.Time, snapshot.Credits, incomePerMinuteCurrent, spendingPerMinuteCurrent,
             armyValueCurrent, cumulativeLossesValue, cumulativeKillsValue, enemyArmyValueCurrent));
 
-        DetectStateTransitionEvents(snapshot, enemyWithTrend, armyValueTrend, controlByRegion, events);
+        DetectStateTransitionEvents(snapshot, enemyWithTrend, armyValueCurrent, events);
         events.Sort(static (a, b) =>
         {
             int byTime = a.Time.CompareTo(b.Time);
@@ -233,11 +236,17 @@ public sealed partial class FeatureCompiler : IFeatureCompiler
     private static void AddEvent(List<StrategicEvent> events, StrategicEventKind kind, GameTime time, double severity, string detail, RegionId? region = null) =>
         events.Add(new StrategicEvent(kind, time, Math.Clamp(severity, 0, 1), detail, region));
 
-    /// <summary>Adds an event, suppressed if the same (kind, region) fired within <see cref="FeatureOptions.EventDedupWindowSeconds"/>.</summary>
-    private void EmitGated(List<StrategicEvent> events, StrategicEventKind kind, GameTime time, double severity, string detail, RegionId? region = null)
+    /// <summary>
+    /// Adds an event, suppressed if the same (kind, region) fired within <paramref name="gapSeconds"/>, which
+    /// defaults to <see cref="FeatureOptions.EventDedupWindowSeconds"/>.
+    /// </summary>
+    private void EmitGated(
+        List<StrategicEvent> events, StrategicEventKind kind, GameTime time, double severity, string detail,
+        RegionId? region = null, double? gapSeconds = null)
     {
         (StrategicEventKind, RegionId?) key = (kind, region);
-        if (lastEmitted.TryGetValue(key, out GameTime last) && time.SecondsSince(last) < options.EventDedupWindowSeconds) return;
+        double gap = gapSeconds ?? options.EventDedupWindowSeconds;
+        if (lastEmitted.TryGetValue(key, out GameTime last) && time.SecondsSince(last) < gap) return;
         lastEmitted[key] = time;
         AddEvent(events, kind, time, severity, detail, region);
     }

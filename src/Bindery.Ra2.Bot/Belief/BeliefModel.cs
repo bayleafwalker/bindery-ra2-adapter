@@ -20,13 +20,15 @@ public sealed class BeliefModel : IBeliefModel
     private readonly Dictionary<PlayerId, HashSet<Faction>> factionCandidates = [];
     private readonly Dictionary<PlayerId, HashSet<string>> seenTech = [];
     private readonly Dictionary<PlayerId, Dictionary<string, GameTime>> techLastSeen = [];
-    private readonly Dictionary<PlayerId, HashSet<RegionId>> enemyBuildingStartRegions = [];
+    /// <summary>Per enemy player, each start region an enemy building was seen in, with when it was first seen there.</summary>
+    private readonly Dictionary<PlayerId, Dictionary<RegionId, GameTime>> enemyBuildingStartRegions = [];
     private readonly HashSet<RegionId> ownStartRegions = [];
     private readonly HashSet<RegionId> emptyScoutedStarts = [];
     private readonly Dictionary<RegionId, GameTime> regionLastSeen = [];
     private readonly List<GameEvent> recentEvents = [];
 
     private long version;
+    private GameTime? previousFrameTime;
     private BeliefSnapshot? current;
     private Dictionary<RegionId, int>? oreLastSeen;
 
@@ -138,10 +140,19 @@ public sealed class BeliefModel : IBeliefModel
             if (seenThisFrame.Contains(id)) continue;
             if (contact.ConfirmedDestroyed) continue; // a confirmed fact does not decay.
 
-            double elapsed = frame.Time.SecondsSince(contact.LastSeenAt);
+            // Decay only over the interval since the previous frame, from the confidence it already had: the
+            // half-life is chosen per interval by what that interval showed, so vacancy evidence gathered while
+            // the spot was in view stays spent when it goes dark again, and confidence never rises unseen.
+            GameTime since = previousFrameTime is { } p && p > contact.LastSeenAt ? p : contact.LastSeenAt;
+            double elapsed = Math.Max(0, frame.Time.SecondsSince(since));
             bool regionVisible = frame.VisibleRegions.Contains(contact.LastSeenRegion);
-            double halfLife = regionVisible ? options.VacancyHalfLifeSeconds : options.ConfidenceHalfLifeSeconds;
-            double confidence = halfLife <= 0 ? 0.0 : Math.Pow(0.5, elapsed / halfLife);
+            double confidence;
+            if (regionVisible)
+                confidence = options.VacancyHalfLifeSeconds <= 0 ? 0.0 : contact.Confidence * Math.Pow(0.5, elapsed / options.VacancyHalfLifeSeconds);
+            else if (contact.Kind == EntityKind.Building)
+                confidence = contact.Confidence; // a building cannot move: out of sight it stands where it was seen.
+            else
+                confidence = options.ConfidenceHalfLifeSeconds <= 0 ? 0.0 : contact.Confidence * Math.Pow(0.5, elapsed / options.ConfidenceHalfLifeSeconds);
 
             if (confidence < options.ConfidenceFloor)
             {
@@ -151,6 +162,7 @@ public sealed class BeliefModel : IBeliefModel
             contacts[id] = contact with { Confidence = confidence };
         }
         foreach (EntityId id in forgotten) contacts.Remove(id);
+        previousFrameTime = frame.Time;
     }
 
     private void UpdateFactionKnowledge(PlayerId player, IReadOnlyList<Faction> observedFactions)
@@ -208,18 +220,18 @@ public sealed class BeliefModel : IBeliefModel
 
             RegionId region = RegionOf(frame.Map, e.Position);
             if (!RegionIsStart(frame.Map, region)) continue;
-            if (!enemyBuildingStartRegions.TryGetValue(e.Owner, out HashSet<RegionId>? starts))
+            if (!enemyBuildingStartRegions.TryGetValue(e.Owner, out Dictionary<RegionId, GameTime>? starts))
             {
                 starts = [];
                 enemyBuildingStartRegions[e.Owner] = starts;
             }
-            starts.Add(region);
+            starts.TryAdd(region, frame.Time);
         }
 
         foreach (RegionId regionId in frame.VisibleRegions)
         {
             if (!RegionIsStart(frame.Map, regionId) || ownStartRegions.Contains(regionId)) continue;
-            bool anyEnemyBuildingThere = enemyBuildingStartRegions.Values.Any(set => set.Contains(regionId));
+            bool anyEnemyBuildingThere = enemyBuildingStartRegions.Values.Any(set => set.ContainsKey(regionId));
             if (anyEnemyBuildingThere) emptyScoutedStarts.Remove(regionId);
             else emptyScoutedStarts.Add(regionId);
         }
@@ -247,8 +259,7 @@ public sealed class BeliefModel : IBeliefModel
         Dictionary<PlayerId, RegionId> directStarts = [];
         foreach (PlayerId p in ordered)
         {
-            if (enemyBuildingStartRegions.TryGetValue(p, out HashSet<RegionId>? starts) && starts.Count > 0)
-                directStarts[p] = starts.OrderBy(static r => r.Value).First();
+            if (DirectStart(p, enemies) is { } direct) directStarts[p] = direct;
         }
 
         List<RegionId> allStartRegions = [.. frame.Map.Regions
@@ -284,6 +295,28 @@ public sealed class BeliefModel : IBeliefModel
             result.Add(new EnemyPlayerBelief(p, faction, start, tech, lastSeen, techTimes));
         }
         return result;
+    }
+
+    /// <summary>
+    /// The start region an enemy building of this player says is its base. Our own start is never a candidate (a
+    /// tower rush or captured building there is not the enemy's base), and among the rest the choice goes by
+    /// evidence, not region id: a start still holding one of the player's live buildings beats one whose buildings
+    /// are all destroyed or forgotten, then the earliest sighting (the base is normally found before any
+    /// expansion into another empty start), then the lowest id for determinism. Null when no start qualifies.
+    /// </summary>
+    private RegionId? DirectStart(PlayerId player, IReadOnlyList<EnemyContact> enemies)
+    {
+        if (!enemyBuildingStartRegions.TryGetValue(player, out Dictionary<RegionId, GameTime>? starts)) return null;
+        HashSet<RegionId> held = [.. enemies
+            .Where(c => c.Owner == player && c.Kind == EntityKind.Building && !c.ConfirmedDestroyed)
+            .Select(static c => c.LastSeenRegion)];
+        return starts
+            .Where(kv => !ownStartRegions.Contains(kv.Key))
+            .OrderByDescending(kv => held.Contains(kv.Key))
+            .ThenBy(static kv => kv.Value)
+            .ThenBy(static kv => kv.Key.Value)
+            .Select(static kv => (RegionId?)kv.Key)
+            .FirstOrDefault();
     }
 
     /// <summary>

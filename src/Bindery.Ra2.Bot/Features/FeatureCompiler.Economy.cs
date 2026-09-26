@@ -4,47 +4,45 @@ namespace Bindery.Ra2.Bot.Features;
 public sealed partial class FeatureCompiler
 {
     /// <summary>
-    /// Estimates economy figures. RA2 debits a production item's cost
-    /// gradually as it progresses, so the instantaneous spending rate is
-    /// approximated as the sum, over every in-progress (not ready, not on
-    /// hold) queue item, of its <c>Cost / BuildSeconds</c>. Income is then
-    /// whatever credit change is left over once that estimated spend is
-    /// backed out of the observed credit delta since the previous compile:
-    /// <c>income = (creditsNow - creditsPrev) / dt + spendingRate</c>. This is
-    /// an estimator, not ground truth (repair costs, sold buildings and
-    /// harvester dumps are not modelled), which is why the field is named
-    /// "income" rather than something implying it is exact.
+    /// Estimates economy figures. The spending rate is the sum of <c>Cost / BuildSeconds</c> over the items a queue
+    /// is actually building: the first <see cref="ProductionQueueState.Factories"/> items that are neither ready nor
+    /// on hold, since items waiting behind a busy factory cost nothing yet (the same cap utilization uses).
+    ///
+    /// Income is the credit change over a trailing <see cref="FeatureOptions.IncomeWindowSeconds"/> window with the
+    /// spending over that window added back: <c>(creditsNow - creditsThen + integratedSpend) / window</c>. A
+    /// one-compile derivative is unusable here: RA2 debits an item gradually, but the simulator debits its full cost
+    /// on enqueue and a harvester unload lands as one lump, so a per-frame delta swings by the whole cost divided by
+    /// one frame. Over a window the mismatch between debit timing and the modelled rate is bounded by the item's
+    /// cost over the window, and it cancels once the item finishes inside the window. This is an estimator, not
+    /// ground truth (repairs and sales are not modelled), which is why the field is named "income" rather than
+    /// something implying it is exact.
+    ///
+    /// Cash runway is how long the bank lasts at the net burn (spending less income); with income covering spending
+    /// it is <see cref="UnknownSeconds"/>, because the bank is not running out.
     /// </summary>
     private EconomyFeatures CompileEconomy(BeliefSnapshot snapshot, out double incomePerMinute, out double spendingPerMinute)
     {
         double spendingPerSecond = 0;
         foreach (ProductionQueueState queue in snapshot.Queues)
         {
+            int building = 0;
             foreach (QueueItem item in queue.Items)
             {
                 if (item.Ready || item.OnHold) continue;
+                if (building++ >= queue.Factories) break;
                 if (!rules.TryGet(item.TypeId, out UnitRule rule) || rule.BuildSeconds <= 0) continue;
                 spendingPerSecond += rule.Cost / rule.BuildSeconds;
             }
         }
         spendingPerMinute = spendingPerSecond * 60.0;
 
-        if (history.Count > 0)
-        {
-            Sample previous = history[^1];
-            double dt = snapshot.Time.SecondsSince(previous.Time);
-            incomePerMinute = dt > 0
-                ? ((snapshot.Credits - previous.Credits) / dt + spendingPerSecond) * 60.0
-                : 0.0;
-        }
-        else
-        {
-            incomePerMinute = 0.0;
-        }
+        double incomePerSecond = WindowedIncomePerSecond(snapshot.Time, snapshot.Credits);
+        incomePerMinute = incomePerSecond * 60.0;
 
-        double cashRunwaySeconds = spendingPerSecond <= 0
+        double netBurnPerSecond = spendingPerSecond - incomePerSecond;
+        double cashRunwaySeconds = netBurnPerSecond <= 1e-9
             ? UnknownSeconds
-            : Math.Min(UnknownSeconds, snapshot.Credits / spendingPerSecond);
+            : Math.Min(UnknownSeconds, Math.Max(0, snapshot.Credits) / netBurnPerSecond);
 
         int totalFactories = 0, busyFactories = 0;
         foreach (ProductionQueueState queue in snapshot.Queues)
@@ -71,5 +69,33 @@ public sealed partial class FeatureCompiler
         return new EconomyFeatures(
             Trend.Flat(snapshot.Credits), Trend.Flat(incomePerMinute), Trend.Flat(spendingPerMinute),
             cashRunwaySeconds, utilization, harvesters, refineries, oreRemainingFraction, snapshot.Power);
+    }
+
+    /// <summary>
+    /// Credits gained per second over the trailing income window: the credit delta from the newest sample at or
+    /// before the window start, plus the modelled spending integrated over the same span (each sample's rate held
+    /// until the next compile). Zero before any history exists.
+    /// </summary>
+    private double WindowedIncomePerSecond(GameTime now, double credits)
+    {
+        if (history.Count == 0) return 0.0;
+        GameTime cutoff = now.Plus(-options.IncomeWindowSeconds);
+        int from = 0;
+        for (int i = 0; i < history.Count; i++)
+        {
+            if (history[i].Time <= cutoff) from = i;
+            else break;
+        }
+        Sample baseline = history[from];
+        double span = now.SecondsSince(baseline.Time);
+        if (span <= 0) return 0.0;
+
+        double spent = 0;
+        for (int i = from; i < history.Count; i++)
+        {
+            GameTime until = i + 1 < history.Count ? history[i + 1].Time : now;
+            spent += history[i].SpendingPerMinute / 60.0 * until.SecondsSince(history[i].Time);
+        }
+        return (credits - baseline.Credits + spent) / span;
     }
 }

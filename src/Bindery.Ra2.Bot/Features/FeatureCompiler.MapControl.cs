@@ -7,7 +7,7 @@ public sealed partial class FeatureCompiler
     /// <summary>Confidence above which a stale enemy contact still counts as "present" for map control.</summary>
     private const double PresenceConfidenceThreshold = 0.2;
 
-    private MapControlFeatures CompileMapControl(BeliefSnapshot snapshot, out IReadOnlyDictionary<RegionId, RegionControl> controlByRegion)
+    private MapControlFeatures CompileMapControl(BeliefSnapshot snapshot)
     {
         HashSet<RegionId> ownPresent = [.. snapshot.Own.Select(static e => e.Region)];
         HashSet<RegionId> enemyPresent = [.. snapshot.Enemies
@@ -27,11 +27,13 @@ public sealed partial class FeatureCompiler
                 _ => snapshot.RegionLastSeen.ContainsKey(region.Id) ? RegionControl.Neutral : RegionControl.Unknown,
             };
         }
-        controlByRegion = control;
 
+        // An ore field is taken by the enemy only when it holds an enemy building; a unit passing through makes
+        // the region Enemy-controlled for the moment but does not take the field away as an expansion.
+        HashSet<RegionId> enemyHeld = EnemyBuildingRegions(snapshot);
         List<Region> oreRegions = [.. snapshot.Map.Regions.Where(static r => r.HasOre)];
         List<RegionId> expansionCandidates = [.. oreRegions
-            .Where(r => control[r.Id] != RegionControl.Enemy)
+            .Where(r => !enemyHeld.Contains(r.Id))
             .Select(r => (Region: r, Distance: DistanceFromBase(snapshot, r.Id)))
             .OrderBy(static t => t.Distance)
             .ThenBy(static t => t.Region.Id.Value)
@@ -43,6 +45,12 @@ public sealed partial class FeatureCompiler
 
         return new MapControlFeatures(control, expansionCandidates, ownedOreFraction);
     }
+
+    /// <summary>Regions holding a live enemy building remembered with at least presence confidence.</summary>
+    private static HashSet<RegionId> EnemyBuildingRegions(BeliefSnapshot snapshot) =>
+        [.. snapshot.Enemies
+            .Where(static c => c.Kind == EntityKind.Building && !c.ConfirmedDestroyed && c.Confidence >= PresenceConfidenceThreshold)
+            .Select(static c => c.LastSeenRegion)];
 
     private static List<RegionId> BaseRegions(BeliefSnapshot snapshot) =>
         [.. snapshot.Own.Where(static e => e.Kind == EntityKind.Building).Select(static e => e.Region).Distinct().OrderBy(static r => r.Value)];
@@ -83,17 +91,59 @@ public sealed partial class FeatureCompiler
 
         List<string> unknowns = [];
         bool pastGrace = snapshot.Time.Seconds >= options.EnemyStartUnscoutedGraceSeconds;
+        double matchSeconds = Math.Max(0, snapshot.Time.Seconds);
+        if (snapshot.EnemyPlayers.Count == 0)
+        {
+            // No enemy seen at all is the least-scouted state there is: every unknown applies, with the match
+            // clock as the age, since nothing of the enemy has been seen since it began.
+            if (pastGrace) unknowns.Add("enemy start unscouted");
+            if (matchSeconds >= options.EnemyArmyUnseenThresholdSeconds)
+                unknowns.Add(string.Create(CultureInfo.InvariantCulture, $"enemy army not seen for {options.EnemyArmyUnseenThresholdSeconds:0}s"));
+            if (matchSeconds >= options.EnemyTechUnknownThresholdSeconds)
+                unknowns.Add(string.Create(CultureInfo.InvariantCulture, $"enemy tech unknown for {options.EnemyTechUnknownThresholdSeconds:0}s"));
+        }
         foreach (EnemyPlayerBelief p in snapshot.EnemyPlayers.OrderBy(static p => p.Player.Value))
         {
             if (pastGrace && p.SuspectedStart is null) unknowns.Add($"enemy {p.Player} start unscouted");
 
-            double lastSeenAge = p.LastSeenAnything is { } t ? snapshot.Time.SecondsSince(t) : UnknownSeconds;
-            if (lastSeenAge >= options.EnemyArmyUnseenThresholdSeconds)
+            // The army unknown ages from the newest unit sighting and the tech unknown from the newest building
+            // sighting: watching an enemy's conyard says nothing about where its army is, and a raiding unit says
+            // nothing about what it has built.
+            (GameTime? unitSeen, GameTime? buildingSeen) = NewestSightings(snapshot, p);
+            double armyAge = unitSeen is { } u ? snapshot.Time.SecondsSince(u) : matchSeconds;
+            double techAge = buildingSeen is { } b ? snapshot.Time.SecondsSince(b) : matchSeconds;
+            if (armyAge >= options.EnemyArmyUnseenThresholdSeconds)
                 unknowns.Add(string.Create(CultureInfo.InvariantCulture, $"enemy {p.Player} army not seen for {options.EnemyArmyUnseenThresholdSeconds:0}s"));
-            if (lastSeenAge >= options.EnemyTechUnknownThresholdSeconds)
+            if (techAge >= options.EnemyTechUnknownThresholdSeconds)
                 unknowns.Add(string.Create(CultureInfo.InvariantCulture, $"enemy {p.Player} tech unknown for {options.EnemyTechUnknownThresholdSeconds:0}s"));
         }
 
         return new ScoutingFeatures(coverage, ages, unknowns);
+    }
+
+    /// <summary>
+    /// The newest sighting of any unit and of any building of one enemy player, from the remembered contacts and
+    /// from the per-type sighting times (which outlive forgotten contacts).
+    /// </summary>
+    private (GameTime? Unit, GameTime? Building) NewestSightings(BeliefSnapshot snapshot, EnemyPlayerBelief player)
+    {
+        GameTime? unit = null, building = null;
+        void Note(bool isBuilding, GameTime at)
+        {
+            if (isBuilding) { if (building is null || at > building.Value) building = at; }
+            else if (unit is null || at > unit.Value) unit = at;
+        }
+        foreach (EnemyContact c in snapshot.Enemies)
+        {
+            if (c.Owner == player.Player) Note(c.Kind == EntityKind.Building, c.LastSeenAt);
+        }
+        if (player.TechLastSeen is { } byType)
+        {
+            foreach ((string typeId, GameTime at) in byType)
+            {
+                if (rules.TryGet(typeId, out UnitRule rule)) Note(rule.Kind == EntityKind.Building, at);
+            }
+        }
+        return (unit, building);
     }
 }

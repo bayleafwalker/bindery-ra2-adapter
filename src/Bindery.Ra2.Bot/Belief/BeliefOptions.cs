@@ -10,7 +10,12 @@ namespace Bindery.Ra2.Bot.Belief;
 /// <param name="ConfidenceHalfLifeSeconds">
 /// Half-life, in game seconds, of an enemy contact's confidence while it is
 /// out of sight and its last-seen region is not currently visible. Spec
-/// default: 60 s.
+/// default: 60 s. Buildings do not decay this way: a structure cannot move,
+/// so out of sight it is remembered at its last confidence (as RA2's own fog
+/// keeps showing it) until its spot is seen empty or a destroyed event
+/// arrives. Decay is applied per frame interval from the previous
+/// confidence, never recomputed from the sighting time, so confidence
+/// never rises without a sighting.
 /// </param>
 /// <param name="VacancyHalfLifeSeconds">
 /// A faster half-life applied instead of <see cref="ConfidenceHalfLifeSeconds"/>
