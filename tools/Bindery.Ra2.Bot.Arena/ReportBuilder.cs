@@ -19,7 +19,7 @@ public static class ReportBuilder
         sb.AppendLine("# Bindery region sim arena report");
         sb.AppendLine();
         sb.AppendLine($"Results are from the bindery region simulator with the approximate `{rulesetId}` rules, not retail RA2; they are directional.");
-        sb.AppendLine($"Every side is a full `BotRuntime`; opponents are pinned-playbook styles. The arm plays Allied on odd seeds and Soviet on even seeds. Match limit {F(options.MaxSeconds, "0")} s (a timeout is won on final asset value).");
+        sb.AppendLine($"The arm is a full `BotRuntime`. Opponents named `ai-*` are the independent scripted AI (`Bindery.Ra2.Bot.Sim.Opponents`, no shared planner code; `:easy`/`:medium`/`:hard`, default hard); the other opponents are pinned-playbook `BotRuntime` styles that share the arm's planner and tactics. The arm plays Allied on odd seeds and Soviet on even seeds. Match limit {F(options.MaxSeconds, "0")} s (a timeout is won on final asset value).");
         // Disclosed because the held-out split holds out maps only: these same opponents chose the selector's
         // default playbook, so a selector (or distilled) win rate against them is partly in-sample.
         sb.AppendLine("Opponents are not held out: the selector's default playbook was chosen from a style-versus-style matrix against these same pinned-playbook opponents (training maps only), so selector and distilled-arm win rates against them are partly in-sample. The held-out split holds out maps, not opponents.");
@@ -53,8 +53,8 @@ public static class ReportBuilder
     {
         sb.AppendLine("## Win rate (arm × split)");
         sb.AppendLine();
-        sb.AppendLine("| Arm | Split | Wins | Losses | Draws | Matches | Win rate | Eliminations won | Timeouts |");
-        sb.AppendLine("|---|---|---|---|---|---|---|---|---|");
+        sb.AppendLine("| Arm | Split | Wins | Losses | Draws | Matches | Win rate | 95% interval (Wilson) | Eliminations won | Timeouts |");
+        sb.AppendLine("|---|---|---|---|---|---|---|---|---|---|");
         foreach (var group in matches.GroupBy(m => (m.Arm, m.Split)).OrderBy(g => g.Key.Arm, StringComparer.Ordinal).ThenBy(g => g.Key.Split, StringComparer.Ordinal))
         {
             int wins = group.Count(static m => m.Winner == 0);
@@ -63,7 +63,7 @@ public static class ReportBuilder
             int total = group.Count();
             int elimWins = group.Count(static m => m.Winner == 0 && m.Reason == "elimination");
             int timeouts = group.Count(static m => m.Reason == "timeout");
-            sb.AppendLine($"| {group.Key.Arm} | {group.Key.Split} | {wins} | {losses} | {draws} | {total} | {Rate(wins, total)} | {elimWins} | {timeouts} |");
+            sb.AppendLine($"| {group.Key.Arm} | {group.Key.Split} | {wins} | {losses} | {draws} | {total} | {Rate(wins, total)} | {Wilson(wins, total)} | {elimWins} | {timeouts} |");
         }
         sb.AppendLine();
     }
@@ -93,15 +93,17 @@ public static class ReportBuilder
         sb.AppendLine();
         sb.AppendLine("Production idle: seconds with a factory, nothing queued and credits for the cheapest item, over match seconds. Trade efficiency: enemy value destroyed in combat / own value lost in combat (pooled over matches).");
         sb.AppendLine();
-        sb.AppendLine("| Arm | Duration s | Units built | Buildings built | Peak army value | Idle fraction | Avg credits | Final assets (arm / opp) | Trade efficiency |");
-        sb.AppendLine("|---|---|---|---|---|---|---|---|---|");
+        sb.AppendLine("Time to first attack: first second a combat unit stood in a region holding an enemy structure (mean over matches where it happened; count in brackets).");
+        sb.AppendLine();
+        sb.AppendLine("| Arm | Duration s | Units built | Buildings built | Peak army value | Idle fraction | Avg credits | Final assets (arm / opp) | Trade efficiency | First attack s |");
+        sb.AppendLine("|---|---|---|---|---|---|---|---|---|---|");
         foreach (var group in matches.GroupBy(static m => m.Arm).OrderBy(static g => g.Key, StringComparer.Ordinal))
         {
             List<PlayerMatchMetrics> arm = group.Select(static m => m.Players["arm"]).ToList();
             List<PlayerMatchMetrics> opp = group.Select(static m => m.Players["opponent"]).ToList();
             long destroyed = arm.Sum(static a => (long)a.AssetValueDestroyedByOpponent);
             long lost = arm.Sum(static a => (long)a.AssetValueLostByPlayer);
-            sb.AppendLine($"| {group.Key} | {F(group.Average(static m => m.DurationSeconds), "0")} | {F(arm.Average(static a => a.UnitsBuilt), "0.0")} | {F(arm.Average(static a => a.BuildingsBuilt), "0.0")} | {F(arm.Average(static a => a.PeakArmyValue), "0")} | {F(arm.Average(static a => a.ProductionIdleFraction), "0.000")} | {F(arm.Average(static a => a.AverageCreditsOnHand), "0")} | {F(arm.Average(static a => a.FinalAssetValue), "0")} / {F(opp.Average(static a => a.FinalAssetValue), "0")} | {(lost == 0 ? "n/a" : F(destroyed / (double)lost, "0.00"))} ({destroyed}/{lost}) |");
+            sb.AppendLine($"| {group.Key} | {F(group.Average(static m => m.DurationSeconds), "0")} | {F(arm.Average(static a => a.UnitsBuilt), "0.0")} | {F(arm.Average(static a => a.BuildingsBuilt), "0.0")} | {F(arm.Average(static a => a.PeakArmyValue), "0")} | {F(arm.Average(static a => a.ProductionIdleFraction), "0.000")} | {F(arm.Average(static a => a.AverageCreditsOnHand), "0")} | {F(arm.Average(static a => a.FinalAssetValue), "0")} / {F(opp.Average(static a => a.FinalAssetValue), "0")} | {(lost == 0 ? "n/a" : F(destroyed / (double)lost, "0.00"))} ({destroyed}/{lost}) | {FirstAttack(arm)} |");
         }
         sb.AppendLine();
     }
@@ -182,6 +184,24 @@ public static class ReportBuilder
             sb.AppendLine($"| {p.Arm} | {p.Map} | {p.Seed} | {F(p.PerturbedAtSeconds, "0")} | {(p.StatesMatchedBeforePerturbation ? "yes" : "no")} | {p.Differences}/{p.FramesCompared} | {p.Note ?? string.Empty} |");
         }
         sb.AppendLine();
+    }
+
+    private static string FirstAttack(List<PlayerMatchMetrics> arm)
+    {
+        List<double> times = [.. arm.Where(static a => a.FirstAttackSeconds is not null).Select(static a => a.FirstAttackSeconds!.Value)];
+        return times.Count == 0 ? "never" : $"{F(times.Average(), "0")} ({times.Count}/{arm.Count})";
+    }
+
+    /// <summary>Wilson score interval at 95% for a binomial proportion, printed as [low, high].</summary>
+    public static string Wilson(int successes, int total)
+    {
+        if (total == 0) return "n/a";
+        const double z = 1.959964;
+        double p = successes / (double)total;
+        double denominator = 1 + z * z / total;
+        double centre = (p + z * z / (2 * total)) / denominator;
+        double half = z * Math.Sqrt(p * (1 - p) / total + z * z / (4.0 * total * total)) / denominator;
+        return $"[{F(Math.Max(0, centre - half), "0.000")}, {F(Math.Min(1, centre + half), "0.000")}]";
     }
 
     private static string F(double value, string format) => value.ToString(format, CultureInfo.InvariantCulture);

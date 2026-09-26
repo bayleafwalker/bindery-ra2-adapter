@@ -31,7 +31,8 @@ public sealed record PlayerMatchMetrics(
     int BuildingsBuilt,
     int PeakArmyValue,
     string? DecisionLogHash,
-    IReadOnlyList<string> Labels)
+    IReadOnlyList<string> Labels,
+    double? FirstAttackSeconds = null)
 {
     public double TradeEfficiency => AssetValueLostByPlayer <= 0
         ? (AssetValueDestroyedByOpponent > 0 ? AssetValueDestroyedByOpponent : 1.0)
@@ -81,6 +82,7 @@ public static class MatchRunner
         Dictionary<PlayerId, int> unitsBuilt = new() { [ArmPlayer] = 0, [OpponentPlayer] = 0 };
         Dictionary<PlayerId, int> buildingsBuilt = new() { [ArmPlayer] = 0, [OpponentPlayer] = 0 };
         Dictionary<PlayerId, int> peakArmy = new() { [ArmPlayer] = 0, [OpponentPlayer] = 0 };
+        Dictionary<PlayerId, double?> firstAttack = new() { [ArmPlayer] = null, [OpponentPlayer] = null };
         int cheapest = rules.All.Where(static r => r.Cost > 0).Select(static r => r.Cost).DefaultIfEmpty(0).Min();
         int samples = 0;
 
@@ -118,6 +120,7 @@ public static class MatchRunner
                         .Where(e => e.Owner == p && rules.TryGet(e.TypeId, out UnitRule r) && r.Kind != EntityKind.Building && r.Damage > 0)
                         .Sum(e => rules.Get(e.TypeId).Cost);
                     peakArmy[p] = Math.Max(peakArmy[p], army);
+                    firstAttack[p] ??= FirstAttack(view, p, sim.Map, rules);
                 }
             }
         }
@@ -131,7 +134,7 @@ public static class MatchRunner
         opponentAgent.Finish(armWon is { } aw ? !aw : null, opponentAssets, armAssets);
 
         PlayerMatchMetrics Metrics(PlayerId p, Faction faction, IArenaAgent agent) =>
-            BuildMetrics(p, faction, agent.Stats, sim, destroyedValueOf, creditsSampleSum, idleSamples, samples, unitsBuilt[p], buildingsBuilt[p], peakArmy[p]);
+            BuildMetrics(p, faction, agent.Stats, sim, destroyedValueOf, creditsSampleSum, idleSamples, samples, unitsBuilt[p], buildingsBuilt[p], peakArmy[p]) with { FirstAttackSeconds = firstAttack[p] };
 
         Dictionary<string, PlayerMatchMetrics> perPlayer = new()
         {
@@ -140,6 +143,20 @@ public static class MatchRunner
         };
         int? winner = sim.Winner is { } winnerId ? winnerId.Value : null;
         return new MatchRecord(arm.ToString(), opponent, map.Map.MapId, split, seed, winner, reason, durationSeconds, perPlayer);
+    }
+
+    /// <summary>
+    /// Time-to-first-attack: the first sampled second at which one of the player's combat units stands in a region
+    /// holding an enemy structure (an attack reaching the enemy base, not a skirmish in the field); null if never.
+    /// </summary>
+    private static double? FirstAttack(ObservationFrame oracle, PlayerId player, MapInfo map, IRulesDatabase rules)
+    {
+        HashSet<RegionId> enemyBase = [.. oracle.Entities
+            .Where(e => e.Owner != player && rules.TryGet(e.TypeId, out UnitRule r) && r.Kind == EntityKind.Building)
+            .Select(e => map.RegionOf(e.Position)?.Id ?? default)];
+        bool present = oracle.Entities.Any(e => e.Owner == player && rules.TryGet(e.TypeId, out UnitRule r)
+            && r.Kind != EntityKind.Building && r.Damage > 0 && enemyBase.Contains(map.RegionOf(e.Position)?.Id ?? default));
+        return present ? oracle.Time.Seconds : null;
     }
 
     /// <summary>Spec: at least one factory, nothing queued, and credits for the cheapest buildable item.</summary>

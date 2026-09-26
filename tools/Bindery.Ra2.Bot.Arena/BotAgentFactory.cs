@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using Bindery.Ra2.Bot.Claude;
 using Bindery.Ra2.Bot.Runtime;
+using Bindery.Ra2.Bot.Sim.Opponents;
 using Bindery.Ra2.Bot.Strategy;
 
 namespace Bindery.Ra2.Bot.Arena;
@@ -88,9 +89,23 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
 
     public static IReadOnlyList<string> Arms { get; } = ["selector", "bandit", "llm-shadow", "llm", "llm+fast", "distilled"];
 
+    /// <summary>
+    /// Every opponent name <c>--opponents all</c> expands to: the independent scripted AI styles at hard difficulty
+    /// first, then the pinned-playbook styles (which run the bot's own planner and are kept for comparison).
+    /// </summary>
+    public static IReadOnlyList<string> AllOpponents { get; } = [.. OpponentProfiles.Styles, .. OpponentStyles.Keys];
+
+    /// <summary>True for a pinned-playbook style or an independent <c>ai-*</c> style (with optional <c>:difficulty</c>).</summary>
+    public static bool IsOpponent(string name) =>
+        OpponentStyles.ContainsKey(name) || OpponentProfiles.TryParse(name, out _, out _);
+
     public IArenaAgent Create(ArmSpec arm, PlayerId player, Faction faction, MapInfo map, int seed)
     {
         ArgumentNullException.ThrowIfNull(arm);
+        if (OpponentProfiles.TryParse(arm.Name, out string aiStyle, out OpponentDifficulty difficulty))
+        {
+            return new ScriptedArenaAgent(new ScriptedSkirmishAi(rules, player, faction, map, aiStyle, difficulty, seed), $"scripted:{aiStyle}:{difficulty.ToString().ToLowerInvariant()}");
+        }
         DecisionLog log = new();
         List<string> labels = [];
         if (arm.Oracle) labels.Add("oracle");
@@ -136,7 +151,7 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
                     labels.Add($"distilled-from:{context.DistillSource ?? "none"} ({dataset.Count} examples)");
                     break;
                 default:
-                    throw new ArgumentException($"Unknown arm or opponent '{arm.Name}'. Arms: {string.Join(", ", Arms)}; opponents: {string.Join(", ", OpponentStyles.Keys)}.");
+                    throw new ArgumentException($"Unknown arm or opponent '{arm.Name}'. Arms: {string.Join(", ", Arms)}; opponents: {string.Join(", ", AllOpponents)}.");
             }
         }
 

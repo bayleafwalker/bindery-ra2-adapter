@@ -56,7 +56,7 @@ public static class Program
         }
         foreach (string opponent in options.Opponents)
         {
-            if (!BotAgentFactory.OpponentStyles.ContainsKey(opponent)) throw new ArgumentException($"Unknown opponent '{opponent}'.");
+            if (!BotAgentFactory.IsOpponent(opponent)) throw new ArgumentException($"Unknown opponent '{opponent}'.");
         }
 
         List<(SimMap Map, string Split)> maps = MapsForSplit(options.MapSplit);

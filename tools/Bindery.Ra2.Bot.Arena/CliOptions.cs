@@ -20,7 +20,7 @@ public sealed record CliOptions(
     {
         if (args.Count == 0 || args[0] != "run")
         {
-            throw new ArgumentException("Usage: arena run --arms a,b --maps training|heldout|all --opponents rush,turtle,... --seeds N --out <dir> [--oracle] [--llm-fake] [--max-seconds N] [--dataset <decisions.ndjson>] [--llm-latency <game seconds>]");
+            throw new ArgumentException("Usage: arena run --arms a,b --maps training|heldout|all --opponents ai-rush,ai-balanced[:easy|:medium|:hard],rush,turtle,...|all --seeds N --out <dir> [--oracle] [--llm-fake] [--max-seconds N] [--dataset <decisions.ndjson>] [--llm-latency <game seconds>]");
         }
 
         List<string> arms = ["selector"];
@@ -52,7 +52,7 @@ public sealed record CliOptions(
             }
         }
 
-        if (opponents.Count == 1 && opponents[0] == "all") opponents = [.. BotAgentFactory.OpponentStyles.Keys];
+        if (opponents.Count == 1 && opponents[0] == "all") opponents = [.. BotAgentFactory.AllOpponents];
         if (arms.Count == 1 && arms[0] == "all") arms = [.. BotAgentFactory.Arms];
         return new CliOptions(arms, mapSplit, opponents, seeds, outDir, oracle, llmFake, maxSeconds, dataset, llmLatency);
     }
