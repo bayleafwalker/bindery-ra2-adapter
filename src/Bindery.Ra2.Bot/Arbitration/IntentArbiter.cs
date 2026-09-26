@@ -31,7 +31,7 @@ public sealed record ArbitrationDecision(ArbitrationOutcome Outcome, string Reas
 /// <param name="DefaultMinCommitSeconds">Commitment when the playbook declares none (or is unknown).</param>
 /// <param name="PostureConfidenceMargin">A posture change needs challenger confidence at least this much above the incumbent's.</param>
 /// <param name="BaseThreatOverrideRatio">A <see cref="ConditionMetric.BaseThreatRatio"/> above this overrides commitment.</param>
-/// <param name="HistoryCapacity">Most recent intents kept for strategist context.</param>
+/// <param name="HistoryCapacity">Most recent history entries kept for strategist context; a renewal chain takes at most two (renewals are folded).</param>
 public sealed record ArbiterOptions(
     double DefaultMinCommitSeconds = 45,
     double PostureConfidenceMargin = 0.15,
@@ -341,6 +341,7 @@ public sealed class IntentArbiter
     {
         StrategicIntent previous = Active!;
         CloseHistory(previous.IntentId, features.Time, "renewed");
+        FoldRenewalChain();
         Active = intent;
         // A primary strategist endorsing a placeholder's plan makes it a real commitment.
         if (role == ProposalRole.Primary) ActiveRole = ProposalRole.Primary;
@@ -408,6 +409,33 @@ public sealed class IntentArbiter
         history.Add(entry);
         int excess = history.Count - Math.Max(1, Options.HistoryCapacity);
         if (excess > 0) history.RemoveRange(0, excess);
+    }
+
+    /// <summary>
+    /// Keeps a renewal chain at two entries: when the entry just closed as renewed itself continued an earlier
+    /// renewal, it is merged into that earlier entry (which keeps the chain's first acceptance and counts the
+    /// renewal). Without this every renewal took a slot, and after <see cref="ArbiterOptions.HistoryCapacity"/>
+    /// renewals the plan switches before the chain were trimmed away.
+    /// </summary>
+    private void FoldRenewalChain()
+    {
+        if (history.Count < 2) return;
+        IntentHistoryEntry earlier = history[^2];
+        IntentHistoryEntry renewed = history[^1];
+        if (!string.Equals(earlier.EndReason, "renewed", StringComparison.Ordinal)
+            || earlier.EndedAt is not { } ended || ended != renewed.AcceptedAt
+            || !string.Equals(earlier.PlaybookId, renewed.PlaybookId, StringComparison.Ordinal)
+            || earlier.Posture != renewed.Posture)
+        {
+            return;
+        }
+        history[^2] = earlier with
+        {
+            EndedAt = renewed.EndedAt,
+            EndReason = renewed.EndReason,
+            FoldedRenewals = earlier.FoldedRenewals + 1 + renewed.FoldedRenewals,
+        };
+        history.RemoveAt(history.Count - 1);
     }
 
     private void CloseHistory(string intentId, GameTime at, string reason)

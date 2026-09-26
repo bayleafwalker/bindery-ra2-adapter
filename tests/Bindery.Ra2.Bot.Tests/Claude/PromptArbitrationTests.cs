@@ -111,6 +111,33 @@ public sealed class PromptArbitrationTests
         Assert.Equal(JsonValueKind.Null, history[1].GetProperty("endedAtSeconds").ValueKind);
     }
 
+    /// <summary>
+    /// The arbiter's own history used to keep one raw entry per renewal and trim to 32, so after 32 renewals
+    /// (about 160 s at a 5 s cadence) the earlier plan switch was gone from the arbiter and therefore from the
+    /// prompt, however the prompt folded what was left. The arbiter folds renewal chains itself.
+    /// </summary>
+    [Fact]
+    public void An_earlier_plan_switch_survives_more_renewals_than_the_history_capacity()
+    {
+        IntentArbiter arbiter = new(new FakePlaybooks());
+        Offer(arbiter, Intent("harass", "allied-harass", StrategicPosture.Harass, 0, 0.5), 0);
+        Assert.Equal(ArbitrationOutcome.Activated, Offer(arbiter, Intent("boom", "allied-boom", StrategicPosture.Boom, 50, 0.9), 50).Outcome);
+        const int renewals = 100;
+        for (int i = 1; i <= renewals; i++)
+        {
+            Assert.Equal(ArbitrationOutcome.Renewed, Offer(arbiter, Intent($"boom{i}", "allied-boom", StrategicPosture.Boom, 50 + (5 * i), 0.9), 50 + (5 * i)).Outcome);
+        }
+
+        Assert.True(arbiter.History.Count <= arbiter.Options.HistoryCapacity);
+        List<JsonElement> history = [.. Situation(Context(arbiter, 50 + (5 * renewals))).GetProperty("history").EnumerateArray()];
+
+        Assert.Equal(["allied-harass", "allied-boom"], history.Select(static h => h.GetProperty("playbookId").GetString()!).ToList());
+        Assert.Equal("replaced:switch", history[0].GetProperty("endReason").GetString());
+        Assert.Equal(50, history[1].GetProperty("acceptedAtSeconds").GetDouble());
+        Assert.Equal(renewals, history[1].GetProperty("renewals").GetInt32());
+        Assert.Equal(JsonValueKind.Null, history[1].GetProperty("endedAtSeconds").ValueKind);
+    }
+
     [Fact]
     public void Match_context_states_the_arbiters_acceptance_numbers()
     {

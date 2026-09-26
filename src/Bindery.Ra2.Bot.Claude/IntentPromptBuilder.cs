@@ -545,7 +545,7 @@ public sealed class IntentPromptBuilder
                 ["acceptedAtSeconds"] = CanonicalJson.Number(first.AcceptedAt.Seconds),
                 ["endedAtSeconds"] = last.EndedAt is { } e ? CanonicalJson.Number(e.Seconds) : null,
                 ["endReason"] = last.EndReason,
-                ["renewals"] = plan.Count - 1,
+                ["renewals"] = plan.Count - 1 + plan.Sum(static h => h.FoldedRenewals),
             });
         }
         return result;

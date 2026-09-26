@@ -2,7 +2,12 @@
 namespace Bindery.Ra2.Bot;
 
 /// <summary>A compact record of an earlier strategic decision, for strategist context.</summary>
-public sealed record IntentHistoryEntry(string IntentId, IntentSource Source, StrategicPosture Posture, string PlaybookId, GameTime AcceptedAt, GameTime? EndedAt, string? EndReason);
+/// <param name="FoldedRenewals">
+/// Renewals the arbiter folded into this entry. A renewal chain is kept as its first entry (carrying the chain's
+/// start, and the count of the renewals between) and its latest one, so a steady stream of renewals cannot push the
+/// plan switches and aborts before it out of a bounded history.
+/// </param>
+public sealed record IntentHistoryEntry(string IntentId, IntentSource Source, StrategicPosture Posture, string PlaybookId, GameTime AcceptedAt, GameTime? EndedAt, string? EndReason, int FoldedRenewals = 0);
 
 /// <summary>
 /// What a strategist is given. It contains no <see cref="BeliefSnapshot"/> and
