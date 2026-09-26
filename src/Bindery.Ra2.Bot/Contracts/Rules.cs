@@ -14,6 +14,15 @@ namespace Bindery.Ra2.Bot;
 /// <param name="Damage">Nominal damage per second against its preferred target class.</param>
 /// <param name="Range">Weapon range in cells; zero when unarmed.</param>
 /// <param name="Speed">Movement speed in cells per second; zero for buildings.</param>
+/// <param name="Repairs">
+/// True for a structure that repairs vehicles parked beside it (RA2's service depot, <c>UnitRepair=yes</c>). The
+/// role cannot say this: the importer gives a depot the Tech role (it has prerequisites and no factory).
+/// </param>
+/// <param name="Produces">
+/// The production queues this structure is a factory for (RA2's <c>Factory=</c>): a construction yard for the
+/// building and defense queues, a barracks for infantry, and so on. Null when the rules do not say, in which case a
+/// consumer that needs factories derives them from prerequisites.
+/// </param>
 public sealed record UnitRule(
     string TypeId,
     string Name,
@@ -34,7 +43,9 @@ public sealed record UnitRule(
     double Speed,
     int Sight,
     bool AntiAir,
-    bool Deployable);
+    bool Deployable,
+    bool Repairs = false,
+    IReadOnlyList<QueueKind>? Produces = null);
 
 public enum ArmorClass { None, Flak, Plate, Light, Medium, Heavy, Wood, Steel, Concrete, Special }
 

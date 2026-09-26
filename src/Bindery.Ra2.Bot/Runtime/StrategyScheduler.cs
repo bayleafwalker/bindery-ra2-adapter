@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using System.Text.Json;
 using Bindery.Ra2.Bot.Arbitration;
+using Bindery.Ra2.Bot.Strategy;
 
 namespace Bindery.Ra2.Bot.Runtime;
 
@@ -176,7 +177,7 @@ public sealed class StrategyScheduler : IDisposable
             pendingTrigger = null;
             lastPrimaryStart = now;
             arbiter.AcknowledgeReplan();
-            StrategistContext context = Context(features, belief);
+            StrategistContext context = Context(features, belief, reason);
             primaryRequest = Start(ProposalRole.Primary, primary, context, reason);
             started++;
             if (shadow is not null && shadowRequest is null)
@@ -197,7 +198,7 @@ public sealed class StrategyScheduler : IDisposable
             string reason = arbiter.FallbackRequested ? $"requested:{replanReason ?? "arbiter"}" : arbiter.Active is null ? "no_intent" : "placeholder";
             arbiter.AcknowledgeFallback();
             lastFallbackStart = now;
-            fallbackRequest = Start(ProposalRole.Fallback, fallback, Context(features, belief), reason);
+            fallbackRequest = Start(ProposalRole.Fallback, fallback, Context(features, belief, reason), reason);
             started++;
             collected += Poll(ref fallbackRequest, belief, features);
         }
@@ -227,9 +228,12 @@ public sealed class StrategyScheduler : IDisposable
         root.Dispose();
     }
 
-    private StrategistContext Context(StrategicFeatures features, BeliefSnapshot? belief) =>
+    private StrategistContext Context(StrategicFeatures features, BeliefSnapshot? belief, string? trigger = null) =>
         new(features, rules, playbooks, arbiter.Active, arbiter.History.ToArray(), Options.Personality,
-            belief is null ? null : new SortedSet<string>(belief.OwnBuildingTypes, StringComparer.Ordinal));
+            belief is null ? null : new SortedSet<string>(belief.OwnBuildingTypes, StringComparer.Ordinal),
+            trigger,
+            arbiter.Active is null ? null : arbiter.ActiveRole,
+            arbiter.Active is null ? null : arbiter.ActiveSince);
 
     /// <summary>The context a strategist would receive for these features (and this belief's own buildings) right now, for probes and diagnostics.</summary>
     public StrategistContext ContextFor(StrategicFeatures features, BeliefSnapshot? belief = null)
@@ -409,6 +413,14 @@ public sealed class StrategyScheduler : IDisposable
                 issues = Issues(shadowResult.Issues),
                 wouldBe = wouldBe.Outcome,
                 wouldBeReason = wouldBe.Reason,
+                // What the shadow strategist was asked with, in the activation record's dataset form, so its choices
+                // can be distilled (DatasetFilter.IncludeShadow).
+                faction = request.Features.Faction,
+                featureVersion = FeatureVector.Version,
+                features = FeatureVector.Encode(request.Features),
+                featuresSnapshotVersion = request.Features.SnapshotVersion,
+                featuresFrame = request.Features.Time.Frame,
+                mode = request.Features.Mode,
             })));
             return;
         }
@@ -423,12 +435,20 @@ public sealed class StrategyScheduler : IDisposable
             latencyFrames = now.Frame - request.SnapshotTime.Frame,
             cost = proposal.Cost,
             rawResponse = proposal.RawResponse,
+            refinesIntentId = proposal.RefinesIntentId,
             intent = intentJson,
         })));
 
         if (late is not null)
         {
             Late(request, intent, features, late, age, request.Invalidator);
+            return;
+        }
+        if (proposal.RefinesIntentId is { } refined && !string.Equals(refined, arbiter.Active?.IntentId, StringComparison.Ordinal))
+        {
+            // A refinement of a plan that ended while it was in flight (aborted, expired or replaced): applying it
+            // would reinstate the ended plan as a renewal-looking switch.
+            Late(request, intent, features, "refined_intent_ended", age, null);
             return;
         }
 

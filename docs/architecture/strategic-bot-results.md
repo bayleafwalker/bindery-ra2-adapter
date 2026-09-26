@@ -6,6 +6,19 @@ Final evaluation of the hierarchical bot described in
 
 ## Read this first
 
+- **Stale since the fix-branch merge.** These numbers were produced at
+  413bb21, before the eight fix branches and their cross-area follow-ups were
+  merged (see "Fix-branch merge and cross-area follow-ups" in
+  [`strategic-bot.md`](strategic-bot.md)). Several of those changes alter what
+  a match is: fair maps, per-queue factories, gradual production payment,
+  offline powered defenses, routed harvesters, no overlapping placement, depot-only
+  repair, fog-refused attacks, and squads that attack only what they see. They
+  also change what is measured: primary-only strategy figures, cache-inclusive
+  cost, and asset value that counts paid production and values a yard at its
+  MCV. Treat every table below as the pre-merge simulator's. A rerun uses the
+  commands under Setup unchanged (still `--llm-fake`: no Claude credential
+  exists on this host). It has not been run yet.
+
 - **Environment.** Every number here comes from the bindery region simulator
   (`src/Bindery.Ra2.Bot.Sim`), a deterministic region-graph approximation of a
   two-player RA2/YR skirmish, with the hand-authored approximate ruleset

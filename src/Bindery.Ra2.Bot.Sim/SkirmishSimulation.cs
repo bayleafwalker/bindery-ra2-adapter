@@ -19,6 +19,15 @@ public sealed class SkirmishSimulation
     private const double PlacementRadiusCells = 24.0;
     private const double RepairHealPerSecondFraction = 0.04;
 
+    /// <summary>How close to an own service depot a unit must stand to be repaired.</summary>
+    private const double RepairRangeCells = 3.0;
+
+    /// <summary>
+    /// A new building may not stand closer than this to any live building: RA2 refuses a placement that overlaps
+    /// another structure's footprint (two cells covers the fixture's 2x2 footprints).
+    /// </summary>
+    private const double PlacementClearanceCells = 2.0;
+
     private readonly SimMap map;
     private readonly IRulesDatabase rules;
     private readonly SimSettings settings;
@@ -30,6 +39,9 @@ public sealed class SkirmishSimulation
     private readonly Dictionary<RegionId, double> oreRemaining = [];
     private readonly List<(PlayerId Player, GameCommand Command)> pending = [];
     private readonly Dictionary<QueueKind, HashSet<string>> factoryTypes;
+
+    /// <summary>Queues some building declares itself a factory for (<see cref="UnitRule.Produces"/>); only those count for them.</summary>
+    private readonly HashSet<QueueKind> declaredFactoryQueues;
     private List<GameEvent> frameEvents = [];
     // Each player's objects are numbered in a range of their own. One shared counter would let a player read the
     // enemy's hidden production off the gap between two of its own ids, which RA2 never shows.
@@ -60,6 +72,7 @@ public sealed class SkirmishSimulation
         Graph = new RegionGraph(map.Map);
         Players = settings.Players.Select(p => p.Id).ToList();
         factoryTypes = FactoryTypesByQueue(rules);
+        declaredFactoryQueues = [.. rules.All.Where(static r => r.Kind == EntityKind.Building).SelectMany(static r => r.Produces ?? [])];
 
         foreach (OreField field in map.Map.OreFields)
         {
@@ -108,9 +121,9 @@ public sealed class SkirmishSimulation
         players.TryGetValue(player, out SimPlayerState? s) ? [.. s.RecentRejections] : [];
 
     /// <summary>
-    /// Credits, plus every live object at <see cref="SimValuation.ValueOf"/>, plus every queued item (paid for when it
-    /// was queued, including a finished building waiting for placement). The timeout winner is decided by it, so value
-    /// must not vanish into production that has not finished yet.
+    /// Credits, plus every live object at <see cref="SimValuation.ValueOf"/>, plus what has been paid for every queued
+    /// item (production is paid as it builds, so a finished building waiting for placement counts in full). The
+    /// timeout winner is decided by it, so value must not vanish into production that has not finished yet.
     /// </summary>
     public int AssetValue(PlayerId player)
     {
@@ -124,7 +137,7 @@ public sealed class SkirmishSimulation
         {
             foreach (QueueItemRuntime item in queue.Items)
             {
-                if (rules.TryGet(item.TypeId, out UnitRule rule)) total += rule.Cost;
+                total += item.Paid;
             }
         }
         return total;
@@ -202,8 +215,10 @@ public sealed class SkirmishSimulation
             queues.Add(new ProductionQueueState(q.Kind, items, CountFactories(state, q.Kind)));
         }
 
+        // Oracle frames see every region, so they take this step's events through the same per-player rule with all
+        // regions visible: another player's kills stay that player's, as in belief frames.
         List<GameEvent> events = mode == ObservationMode.Oracle
-            ? frameEvents
+            ? [.. frameEvents.Select(e => EventForPlayer(e, player, [.. visible])).OfType<GameEvent>()]
             : [.. state.PendingEvents];
 
         PowerState power = ComputePower(state);
@@ -211,7 +226,10 @@ public sealed class SkirmishSimulation
             .Where(kv => visible.Contains(kv.Key))
             .OrderBy(static kv => kv.Key.Value)
             .ToDictionary(static kv => kv.Key, static kv => (int)Math.Round(kv.Value));
-        return new ObservationFrame(Time, mode, player, state.Faction, state.Credits, power, observed, queues, events, visible, map.Map, ore, SuperweaponTimers(player, mode));
+        // Every other player is an enemy in a sim skirmish (no teams, no neutral houses).
+        HashSet<PlayerId> enemies = [.. players.Keys.Where(p => p != player)];
+        return new ObservationFrame(Time, mode, player, state.Faction, state.Credits, power, observed, queues, events, visible, map.Map, ore,
+            SuperweaponTimers(player, mode), Enemies: enemies);
     }
 
     /// <summary>
@@ -235,7 +253,7 @@ public sealed class SkirmishSimulation
             foreach (QueueRuntime q in p.Queues.Values.OrderBy(static q => q.Kind))
             {
                 sb.Append("/q").Append(q.Kind);
-                foreach (QueueItemRuntime item in q.Items) sb.Append(',').Append(item.TypeId).Append('@').Append(D(item.Progress)).Append(item.AwaitingPlacement ? "!" : string.Empty);
+                foreach (QueueItemRuntime item in q.Items) sb.Append(',').Append(item.TypeId).Append('@').Append(D(item.Progress)).Append('$').Append(item.Paid).Append(item.AwaitingPlacement ? "!" : string.Empty);
             }
             foreach (PendingPlacement placement in p.PendingPlacements) sb.Append("/p").Append(placement.TypeId).Append('@').Append(placement.Queue);
             sb.Append(';');
@@ -280,7 +298,8 @@ public sealed class SkirmishSimulation
     {
         SimPlayerState state = players[player];
         QueueRuntime queue = state.Queues.TryGetValue(kind, out QueueRuntime? existing) ? existing : state.Queues[kind] = new QueueRuntime { Kind = kind };
-        queue.Items.Add(new QueueItemRuntime { TypeId = typeId });
+        // A debug item is prepaid: probes that enqueue directly test production, not the player's purse.
+        queue.Items.Add(new QueueItemRuntime { TypeId = typeId, Paid = rules.TryGet(typeId, out UnitRule rule) ? Math.Max(0, rule.Cost) : 0 });
     }
 
     /// <summary>Spawns an entity without emitting a creation event, for probing fog in a region the caller has already checked is unseen.</summary>
@@ -414,6 +433,16 @@ public sealed class SkirmishSimulation
         return entity.Id;
     }
 
+    /// <summary>Sets an entity's health directly (a wound without a fight); for focused tests.</summary>
+    internal void DebugSetHealth(EntityId id, int health)
+    {
+        SimEntity entity = entities.Single(e => e.Id == id && e.Alive);
+        entity.Health = Math.Clamp(health, 1, entity.MaxHealth);
+    }
+
+    /// <summary>Health of a live entity, or null when there is none; for focused tests.</summary>
+    internal int? DebugHealthOf(EntityId id) => entities.FirstOrDefault(e => e.Id == id && e.Alive)?.Health;
+
     // ----- setup helpers -----
 
     private EntityId NextEntityId(PlayerId owner)
@@ -521,8 +550,9 @@ public sealed class SkirmishSimulation
     {
         if (!rules.TryGet(c.TypeId, out UnitRule rule) || rule.Queue != c.Queue) return false;
         if (!rules.CanBuild(state.Faction, OwnedBuildingTypes(player), c.TypeId)) return false;
+        // RA2 takes the money as the item builds, not on order; the sim still refuses an order the player could not
+        // pay for right now, which keeps a broke player from stacking a queue it cannot fund.
         if (state.Credits < rule.Cost) return false;
-        state.Credits -= rule.Cost;
         QueueRuntime queue = state.Queues.TryGetValue(c.Queue, out QueueRuntime? existing) ? existing : state.Queues[c.Queue] = new QueueRuntime { Kind = c.Queue };
         queue.Items.Add(new QueueItemRuntime { TypeId = c.TypeId });
         return true;
@@ -533,7 +563,8 @@ public sealed class SkirmishSimulation
         if (!state.Queues.TryGetValue(c.Queue, out QueueRuntime? queue)) return false;
         int index = queue.Items.FindLastIndex(i => i.TypeId == c.TypeId);
         if (index < 0) return false;
-        if (rules.TryGet(c.TypeId, out UnitRule rule)) state.Credits += rule.Cost;
+        // Refunds what the item has cost so far (RA2 debits production as it builds).
+        state.Credits += queue.Items[index].Paid;
         // A finished building also waits in PendingPlacements; refunding it must take that placement away too, or
         // the refunded building could still be placed for free.
         if (queue.Items[index].AwaitingPlacement)
@@ -552,6 +583,9 @@ public sealed class SkirmishSimulation
         bool nearOwnBuilding = entities.Any(e => e.Owner == player && e.Alive && rules.TryGet(e.TypeId, out UnitRule r) && r.Kind == EntityKind.Building
                                                   && e.Position.DistanceTo(c.Cell) <= PlacementRadiusCells);
         if (!nearOwnBuilding) return false;
+        bool overlaps = entities.Any(e => e.Alive && rules.TryGet(e.TypeId, out UnitRule r) && r.Kind == EntityKind.Building
+                                          && e.Position.DistanceTo(c.Cell) < PlacementClearanceCells);
+        if (overlaps) return false;
         Region? region = map.Map.RegionOf(c.Cell);
         if (region is null) return false;
         PendingPlacement placement = state.PendingPlacements[index];
@@ -696,12 +730,31 @@ public sealed class SkirmishSimulation
         return true;
     }
 
+    /// <summary>
+    /// A repair order sends the unit to an own service depot (the one named, or the nearest), where
+    /// <see cref="AdvanceRepair"/> heals it; without a depot there is no repair (RA2).
+    /// </summary>
     private bool ApplyRepair(PlayerId player, RepairCommand c)
     {
         if (!OwnsAlive(player, c.Unit, out SimEntity entity)) return false;
+        SimEntity? depot = c.Depot is { } named
+            ? (OwnsAlive(player, named, out SimEntity d) && IsDepot(d) ? d : null)
+            : entities.Where(e => e.Owner == player && e.Alive && IsDepot(e))
+                      .OrderBy(e => e.Position.DistanceTo(entity.Position)).ThenBy(static e => e.Id.Value).FirstOrDefault();
+        if (depot is null) return false;
+        if (entity.Position.DistanceTo(depot.Position) > RepairRangeCells
+            && !ApplyMove(player, c.Controller, [entity.Id], depot.Position, attackMove: false))
+        {
+            return false;
+        }
         entity.RepairRequested = true;
         return true;
     }
+
+    private bool IsDepot(SimEntity e) => rules.TryGet(e.TypeId, out UnitRule rule) && rule.Kind == EntityKind.Building && rule.Repairs;
+
+    private bool NearOwnDepot(SimEntity unit) =>
+        entities.Any(e => e.Owner == unit.Owner && e.Alive && IsDepot(e) && e.Position.DistanceTo(unit.Position) <= RepairRangeCells);
 
     private bool ApplyHarvest(PlayerId player, HarvestCommand c)
     {
@@ -895,7 +948,18 @@ public sealed class SkirmishSimulation
                 QueueItemRuntime active = queue.Items[0];
                 if (active.AwaitingPlacement) continue;
                 if (!rules.TryGet(active.TypeId, out UnitRule rule) || rule.BuildSeconds <= 0) { queue.Items.RemoveAt(0); continue; }
-                active.Progress = Math.Min(1.0, active.Progress + multiplier / rule.BuildSeconds);
+                double next = Math.Min(1.0, active.Progress + multiplier / rule.BuildSeconds);
+                int cost = Math.Max(0, rule.Cost);
+                int owed = Math.Max(0, (int)Math.Round(cost * next) - active.Paid);
+                if (owed > state.Credits)
+                {
+                    // Out of money: RA2 builds only as far as the credits on hand pay for, then waits.
+                    owed = Math.Max(0, state.Credits);
+                    next = Math.Max(active.Progress, Math.Min(next, (active.Paid + owed) / (double)cost));
+                }
+                state.Credits -= owed;
+                active.Paid += owed;
+                active.Progress = next;
                 if (active.Progress >= 1.0)
                 {
                     frameEvents.Add(new GameEvent(GameEventKind.ProductionCompleted, Time, null, state.Id, rule.TypeId, null));
@@ -960,14 +1024,19 @@ public sealed class SkirmishSimulation
         entities.Count(e => e.Owner == state.Id && e.Alive && IsFactoryFor(e.TypeId, queue));
 
     /// <summary>
-    /// Whether a type is a factory for a queue: a production building listed among the prerequisites of that queue's
-    /// items (barracks for infantry, war factory for vehicles), and for the building and defense queues the
-    /// production buildings that serve no unit queue (the construction yard). A queue the rules give no factory
-    /// falls back to every production building.
+    /// Whether a type is a factory for a queue. Where the rules say (<see cref="UnitRule.Produces"/>), exactly the
+    /// buildings that declare the queue. Otherwise it is derived: a production building listed among the
+    /// prerequisites of that queue's items (barracks for infantry, war factory for vehicles), and for the building
+    /// and defense queues the production buildings that serve no unit queue (the construction yard); a queue with
+    /// neither falls back to every production building.
     /// </summary>
-    private bool IsFactoryFor(string typeId, QueueKind queue) =>
-        rules.TryGet(typeId, out UnitRule r) && r.Role == UnitRole.Production && r.Kind == EntityKind.Building
-        && (!factoryTypes.TryGetValue(queue, out HashSet<string>? types) || types.Count == 0 || types.Contains(typeId));
+    private bool IsFactoryFor(string typeId, QueueKind queue)
+    {
+        if (!rules.TryGet(typeId, out UnitRule r) || r.Kind != EntityKind.Building) return false;
+        if (declaredFactoryQueues.Contains(queue)) return r.Produces is { } produces && produces.Contains(queue);
+        return r.Role == UnitRole.Production
+            && (!factoryTypes.TryGetValue(queue, out HashSet<string>? types) || types.Count == 0 || types.Contains(typeId));
+    }
 
     private static Dictionary<QueueKind, HashSet<string>> FactoryTypesByQueue(IRulesDatabase rules)
     {
@@ -1135,6 +1204,7 @@ public sealed class SkirmishSimulation
             if (!e.Alive || !e.RepairRequested) continue;
             if (!rules.TryGet(e.TypeId, out UnitRule rule)) continue;
             if (e.Health >= e.MaxHealth) { e.RepairRequested = false; continue; }
+            if (!NearOwnDepot(e)) continue; // still driving there, or the depot is gone
             e.Health = Math.Min(e.MaxHealth, e.Health + Math.Max(1, (int)Math.Round(e.MaxHealth * RepairHealPerSecondFraction)));
         }
     }

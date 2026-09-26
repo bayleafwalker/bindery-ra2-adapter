@@ -27,9 +27,10 @@ namespace Bindery.Ra2.Bot.Runtime;
 /// <param name="LogPlans">Write an <c>operations.plan</c> record for every operational pass.</param>
 /// <param name="AccrueBudgets">Run the budget ledger in accrual mode (<see cref="LedgerOptions.AccrueByShare"/>).</param>
 /// <param name="ProductionChargedWhileBuilding">
-/// True where the game debits a production item's cost gradually as it builds (retail RA2): the ledger's capacity
-/// then excludes what queued items still owe, since the credits on hand do not show it yet. False where the full
-/// cost is debited at order time (the simulator), where subtracting it again would count it twice.
+/// True where the game debits a production item's cost gradually as it builds (retail RA2 and the simulator): the
+/// ledger's capacity and the planner's spendable credits then exclude what queued items still owe, since the credits
+/// on hand do not show it yet. False only for a source that debits the full cost at order time, where subtracting
+/// it again would count it twice.
 /// </param>
 public sealed record BotOptions(
     double StrategicCadenceSeconds = 20,

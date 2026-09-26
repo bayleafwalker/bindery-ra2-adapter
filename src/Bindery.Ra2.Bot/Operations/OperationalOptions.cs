@@ -49,6 +49,16 @@ namespace Bindery.Ra2.Bot.Operations;
 /// (footprint overlap, cliff, ore, a unit in the way); the next placement searches elsewhere.
 /// </param>
 /// <param name="RejectedPlacementMemorySeconds">How long a refused cell stays excluded (a blocking unit moves on).</param>
+/// <param name="ProductionChargedWhileBuilding">
+/// True where the game debits an item's cost as it builds (retail RA2 and the simulator): the planner's spendable
+/// credits then exclude what queued items still owe (<see cref="ProductionDebt"/>), as the budget ledger does, or
+/// it would plan purchases the gate can only drop. Set from <see cref="Runtime.BotOptions.ProductionChargedWhileBuilding"/>.
+/// </param>
+/// <param name="UnknownQueueReorderSeconds">
+/// Where the source does not report queues (<see cref="BeliefSnapshot.QueuesKnown"/> false) an absent queue is not
+/// proof of an idle one: the planner orders into a queue at most once per the ordered item's build time plus this
+/// margin, from its own record of what it ordered, instead of re-ordering (and re-charging the budget) every pass.
+/// </param>
 /// <param name="ConditionEvaluator">
 /// Evaluates one <see cref="Condition"/> against <see cref="StrategicFeatures"/>. Left null,
 /// the planner uses the canonical <see cref="Arbitration.ConditionEvaluator.Holds"/>, the single
@@ -82,7 +92,9 @@ public sealed record OperationalOptions(
     double DefendReleaseFraction = 0.7,
     double DefendMinSeconds = 10,
     double PlacementRetrySeconds = 3,
-    double RejectedPlacementMemorySeconds = 120)
+    double RejectedPlacementMemorySeconds = 120,
+    bool ProductionChargedWhileBuilding = true,
+    double UnknownQueueReorderSeconds = 5)
 {
     /// <summary>The evaluator actually used: <see cref="ConditionEvaluator"/> when set, else the default.</summary>
     public Func<Condition, StrategicFeatures, bool> Evaluator => ConditionEvaluator ?? Arbitration.ConditionEvaluator.Holds;

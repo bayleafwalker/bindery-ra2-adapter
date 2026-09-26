@@ -225,9 +225,10 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
                     ContextualBanditStrategist bandit = context.BanditFor(arm);
                     primary = bandit;
                     bool learn = context.BanditLearning;
-                    onFinish = (won, own, enemy, _) =>
+                    onFinish = (won, own, enemy, agent) =>
                     {
-                        if (learn) bandit.CompleteEpisode(Reward(won, own, enemy));
+                        // The final active intent settles the match's last proposal: credited when it took effect.
+                        if (learn) bandit.CompleteEpisode(Reward(won, own, enemy), agent.Runtime.ActiveIntent);
                         else bandit.AbandonEpisode();
                     };
                     break;
@@ -252,7 +253,8 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
                 case "distilled":
                     DecisionDataset dataset = context.DistillDataset ?? DecisionDataset.Empty;
                     // The proposal reserves the LLM for unusual states: escalations go to Claude, not to a rule set.
-                    primary = new DistilledStrategist(dataset, Llm(StrategistMode.Strategic, claude, labels), id: BotArenaAgent.DistilledId);
+                    primary = new DistilledStrategist(dataset, Llm(StrategistMode.Strategic, claude, labels),
+                        new DistilledOptions(Mode: arm.Oracle ? ObservationMode.Oracle : ObservationMode.Belief), id: BotArenaAgent.DistilledId);
                     labels.Add($"distilled-from:{context.DistillSource ?? "none"} ({dataset.Count} examples)");
                     break;
                 default:

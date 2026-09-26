@@ -15,9 +15,10 @@ public sealed record OwnEntity(
 
 /// <summary>
 /// The player's memory of an enemy object: where and when it was last seen
-/// and how much that sighting is still worth. Confidence decays with age and
-/// never exceeds 1. A contact is never updated from information the player
-/// did not observe.
+/// and how much that sighting is still worth. A mobile contact's confidence decays
+/// with age out of sight; a building's does not (buildings do not move), and ends
+/// only when its cell is seen vacant or a destroyed event arrives. Confidence never
+/// exceeds 1. A contact is never updated from information the player did not observe.
 /// </summary>
 public sealed record EnemyContact(
     EntityId Id,
@@ -53,6 +54,12 @@ public sealed record EnemyPlayerBelief(
 /// seen with an ore report are absent. Null when the source never reports ore.
 /// </param>
 /// <param name="Superweapons">The frame's superweapon timers (<see cref="ObservationFrame.Superweapons"/>); null when not reported.</param>
+/// <param name="QueuesKnown">False when the source does not report queues (<see cref="ObservationFrame.QueuesKnown"/>).</param>
+/// <param name="CreditsKnown">
+/// False until the source has reported credits once (<see cref="ObservationFrame.CreditsKnown"/>); afterwards an
+/// unsampled frame carries the last reported value.
+/// </param>
+/// <param name="PowerKnown">As <paramref name="CreditsKnown"/>, for power.</param>
 public sealed record BeliefSnapshot(
     long Version,
     GameTime Time,
@@ -69,7 +76,10 @@ public sealed record BeliefSnapshot(
     IReadOnlyList<GameEvent> RecentEvents,
     MapInfo Map,
     IReadOnlyDictionary<RegionId, int>? OreLastSeen = null,
-    IReadOnlyList<SuperweaponStatus>? Superweapons = null)
+    IReadOnlyList<SuperweaponStatus>? Superweapons = null,
+    bool QueuesKnown = true,
+    bool CreditsKnown = true,
+    bool PowerKnown = true)
 {
     public IReadOnlySet<string> OwnBuildingTypes =>
         Own.Where(static e => e.Kind == EntityKind.Building).Select(static e => e.TypeId).ToHashSet(StringComparer.Ordinal);

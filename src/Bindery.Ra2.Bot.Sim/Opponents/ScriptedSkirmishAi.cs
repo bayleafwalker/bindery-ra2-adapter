@@ -169,7 +169,8 @@ public sealed class ScriptedSkirmishAi
             {
                 Cell c = new(region.Center.X + dx, region.Center.Y + dy);
                 if (c.X < 0 || c.Y < 0 || c.X >= map.Width || c.Y >= map.Height) continue;
-                if (RegionOf(c) != region.Id || taken.Any(t => t.DistanceTo(c) < 1.5)) continue;
+                // Two cells clear of every own building: the simulator refuses an overlapping footprint.
+                if (RegionOf(c) != region.Id || taken.Any(t => t.DistanceTo(c) < 2.0)) continue;
                 candidates.Add(c);
             }
         }

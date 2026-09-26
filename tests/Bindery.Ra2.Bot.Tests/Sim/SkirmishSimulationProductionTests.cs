@@ -58,21 +58,54 @@ public sealed class SkirmishSimulationProductionTests
     }
 
     [Fact]
-    public void Cancelling_production_refunds_the_full_cost()
+    public void Production_is_paid_as_it_builds_and_cancelling_refunds_what_was_paid()
     {
+        // RA2 debits an item's cost gradually: ordering takes nothing, each second of building takes its share, and
+        // a cancel gives back exactly what was taken.
         TestRules rules = new();
         SkirmishSimulation sim = new(TestMaps.TwoPlayerCombat(), rules, SimTestHelpers.TwoPlayers(seed: 11, maxSeconds: 30));
         PlayerId player = new(0);
         SimTestHelpers.DeployStartingMcv(sim, player);
         int creditsBefore = sim.Observe(player, ObservationMode.Oracle).Credits;
+        UnitRule barracks = rules.Get(TestRules.Barracks);
 
         sim.Submit(player, new ProduceCommand("test", TestRules.Barracks, QueueKind.Building));
         sim.Step();
-        Assert.Equal(creditsBefore - rules.Get(TestRules.Barracks).Cost, sim.Observe(player, ObservationMode.Oracle).Credits);
+        Assert.Equal(creditsBefore, sim.Observe(player, ObservationMode.Oracle).Credits);
+
+        sim.Advance(1);
+        QueueItem item = sim.Observe(player).Queues.Single(q => q.Kind == QueueKind.Building).Items.Single();
+        Assert.InRange(item.Progress, 0.01, 0.99);
+        Assert.Equal(creditsBefore - (int)Math.Round(barracks.Cost * item.Progress), sim.Observe(player, ObservationMode.Oracle).Credits);
 
         sim.Submit(player, new CancelProductionCommand("test", TestRules.Barracks, QueueKind.Building));
         sim.Step();
         Assert.Equal(creditsBefore, sim.Observe(player, ObservationMode.Oracle).Credits);
+    }
+
+    [Fact]
+    public void Production_waits_for_money_and_resumes_when_it_comes()
+    {
+        TestRules rules = new();
+        SkirmishSimulation sim = new(TestMaps.TwoPlayerCombat(), rules, SimTestHelpers.TwoPlayers(seed: 11, maxSeconds: 60));
+        PlayerId player = new(0);
+        SimTestHelpers.DeployStartingMcv(sim, player);
+        UnitRule barracks = rules.Get(TestRules.Barracks);
+        int credits = sim.Observe(player, ObservationMode.Oracle).Credits;
+        sim.Submit(player, new ProduceCommand("test", TestRules.Barracks, QueueKind.Building));
+        sim.Step();
+        // Leave a quarter of the price: the item builds to a quarter and stops there, with the purse at zero.
+        sim.DebugAdjustCredits(player, (barracks.Cost / 4) - credits);
+        sim.Advance(barracks.BuildSeconds * 2);
+        QueueItem stalled = sim.Observe(player).Queues.Single(q => q.Kind == QueueKind.Building).Items.Single();
+        Assert.Equal(0, sim.Observe(player, ObservationMode.Oracle).Credits);
+        Assert.Equal(0.25, stalled.Progress, 2);
+        Assert.False(stalled.Ready);
+
+        sim.DebugAdjustCredits(player, barracks.Cost);
+        sim.Advance(barracks.BuildSeconds + 1);
+        Assert.True(sim.Observe(player).Queues.Single(q => q.Kind == QueueKind.Building).Items.Single().Ready);
+        Assert.Equal(barracks.Cost / 4, sim.Observe(player, ObservationMode.Oracle).Credits);
     }
 
     // A refund for a building that is ready to place must take the placement away with it, or the building is free.

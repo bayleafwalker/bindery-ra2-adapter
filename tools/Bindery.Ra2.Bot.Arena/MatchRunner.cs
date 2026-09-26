@@ -48,6 +48,12 @@ public sealed record PlayerMatchMetrics(
     /// <summary>Part of <see cref="Usd"/> billed by failed requests.</summary>
     public double FailedRequestUsd { get; init; }
 
+    /// <summary>Billed requests per model that served them (a server-side fallback may serve on another model than the arm's).</summary>
+    public SortedDictionary<string, int> ServedBy { get; init; } = new(StringComparer.Ordinal);
+
+    /// <summary>Billed requests whose model has no list price: their tokens are counted, their cost is not in <see cref="Usd"/>.</summary>
+    public int UnpricedRequests { get; init; }
+
     /// <summary>Seconds each playbook was active (the arm's intent timeline).</summary>
     public IReadOnlyDictionary<string, double> PlaybookSeconds { get; init; } = new Dictionary<string, double>();
 
@@ -293,6 +299,8 @@ public static class MatchRunner
             ShadowRejected = stats.ShadowRejected,
             ShadowFogRejections = stats.ShadowFogRejections,
             FailedRequestUsd = stats.FailedRequestUsd,
+            ServedBy = new SortedDictionary<string, int>(stats.ServedBy, StringComparer.Ordinal),
+            UnpricedRequests = stats.UnpricedRequests,
             DistilledDecisions = stats.DistilledDecisions,
             DistilledEscalations = stats.DistilledEscalations,
             ShadowCompared = stats.ShadowCompared,

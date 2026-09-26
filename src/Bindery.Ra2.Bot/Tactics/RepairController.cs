@@ -9,9 +9,9 @@ namespace Bindery.Ra2.Bot.Tactics;
 /// has elapsed, per <see cref="ILeaseManager"/>'s preemption rule.
 /// </summary>
 /// <remarks>
-/// <para>Only a building with role <see cref="UnitRole.Support"/> counts as a depot: in RA2 only the service
-/// depot repairs vehicles, and in the rules fixture it is the only Support building. A yard, barracks or war
-/// factory never repairs anything, so sending a vehicle there would park it out of every squad for good.</para>
+/// <para>Only a building whose rule says it repairs (<see cref="UnitRule.Repairs"/>: RA2's <c>UnitRepair=yes</c>)
+/// counts as a depot. A yard, barracks or war factory never repairs anything, so sending a vehicle there would park
+/// it out of every squad for good; and the role cannot tell, since the importer gives a depot the Tech role.</para>
 /// <para>Hysteresis: a vehicle enters repair below the entry threshold and stays until it reaches
 /// <see cref="RepairControllerOptions.RepairedFraction"/>. With one threshold for both, the lease lapsed at 40%,
 /// the squad took the unit back off the pad, and it ping-ponged between the squad and the depot.</para>
@@ -36,13 +36,14 @@ public sealed class RepairController(RepairControllerOptions options) : ITactica
     {
         ArgumentNullException.ThrowIfNull(belief);
         ArgumentNullException.ThrowIfNull(leases);
+        ArgumentNullException.ThrowIfNull(rules);
 
         HashSet<EntityId> alive = belief.Own.Select(static e => e.Id).ToHashSet();
         foreach (EntityId gone in progress.Keys.Where(id => !alive.Contains(id)).ToList()) progress.Remove(gone);
         foreach (EntityId gone in cooldownUntil.Keys.Where(id => !alive.Contains(id) || cooldownUntil[id] <= belief.Time).ToList()) cooldownUntil.Remove(gone);
 
         List<OwnEntity> depots = belief.Own
-            .Where(static e => e.Kind == EntityKind.Building && e.Role == UnitRole.Support)
+            .Where(e => e.Kind == EntityKind.Building && rules.TryGet(e.TypeId, out UnitRule rule) && rule.Repairs)
             .OrderBy(static e => e.Id.Value)
             .ToList();
 

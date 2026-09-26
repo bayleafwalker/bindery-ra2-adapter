@@ -42,7 +42,9 @@ public sealed class ScriptedSkirmishAiTests
     // The turtle's first wave needs eight vehicles and infantry from one war factory and one barracks, which no
     // longer borrow speed from the construction yard (a queue runs on its own factories only).
     [InlineData("ai-turtle", Faction.Allied, 1100)]
-    [InlineData("ai-air", Faction.Soviet, 800)]
+    // Kirovs come from the war factory alone now that factories are declared per queue (UnitRule.Produces); the
+    // aircraft queue no longer runs on every production building, so the air wave takes longer to assemble.
+    [InlineData("ai-air", Faction.Soviet, 1100)]
     public void Builds_a_base_with_harvesters_and_launches_attack_waves(string style, Faction faction, double seconds)
     {
         SkirmishSimulation sim = NewSim(3, faction, seconds + 100);

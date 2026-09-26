@@ -33,7 +33,11 @@ internal static class SimTestHelpers
         sim.Advance(buildSecondsBudget);
         ObservationFrame frame = sim.Observe(player, ObservationMode.Oracle);
         ObservedEntity yard = frame.Entities.Single(e => e.Owner == player && e.TypeId == TestRules.ConYard);
-        sim.Submit(player, new PlaceBuildingCommand("test", typeId, new Cell(yard.Position.X + 2, yard.Position.Y)));
+        // The first cell east of the yard clear of every building: the sim refuses overlapping footprints.
+        List<Cell> buildings = [.. frame.Entities.Where(e => rules.TryGet(e.TypeId, out UnitRule r) && r.Kind == EntityKind.Building).Select(static e => e.Position)];
+        Cell cell = Enumerable.Range(1, 10).Select(i => new Cell(yard.Position.X + (2 * i), yard.Position.Y))
+            .First(c => buildings.All(b => b.DistanceTo(c) >= 2));
+        sim.Submit(player, new PlaceBuildingCommand("test", typeId, cell));
         sim.Step();
     }
 }

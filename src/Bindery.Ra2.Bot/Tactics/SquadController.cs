@@ -161,7 +161,7 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
             }
             else
             {
-                if (ChooseFocusTarget(members, nearby, rules) is { } t) commands.Add(new AttackCommand(owner, held, t));
+                if (ChooseFocusTarget(members, nearby, rules) is { } t) commands.Add(Engage(owner, held, nearby.First(e => e.Id == t), belief));
                 else commands.AddRange(RouteCommands(order, owner, members, graph, belief));
             }
         }
@@ -284,16 +284,34 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
         List<GameCommand> commands = [];
         if (screen.Count > 0 && mobileThreats.Count > 0 && ChooseFocusTarget(screen, mobileThreats, rules) is { } threat)
         {
-            commands.Add(new AttackCommand(owner, [.. screen.Select(static m => m.Id)], threat));
+            commands.Add(Engage(owner, [.. screen.Select(static m => m.Id)], mobileThreats.First(e => e.Id == threat), belief));
         }
         else
         {
             reposition.AddRange(screen.Where(m => m.Position.DistanceTo(standoff) > 2).Select(static m => m.Id));
         }
         if (reposition.Count > 0) commands.Add(new MoveCommand(owner, [.. reposition.OrderBy(static u => u.Value)], standoff));
-        if (bombard.Count > 0) commands.Add(new AttackCommand(owner, bombard, defense.Id));
+        // A defence out of sight cannot be targeted; the artillery holds its stand-off cell (an attack-move there fires
+        // on whatever comes into view) until something shows the defence again.
+        if (bombard.Count > 0)
+        {
+            commands.Add(VisibleNow(defense, belief) ? new AttackCommand(owner, bombard, defense.Id) : new AttackMoveCommand(owner, bombard, standoff));
+        }
         return commands;
     }
+
+    /// <summary>Whether the contact was seen in the current frame, the only time RA2 (and the simulator) accept an attack order on it.</summary>
+    private static bool VisibleNow(EnemyContact contact, BeliefSnapshot belief) => contact.LastSeenAt == belief.Time;
+
+    /// <summary>
+    /// Attacks a contact the player sees now. One that is still fresh but out of sight (a building seen seconds ago)
+    /// gets an attack-move to where it was seen: an attack order on it would be refused as an invalid command every
+    /// tick, while the attack-move walks the squad there and engages it the moment it is visible.
+    /// </summary>
+    private static GameCommand Engage(string owner, IReadOnlyList<EntityId> units, EnemyContact target, BeliefSnapshot belief) =>
+        VisibleNow(target, belief)
+            ? new AttackCommand(owner, units, target.Id)
+            : new AttackMoveCommand(owner, units, target.LastSeenPosition);
 
     /// <summary>
     /// The first cell on the line from the defense toward the squad, at a distance in [need, reach], that lies in a

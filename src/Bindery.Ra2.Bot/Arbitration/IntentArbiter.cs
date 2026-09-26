@@ -326,6 +326,7 @@ public sealed class IntentArbiter
             features = FeatureVector.Encode(basis),
             featuresSnapshotVersion = basis.SnapshotVersion,
             featuresFrame = basis.Time.Frame,
+            mode = features.Mode,
             intent = IntentJson.ToElement(intent),
         })));
     }
@@ -359,6 +360,7 @@ public sealed class IntentArbiter
             features = FeatureVector.Encode(basis),
             featuresSnapshotVersion = basis.SnapshotVersion,
             featuresFrame = basis.Time.Frame,
+            mode = features.Mode,
             intent = IntentJson.ToElement(intent),
         })));
     }

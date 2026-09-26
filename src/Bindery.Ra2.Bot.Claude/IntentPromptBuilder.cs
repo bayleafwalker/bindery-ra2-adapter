@@ -50,6 +50,7 @@ public sealed class IntentPromptBuilder
         - Base every claim on the features given. Do not assume enemy units, tech or positions that the features do not show. Enemy estimates carry evidence ages (seconds) and confidence in [0, 1]; old or low-confidence evidence is uncertainty, not fact. When scouting is stale or coverage is low, prefer plans that stay safe under that uncertainty, or add a Scout objective, and say so in assumptions.
         - Rule facts (costs, build seconds, prerequisite paths from an empty base) are authoritative; use them for timing and affordability rather than memory of the game. The situation's techProgress says what each tech goal still needs from the buildings you own now, and counters lists your most effective unit types against each enemy unit type you have seen (effectiveness is a damage multiplier, 1 = neutral); use them instead of remembering counters.
         - Arbitration: the runtime accepts or refuses your proposal by these rules, with the numbers in the match context's arbitration block:
+          - When activeIntent.placeholder is true, the active intent is a stand-in the runtime installed while it had no plan of yours (the deterministic fallback or the emergency default): any valid proposal replaces it at once, with no commitment window, so choose freely.
           - A proposal with the same playbookId and the same posture as the active intent is a renewal: always accepted; it updates parameters and expiry and does not restart the commitment clock. Changing only the posture is not a renewal.
           - Any other proposal is refused while activeIntent.minCommitRemainingSeconds is above 0, unless one of the active intent's abort triggers holds or BaseThreatRatio is above arbitration.baseThreatOverrideRatio. Inside the window, keep both playbookId and posture and adjust parameters. secondsActive and minCommitRemainingSeconds count from when the current plan was first accepted, across renewals.
           - After the window, a posture change needs your confidence to be at least arbitration.postureConfidenceMargin above the active intent's confidence; a different playbook with the same posture needs no margin. A playbook without its own commitment uses arbitration.defaultMinCommitSeconds.
@@ -410,8 +411,12 @@ public sealed class IntentPromptBuilder
             return null;
         }
         GameTime now = context.Features.Time;
-        double active = Math.Max(0, now.SecondsSince(CommitmentStart(context.History, intent)));
-        double? minCommit = context.Playbooks.TryGet(intent.PlaybookId, out Playbook playbook) ? playbook.MinCommitSeconds : null;
+        // The arbiter's own clock when the context carries it; the history walk is the fallback for contexts that do not.
+        double active = Math.Max(0, now.SecondsSince(context.ActiveSince ?? CommitmentStart(context.History, intent)));
+        // A fallback or emergency intent yields to any primary proposal at once: it has no commitment window to respect.
+        bool placeholder = context.ActiveRole is ProposalRole.Fallback or ProposalRole.Emergency;
+        double? minCommit = placeholder ? 0
+            : context.Playbooks.TryGet(intent.PlaybookId, out Playbook playbook) ? playbook.MinCommitSeconds : null;
 
         JsonObject parameters = new();
         foreach (KeyValuePair<string, double> p in intent.PlaybookParameters)
@@ -423,6 +428,7 @@ public sealed class IntentPromptBuilder
         {
             ["intentId"] = intent.IntentId,
             ["source"] = intent.Source.ToString(),
+            ["placeholder"] = placeholder,
             ["playbookId"] = intent.PlaybookId,
             ["posture"] = intent.Posture.ToString(),
             ["parameters"] = parameters,

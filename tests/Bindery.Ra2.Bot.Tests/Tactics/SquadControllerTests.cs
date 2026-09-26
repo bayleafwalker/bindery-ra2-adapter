@@ -51,6 +51,30 @@ public sealed class SquadControllerTests
         Assert.Equal([tank.Id], attack.Units);
     }
 
+    [Fact]
+    public void Tick_AttackMovesToAFoggedBuildingInsteadOfTargetingIt()
+    {
+        // The refinery was seen 8 s ago: fresh enough to be a target, but not visible now. RA2 and the sim both
+        // refuse an attack order on a target out of sight, so the squad attack-moves to where it was seen.
+        SquadController controller = new(new SquadControllerOptions());
+        FakeRulesDatabase rules = new();
+        FakeLeaseManager leases = new();
+        OwnEntity tank = Fixture.Unit(1, Fixture.Front, new Cell(50, 50));
+        leases.Grant(LeaseKey.Unit(tank.Id), "squad:s1", new GameTime(0), 30);
+        EnemyContact refinery = new(new EntityId(10), new PlayerId(1), "ref", UnitRole.Economy, EntityKind.Building,
+            new Cell(53, 50), Fixture.Front, new GameTime(2), 1.0, 2000, 0.9, false);
+        BeliefSnapshot visible = Fixture.Belief(own: [tank], enemies: [refinery]) with { Time = new GameTime(2) };
+        BeliefSnapshot fogged = visible with { Time = new GameTime(10) };
+        SquadOrder order = new("s1", ObjectiveKind.AttackRegion, Fixture.Front, [tank.Id], Engage: true, RetreatBelowForceRatio: 0.0);
+
+        AttackCommand attack = Assert.IsType<AttackCommand>(Assert.Single(controller.Tick(visible, [order], leases, rules)));
+        Assert.Equal(refinery.Id, attack.Target);
+
+        AttackMoveCommand move = Assert.IsType<AttackMoveCommand>(Assert.Single(controller.Tick(fogged, [order], leases, rules)));
+        Assert.Equal(refinery.LastSeenPosition, move.Destination);
+        Assert.Equal([tank.Id], move.Units);
+    }
+
     // Own squad value is 1600 (two 800 tanks); these enemy values give the local force ratios named.
     private const int RatioPoint3 = 5333;   // 0.30: below the 0.6 retreat threshold
     private const int RatioPoint8 = 2000;   // 0.80: inside the 0.6/1.0 hysteresis band

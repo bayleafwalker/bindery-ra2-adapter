@@ -67,15 +67,21 @@ public sealed class FeatureCompilerReviewTests
         ObservedEntity rifle = Own(3, "rifleman", HomeCell);
         ObservedEntity enemyA = Enemy(40, "rifleman", new Cell(11, 11));
         ObservedEntity enemyB = Enemy(41, "tank", new Cell(12, 12));
-        compiler.Compile(belief.Apply(Frame(0, 5000, [ConYardAtHome(), rifle, enemyA, enemyB], visible)));
+        ObservedEntity enemyC = Enemy(42, "rifleman", new Cell(13, 13));
+        compiler.Compile(belief.Apply(Frame(0, 5000, [ConYardAtHome(), rifle, enemyA, enemyB, enemyC], visible)));
 
+        // A kill's owner is its killer (GameEvent.Owner). The enemy's kill of our rifleman (an oracle stream shows
+        // it) and its kill of its own unit are not ours; a producer that wrongly names us as the killer of our own
+        // unit is caught by the own-victim guard.
         GameTime t1 = GameTime.FromSeconds(1);
         GameEvent[] events =
         [
             new(GameEventKind.EntityDestroyed, t1, rifle.Id, Self, "rifleman", HomeCell),
             new(GameEventKind.EntityKilledByUs, t1, rifle.Id, EnemyPlayer, "rifleman", HomeCell),
+            new(GameEventKind.EntityKilledByUs, t1, rifle.Id, Self, "rifleman", HomeCell),
             new(GameEventKind.EntityKilledByUs, t1, enemyA.Id, Self, "rifleman", enemyA.Position),
-            new(GameEventKind.EntityKilledByUs, t1, enemyB.Id, EnemyPlayer, "tank", enemyB.Position),
+            new(GameEventKind.EntityKilledByUs, t1, enemyB.Id, Self, "tank", enemyB.Position),
+            new(GameEventKind.EntityKilledByUs, t1, enemyC.Id, EnemyPlayer, "rifleman", enemyC.Position),
         ];
         StrategicFeatures features = compiler.Compile(belief.Apply(Frame(1, 5000, [ConYardAtHome()], visible, events)));
 

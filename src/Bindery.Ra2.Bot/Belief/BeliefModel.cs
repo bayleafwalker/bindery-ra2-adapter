@@ -31,6 +31,8 @@ public sealed class BeliefModel : IBeliefModel
     private GameTime? previousFrameTime;
     private BeliefSnapshot? current;
     private Dictionary<RegionId, int>? oreLastSeen;
+    private int? lastCredits;
+    private PowerState? lastPower;
 
     public BeliefModel(IRulesDatabase rules, BeliefOptions options)
     {
@@ -58,7 +60,11 @@ public sealed class BeliefModel : IBeliefModel
         UpdateScoutingKnowledge(frame, own);
         UpdateRecentEvents(frame);
 
-        List<EnemyContact> enemies = [.. contacts.Values.OrderBy(static c => c.Id.Value)];
+        // A source that has not sampled credits or power yet sends placeholders; the belief keeps the last value it
+        // was told instead, and says whether it has ever been told.
+        if (frame.CreditsKnown) lastCredits = frame.Credits;
+        if (frame.PowerKnown) lastPower = frame.Power;
+        List<EnemyContact> enemies = [.. contacts.Values.Where(c => frame.IsEnemy(c.Owner)).OrderBy(static c => c.Id.Value)];
         List<EnemyPlayerBelief> enemyPlayers = BuildEnemyPlayerBeliefs(frame, enemies);
 
         version++;
@@ -68,8 +74,8 @@ public sealed class BeliefModel : IBeliefModel
             frame.Mode,
             frame.Self,
             frame.Faction,
-            frame.Credits,
-            frame.Power,
+            lastCredits ?? frame.Credits,
+            lastPower ?? frame.Power,
             own,
             enemies,
             enemyPlayers,
@@ -78,7 +84,10 @@ public sealed class BeliefModel : IBeliefModel
             [.. recentEvents],
             frame.Map,
             oreLastSeen is null ? null : new Dictionary<RegionId, int>(oreLastSeen),
-            frame.Superweapons);
+            frame.Superweapons,
+            frame.QueuesKnown,
+            lastCredits is not null,
+            lastPower is not null);
 
         current = snapshot;
         return snapshot;
@@ -123,7 +132,7 @@ public sealed class BeliefModel : IBeliefModel
         HashSet<EntityId> seenThisFrame = [];
         foreach (ObservedEntity e in frame.Entities)
         {
-            if (e.Owner == frame.Self) continue;
+            if (!frame.IsEnemy(e.Owner)) continue;
             seenThisFrame.Add(e.Id);
             (UnitRole role, EntityKind kind, int value) = ResolveTypeFacts(e.TypeId);
             RegionId region = RegionOf(frame.Map, e.Position);
@@ -199,7 +208,7 @@ public sealed class BeliefModel : IBeliefModel
 
         foreach (ObservedEntity e in frame.Entities)
         {
-            if (e.Owner == frame.Self) continue;
+            if (!frame.IsEnemy(e.Owner)) continue;
             if (!rules.TryGet(e.TypeId, out UnitRule rule)) continue;
 
             // Every seen type is known tech, units included: a Harrier overhead proves the enemy can build
@@ -254,7 +263,9 @@ public sealed class BeliefModel : IBeliefModel
         foreach (PlayerId p in seenTech.Keys) players.Add(p);
         foreach (PlayerId p in enemyBuildingStartRegions.Keys) players.Add(p);
         foreach (PlayerId p in factionCandidates.Keys) players.Add(p);
-        List<PlayerId> ordered = [.. players.OrderBy(static p => p.Value)];
+        // A player this frame names as not an enemy (an ally, a neutral or civilian house) is no enemy player,
+        // whatever was remembered about it before the source said so.
+        List<PlayerId> ordered = [.. players.Where(frame.IsEnemy).OrderBy(static p => p.Value)];
 
         Dictionary<PlayerId, RegionId> directStarts = [];
         foreach (PlayerId p in ordered)

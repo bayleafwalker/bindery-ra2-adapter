@@ -226,7 +226,7 @@ public sealed class ReplayStrategist : IStrategist, IFrameAwareStrategist
         ProposalCost cost = data.TryGetProperty("cost", out JsonElement costJson) && costJson.ValueKind == JsonValueKind.Object
             ? costJson.Deserialize<ProposalCost>(BotJson.Options) ?? new ProposalCost(0, 0, 0, 0, null)
             : new ProposalCost(0, 0, 0, 0, null);
-        return new StrategistProposal(intent, cost, ReadString(data, "rawResponse"));
+        return new StrategistProposal(intent, cost, ReadString(data, "rawResponse"), ReadString(data, "refinesIntentId"));
     }
 
     private static string? ReadString(JsonElement data, string name) =>

@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-namespace Bindery.Ra2.Bot.Claude;
+namespace Bindery.Ra2.Bot.Strategy;
 
 /// <summary>
 /// Keeps an intent's army-value attack condition in step with its <c>attackArmyValue</c> parameter. The planner
 /// attacks only when every attack condition holds and army value reaches the parameter, and the timing playbooks
-/// also carry the parameter's default as an <c>OwnArmyValue</c> attack condition. Where the LLM may set parameters
-/// but not conditions (the Parameters vocabulary tier, Refine mode), the conditions come from elsewhere, so a
-/// lowered parameter would be masked by the old condition and silently do nothing.
+/// also carry the parameter's default as an <c>OwnArmyValue</c> attack condition. Wherever a strategist sets
+/// parameters but not conditions (the deterministic strategists through <see cref="IntentComposer"/>, and the LLM's
+/// Parameters vocabulary tier and Refine mode), the conditions come from elsewhere, so a lowered parameter would be
+/// masked by the old condition and silently do nothing.
 /// </summary>
 public static class AttackArmyThreshold
 {

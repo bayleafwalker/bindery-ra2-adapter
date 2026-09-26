@@ -80,7 +80,31 @@ public sealed class AnthropicUsageTests
             }
             """);
 
-        Assert.Equal(new ModelUsage(5300, 1300, 4000, 1200), AnthropicMessageClient.UsageOf(usage));
+        ModelUsage total = AnthropicMessageClient.UsageOf(usage);
+        Assert.Equal(new ModelUsage(5300, 1300, 4000, 1200), total with { Attempts = null });
+        Assert.Equal(
+            [new ModelAttemptUsage("claude-opus-5", 5000, 800, 0, 1200), new ModelAttemptUsage("claude-opus-4-8", 300, 500, 4000, 0)],
+            total.Attempts!);
+    }
+
+    [Fact]
+    public void Each_billed_attempt_is_priced_at_its_own_models_rate()
+    {
+        // A declined Fable 5.1 attempt re-served on Opus 4.8: pricing both at the served model's rate would halve the
+        // declined attempt's cost.
+        ModelAttemptUsage declined = new("claude-fable-5-1", 5000, 800, 0, 1200);
+        ModelAttemptUsage served = new("claude-opus-4-8", 300, 500, 4000, 0);
+        double expected = PriceTable.CostUsd("claude-fable-5-1", 5000, 800, 0, 1200)!.Value
+            + PriceTable.CostUsd("claude-opus-4-8", 300, 500, 4000, 0)!.Value;
+
+        Assert.Equal(expected, PriceTable.CostUsd([declined, served], "claude-opus-4-8")!.Value, 12);
+        Assert.NotEqual(PriceTable.CostUsd("claude-opus-4-8", 5300, 1300, 4000, 1200)!.Value, expected, 6);
+        // An attempt on a model without a price makes the whole figure unknown rather than silently low.
+        Assert.Null(PriceTable.CostUsd([declined with { Model = "claude-unknown-9" }, served], "claude-opus-4-8"));
+
+        ProposalCost cost = new(1, 5300, 1300, 4000, "claude-opus-4-8", 1200, PriceTable.CostUsd([declined, served], "claude-opus-4-8"));
+        Assert.Equal(expected, PriceTable.CostUsd(cost)!.Value, 12);
+        Assert.Equal(PriceTable.CostUsd("claude-opus-4-8", 5300, 1300, 4000, 1200), PriceTable.CostUsd(cost with { Usd = null }));
     }
 
     [Fact]

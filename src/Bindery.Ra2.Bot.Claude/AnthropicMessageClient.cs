@@ -151,6 +151,8 @@ public sealed class AnthropicMessageClient : IMessageClient
     /// appears only in <c>usage.iterations</c>, the per-attempt source of truth, so the iterations are summed when
     /// present.
     /// </summary>
+    private static string? ModelOf(string? model) => string.IsNullOrEmpty(model) ? null : model;
+
     internal static ModelUsage UsageOf(Beta.BetaUsage usage)
     {
         if (usage.Iterations is not { Count: > 0 } iterations)
@@ -158,19 +160,21 @@ public sealed class AnthropicMessageClient : IMessageClient
             return new ModelUsage(usage.InputTokens, usage.OutputTokens, usage.CacheReadInputTokens ?? 0, usage.CacheCreationInputTokens ?? 0);
         }
         long input = 0, output = 0, read = 0, write = 0;
+        List<ModelAttemptUsage> attempts = [];
         foreach (Beta.BetaUsageIteration iteration in iterations)
         {
-            (long i, long o, long r, long w) = iteration.Match(
-                static m => (m.InputTokens, m.OutputTokens, m.CacheReadInputTokens, m.CacheCreationInputTokens),
-                static c => (c.InputTokens, c.OutputTokens, c.CacheReadInputTokens, c.CacheCreationInputTokens),
-                static a => (a.InputTokens, a.OutputTokens, a.CacheReadInputTokens, a.CacheCreationInputTokens),
-                static f => (f.InputTokens, f.OutputTokens, f.CacheReadInputTokens, f.CacheCreationInputTokens));
+            (string? model, long i, long o, long r, long w) = iteration.Match<(string?, long, long, long, long)>(
+                static m => (m.Model is { } message ? ModelOf(message) : null, m.InputTokens, m.OutputTokens, m.CacheReadInputTokens, m.CacheCreationInputTokens),
+                static c => (null, c.InputTokens, c.OutputTokens, c.CacheReadInputTokens, c.CacheCreationInputTokens),
+                static a => (a.Model is { } advisor ? ModelOf(advisor) : null, a.InputTokens, a.OutputTokens, a.CacheReadInputTokens, a.CacheCreationInputTokens),
+                static f => (f.Model is { } fallback ? ModelOf(fallback) : null, f.InputTokens, f.OutputTokens, f.CacheReadInputTokens, f.CacheCreationInputTokens));
             input += i;
             output += o;
             read += r;
             write += w;
+            attempts.Add(new ModelAttemptUsage(model, i, o, r, w));
         }
-        return new ModelUsage(input, output, read, write);
+        return new ModelUsage(input, output, read, write, attempts);
     }
 
     /// <summary>Beta request: as <see cref="BuildGaParams"/> plus <c>fallbacks: "default"</c> under the <c>server-side-fallback-2026-07-01</c> beta.</summary>

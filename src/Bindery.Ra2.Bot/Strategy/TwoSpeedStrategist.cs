@@ -21,10 +21,11 @@ namespace Bindery.Ra2.Bot.Strategy;
 /// nothing (failure, no opinion) does not count as the slow strategist's turn. A slow answer that was delivered
 /// but not applied while the slow strategist's own commitment is active counts as its turn (the arbiter kept
 /// the commitment on purpose), so a refused switch does not turn every fast slot into a slow call.</para>
-/// <para>"Event-driven" is judged from the features: any event newer than the previous request. A request that
-/// the scheduler deferred until after an in-flight one no longer sees its event in the features; when that event
-/// discarded a slow answer while a placeholder was active, the placeholder rule above still routes it to the slow
-/// strategist.</para>
+/// <para>"Event-driven" is judged from the request's <see cref="StrategistContext.Trigger"/>: every
+/// <c>event:*</c> and <c>replan:*</c> request goes to the slow strategist, including one the scheduler deferred
+/// until after an in-flight request, whose features no longer show the event (and so also when the slow
+/// strategist's own intent is active while the event discarded its answer). Contexts without a trigger fall back to
+/// the features: any event newer than the previous request.</para>
 /// </remarks>
 public sealed class TwoSpeedStrategist : IStrategist
 {
@@ -63,7 +64,9 @@ public sealed class TwoSpeedStrategist : IStrategist
         Settle(active);
 
         bool owned = active is not null && string.Equals(active.IntentId, ownedIntentId, StringComparison.Ordinal);
-        bool newEvent = lastRequest is { } previous && context.Features.Events.Any(e => e.Time > previous);
+        bool triggered = context.Trigger is { } trigger
+            && (trigger.StartsWith("event:", StringComparison.Ordinal) || trigger.StartsWith("replan:", StringComparison.Ordinal));
+        bool newEvent = triggered || (lastRequest is { } previous && context.Features.Events.Any(e => e.Time > previous));
         lastRequest = now;
         bool slowDue = !owned
             || lastSlowServed is null

@@ -117,6 +117,14 @@ public static class Program
             using StreamReader reader = new(options.Dataset);
             context.DistillDataset = DecisionDataset.ReadNdjson(reader);
             context.DistillSource = Path.GetFileName(options.Dataset);
+            // Oracle decisions saw the whole map: a fog-respecting distilled arm must not be trained on them (it
+            // would drop them silently and report a dataset size it never used), so the mix is refused up front.
+            if (context.DistillDataset.HasOracleExamples && arms.Any(static a => a.Name == "distilled" && !a.Oracle))
+            {
+                throw new ArgumentException(
+                    $"Dataset '{options.Dataset}' holds oracle (full-map) decisions; the belief-mode distilled arm cannot use them. " +
+                    "Use a dataset exported from a belief-mode arm, or run the distilled-oracle arm.");
+            }
         }
 
         // Distilled last, after its teacher.
@@ -191,7 +199,7 @@ public static class Program
             // trained on them is never evaluated on maps or opponents its teacher's data came from.
             DecisionDataset dataset = DecisionDataset.Merge(Enumerable.Range(0, jobs.Count)
                 .Where(i => logs.ContainsKey(i) && BanditLearnsFrom(jobs[i].Opponent, jobs[i].Split))
-                .Select(i => DecisionDataset.FromDecisionLog(logs[i], DatasetFilter.PrimaryOnly, MatchId(jobs[i]))));
+                .Select(i => DecisionDataset.FromDecisionLog(logs[i], DatasetFilter.PrimaryOnly, MatchId(jobs[i]), ModeOf(jobs[i].Arm))));
             using (StreamWriter writer = new(Path.Combine(options.OutDir, $"dataset-{Slug(arm.ToString())}.ndjson")))
             {
                 dataset.WriteNdjson(writer);
@@ -323,8 +331,11 @@ public static class Program
         }
         return DecisionDataset.Merge(Enumerable.Range(0, jobs.Count)
             .Where(logs.ContainsKey)
-            .Select(i => DecisionDataset.FromDecisionLog(logs[i], DatasetFilter.PrimaryOnly, MatchId(jobs[i]))));
+            .Select(i => DecisionDataset.FromDecisionLog(logs[i], DatasetFilter.PrimaryOnly, MatchId(jobs[i]), ModeOf(jobs[i].Arm))));
     }
+
+    /// <summary>The observation mode an arm plays in, for dataset records that do not carry it.</summary>
+    private static ObservationMode ModeOf(ArmSpec arm) => arm.Oracle ? ObservationMode.Oracle : ObservationMode.Belief;
 
     private static List<(ArmSpec Arm, string Opponent, SimMap Map, string Split, int Seed)> Jobs(ArmSpec arm, CliOptions options, List<(SimMap Map, string Split)> maps) =>
         Jobs(arm, options.Opponents, options.Seeds, maps);

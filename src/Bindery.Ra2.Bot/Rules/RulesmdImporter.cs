@@ -99,7 +99,9 @@ public static class RulesmdImporter
             }
         }
 
-        units = units.Select(u => WithImplicitFactory(u, factories)).ToList();
+        units = units.Select(u => WithImplicitFactory(u, factories))
+                     .Select(u => factories.TryGetValue(u.TypeId, out QueueKind produced) ? u with { Produces = Produced(produced) } : u)
+                     .ToList();
         // Deterministic output order, independent of the INI's own layout.
         units.Sort(static (a, b) => string.CompareOrdinal(a.TypeId, b.TypeId));
 
@@ -173,7 +175,8 @@ public static class RulesmdImporter
 
         return new UnitRule(
             typeId, name, factions, resolvedKind, role, queue, cost, buildSeconds, power, prerequisites, techLevel,
-            strength, armor, damage, weapon, range, speed, sight, antiAirFlag, deployable);
+            strength, armor, damage, weapon, range, speed, sight, antiAirFlag, deployable,
+            Repairs: resolvedKind == EntityKind.Building && GetBool(section, "UnitRepair", false));
     }
 
     /// <summary>
@@ -275,6 +278,10 @@ public static class RulesmdImporter
             default: return false;
         }
     }
+
+    /// <summary>The queues a factory of <paramref name="kind"/> serves: a construction yard also builds defenses (their own sidebar tab).</summary>
+    private static IReadOnlyList<QueueKind> Produced(QueueKind kind) =>
+        kind == QueueKind.Building ? [QueueKind.Building, QueueKind.Defense] : [kind];
 
     /// <summary>
     /// Adds the producing factory RA2 requires implicitly: every structure needs a construction yard

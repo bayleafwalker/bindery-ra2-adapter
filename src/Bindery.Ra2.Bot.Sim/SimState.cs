@@ -61,6 +61,12 @@ internal sealed class QueueItemRuntime
     public double Progress { get; set; }
     public bool Ready => Progress >= 1.0;
 
+    /// <summary>
+    /// Credits already paid for this item. RA2 debits an item's cost gradually as it builds (and pauses it when the
+    /// money runs out), so the paid part is round(cost × progress); cancelling refunds exactly this.
+    /// </summary>
+    public int Paid { get; set; }
+
     /// <summary>True once a finished building/defense item has been moved to <see cref="SimPlayerState.PendingPlacements"/>; it still blocks its queue until placed.</summary>
     public bool AwaitingPlacement { get; set; }
 }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using Bindery.Ra2.Bot.Arbitration;
+using Bindery.Ra2.Bot.Operations;
 
 namespace Bindery.Ra2.Bot.Runtime;
 
@@ -305,23 +306,9 @@ public sealed class BotRuntime : IDisposable
     }
 
     /// <summary>
-    /// What the items already in production queues still owe: the sum over unfinished items of
-    /// <c>cost × (1 − progress)</c>, rounded up. Where the game charges while building (retail RA2), the credits on
-    /// hand do not yet show these commitments, so a ledger sized from credits alone would fund them again every
-    /// period and spread the money over more queues than it can pay for (invariant 4).
+    /// What queued production still owes (<see cref="ProductionDebt.Unpaid"/>). Where the game charges while
+    /// building, the credits on hand do not yet show these commitments, so a ledger sized from credits alone would
+    /// fund them again every period and spread the money over more queues than it can pay for (invariant 4).
     /// </summary>
-    private int UnpaidProduction(BeliefSnapshot belief)
-    {
-        double owed = 0;
-        foreach (ProductionQueueState queue in belief.Queues)
-        {
-            foreach (QueueItem item in queue.Items)
-            {
-                if (item.Ready || !components.Rules.TryGet(item.TypeId, out UnitRule rule)) continue;
-                double progress = double.IsFinite(item.Progress) ? Math.Clamp(item.Progress, 0, 1) : 0;
-                owed += rule.Cost * (1 - progress);
-            }
-        }
-        return (int)Math.Min(int.MaxValue, Math.Ceiling(owed - 1e-9));
-    }
+    private int UnpaidProduction(BeliefSnapshot belief) => ProductionDebt.Unpaid(components.Rules, belief.Queues);
 }

@@ -101,12 +101,20 @@ public static class DecisionLogMetrics
         long input = cost.TryGetProperty("inputTokens", out JsonElement i) ? i.GetInt64() : 0;
         long output = cost.TryGetProperty("outputTokens", out JsonElement o) ? o.GetInt64() : 0;
         long cached = cost.TryGetProperty("cacheReadTokens", out JsonElement c) ? c.GetInt64() : 0;
+        long written = cost.TryGetProperty("cacheCreationTokens", out JsonElement w) && w.ValueKind == JsonValueKind.Number ? w.GetInt64() : 0;
+        double? priced = cost.TryGetProperty("usd", out JsonElement u) && u.ValueKind == JsonValueKind.Number ? u.GetDouble() : null;
         string? model = cost.TryGetProperty("model", out JsonElement md) && md.ValueKind == JsonValueKind.String ? md.GetString() : null;
-        stats.TokensIn += input + cached;
+        stats.TokensIn += input + cached + written;
         stats.TokensOut += output;
         if (model is null) return;
-        stats.Model ??= model;
-        double usd = PriceTable.CostUsd(model, input, output, cached) ?? 0;
+        // The serving model is tallied apart from the arm's own (set from its configuration), so a reply a fallback
+        // served does not relabel the arm; and a model without a price is counted, not priced at zero.
+        stats.ServedBy[model] = stats.ServedBy.GetValueOrDefault(model) + 1;
+        if ((priced ?? PriceTable.CostUsd(model, input, output, cached, written)) is not { } usd)
+        {
+            stats.UnpricedRequests++;
+            return;
+        }
         stats.Usd += usd;
         if (failed) stats.FailedRequestUsd += usd;
     }

@@ -1,6 +1,6 @@
 {
   "rulesetId": "bindery-sim-variant-roster",
-  "provenance": "Roster variant of the hand-authored approximate fixture bindery-sim-approx, for testing adaptation to a changed unit roster (a mod). Changes: MTNK renamed GTNK (Allied Guardian Tank, cost 700 to 750); HTK (flak track) and V3 (V3 launcher) removed; E2 re-costed 100 to 200, HTNK 900 to 1100, FV 500 to 650; TNKD (Allied Tank Destroyer, anti-armour vehicle, 900, needs GAWEAP and GAAIRC) added. Build time = max(2, cost * 0.06). Illustrative, NOT retail-accurate. Every structure lists its construction yard and every infantry type its barracks as a prerequisite, standing in for RA2's implicit producing factory; the Rocketeer (E3) and Flak Track (HTK) are dual-purpose (an anti-infantry ground weapon with the anti-air flag), as in RA2.",
+  "provenance": "Roster variant of the hand-authored approximate fixture bindery-sim-approx, for testing adaptation to a changed unit roster (a mod). Changes: MTNK renamed GTNK (Allied Guardian Tank, cost 700 to 750); HTK (flak track) and V3 (V3 launcher) removed; E2 re-costed 100 to 200, HTNK 900 to 1100, FV 500 to 650; TNKD (Allied Tank Destroyer, anti-armour vehicle, 900, needs GAWEAP and GAAIRC) added. Build time = max(2, cost * 0.06). Illustrative, NOT retail-accurate. Every structure lists its construction yard and every infantry type its barracks as a prerequisite, standing in for RA2's implicit producing factory; the Rocketeer (E3) and Flak Track (HTK) are dual-purpose (an anti-infantry ground weapon with the anti-air flag), as in RA2. Service depots declare repairs and factories the queues they produce for, as in the base fixture.",
   "units": [
     {
       "typeId": "AMCV",
@@ -323,7 +323,10 @@
       "speed": 0,
       "sight": 6,
       "antiAir": false,
-      "deployable": false
+      "deployable": false,
+      "produces": [
+        "Aircraft"
+      ]
     },
     {
       "typeId": "GADEPT",
@@ -354,7 +357,8 @@
       "speed": 0,
       "sight": 5,
       "antiAir": false,
-      "deployable": false
+      "deployable": false,
+      "repairs": true
     },
     {
       "typeId": "GAPATR",
@@ -416,7 +420,10 @@
       "speed": 0,
       "sight": 5,
       "antiAir": false,
-      "deployable": false
+      "deployable": false,
+      "produces": [
+        "Infantry"
+      ]
     },
     {
       "typeId": "GAPOWR",
@@ -577,7 +584,10 @@
       "speed": 0,
       "sight": 6,
       "antiAir": false,
-      "deployable": false
+      "deployable": false,
+      "produces": [
+        "Vehicle"
+      ]
     },
     {
       "typeId": "GAWEAT",
@@ -632,7 +642,11 @@
       "speed": 0,
       "sight": 8,
       "antiAir": false,
-      "deployable": false
+      "deployable": false,
+      "produces": [
+        "Building",
+        "Defense"
+      ]
     },
     {
       "typeId": "GTNK",
@@ -802,7 +816,11 @@
       "speed": 0,
       "sight": 8,
       "antiAir": false,
-      "deployable": false
+      "deployable": false,
+      "produces": [
+        "Building",
+        "Defense"
+      ]
     },
     {
       "typeId": "NADEPT",
@@ -833,7 +851,8 @@
       "speed": 0,
       "sight": 5,
       "antiAir": false,
-      "deployable": false
+      "deployable": false,
+      "repairs": true
     },
     {
       "typeId": "NAFLAK",
@@ -896,7 +915,10 @@
       "speed": 0,
       "sight": 5,
       "antiAir": false,
-      "deployable": false
+      "deployable": false,
+      "produces": [
+        "Infantry"
+      ]
     },
     {
       "typeId": "NAMISL",
@@ -1180,7 +1202,11 @@
       "speed": 0,
       "sight": 6,
       "antiAir": false,
-      "deployable": false
+      "deployable": false,
+      "produces": [
+        "Vehicle",
+        "Aircraft"
+      ]
     },
     {
       "typeId": "PBOX",

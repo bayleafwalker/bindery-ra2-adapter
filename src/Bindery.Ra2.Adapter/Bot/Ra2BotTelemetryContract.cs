@@ -47,19 +47,24 @@ namespace Bindery.Ra2.Adapter.Bot;
 /// player. A missing <c>visible</c> is reported missing and the removal
 /// skipped. It is <see cref="GameEventKind.EntityKilledByUs"/> only when
 /// <c>killer</c> is the controlled player, else
-/// <see cref="GameEventKind.EntityDestroyed"/>. Owner, type and position come
-/// from tracked state.
+/// <see cref="GameEventKind.EntityDestroyed"/>. Type and position come from
+/// tracked state; the event's owner is the victim's owner for a destruction and
+/// the controlled player (the killer) for a kill, the meaning
+/// <see cref="GameEvent.Owner"/> documents.
 /// </description></item>
 /// <item><description>
 /// <c>game.economy.credits</c>: <c>frame</c>, <c>owner</c>, <c>credits</c> (int).
 /// Only the sample whose <c>owner</c> is the controlled player updates
 /// <see cref="ObservationFrame.Credits"/>; others are ignored (not a missing
-/// field — it is simply not this player's economy).
+/// field — it is simply not this player's economy). Until the first such
+/// sample, frames carry <see cref="ObservationFrame.CreditsKnown"/> false.
 /// </description></item>
 /// <item><description>
 /// <c>game.economy.power</c>: <c>frame</c>, <c>owner</c>, <c>produced</c>,
 /// <c>drained</c> (int). Same owner gating as credits, mapped to
-/// <see cref="PowerState"/>.
+/// <see cref="PowerState"/>; <see cref="ObservationFrame.PowerKnown"/> is
+/// false until the first sample. No production-queue event is mapped, so every
+/// frame has <see cref="ObservationFrame.QueuesKnown"/> false.
 /// </description></item>
 /// <item><description>
 /// <c>game.participant.defeated</c>: <c>frame</c>, <c>owner</c>. Mapped to a

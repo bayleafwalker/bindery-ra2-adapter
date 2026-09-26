@@ -20,6 +20,7 @@ internal sealed class TestRules : IRulesDatabase
     public const string Strong = "test-strong";
     public const string AntiAirOnly = "test-aa";
     public const string Aircraft = "test-aircraft";
+    public const string Depot = "test-depot";
 
     private static readonly IReadOnlyList<Faction> AnyFaction = [Faction.Allied, Faction.Soviet, Faction.Yuri];
 
@@ -40,6 +41,7 @@ internal sealed class TestRules : IRulesDatabase
             R(Strong, UnitRole.AntiArmor, EntityKind.Vehicle, QueueKind.Vehicle, 300, 1, 0, [[WarFactory]], 1, 400, ArmorClass.Medium, 40, WeaponClass.AntiArmor, 5, 5, 5),
             R(AntiAirOnly, UnitRole.AntiAir, EntityKind.Vehicle, QueueKind.Vehicle, 200, 1, 0, [[WarFactory]], 1, 150, ArmorClass.Light, 20, WeaponClass.AntiAir, 5, 5, 5, antiAir: true),
             R(Aircraft, UnitRole.AntiArmor, EntityKind.Aircraft, QueueKind.Aircraft, 200, 1, 0, [[WarFactory]], 1, 100, ArmorClass.Flak, 10, WeaponClass.General, 5, 10, 6),
+            R(Depot, UnitRole.Tech, EntityKind.Building, QueueKind.Building, 400, 2, -10, [[WarFactory]], 2, 400, ArmorClass.Concrete, 0, WeaponClass.None, 0, 0, 4) with { Repairs = true },
         ];
         byType = rules.ToDictionary(r => r.TypeId);
     }

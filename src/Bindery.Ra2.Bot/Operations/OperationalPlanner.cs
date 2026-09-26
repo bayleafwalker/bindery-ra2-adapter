@@ -43,6 +43,12 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
     private readonly OperationalOptions options;
     private readonly Dictionary<string, RegionGraph> graphByMap = [];
 
+    /// <summary>
+    /// While queues are not reported: per queue, until when the item the planner last ordered into it keeps it busy.
+    /// This is the planner's own ledger of issued orders, the only evidence it has that a queue is occupied.
+    /// </summary>
+    private readonly Dictionary<QueueKind, GameTime> busyWhileUnreported = [];
+
     public OperationalPlanner(IRulesDatabase rules, IPlaybookLibrary playbooks, OperationalOptions options)
     {
         ArgumentNullException.ThrowIfNull(rules);
@@ -94,7 +100,9 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
             .ToHashSet(StringComparer.Ordinal);
         private readonly IReadOnlySet<string> placed = belief.OwnBuildingTypes;
         private readonly Faction faction = belief.Faction;
-        private int credits = Math.Max(0, belief.Credits);
+        // Where production is paid as it builds, the credits on hand still include what queued items owe.
+        private int credits = Math.Max(0, belief.Credits
+            - (planner.options.ProductionChargedWhileBuilding && belief.QueuesKnown ? ProductionDebt.Unpaid(planner.rules, belief.Queues) : 0));
         private int economyReserve;
         private UnitRule? reservedFor;
 
@@ -128,6 +136,12 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
 
         private bool HasRoom(QueueKind kind)
         {
+            if (!belief.QueuesKnown)
+            {
+                // Nothing reported is not the same as idle: only the planner's own orders say a queue is busy.
+                if (planner.busyWhileUnreported.TryGetValue(kind, out GameTime busyUntil) && belief.Time < busyUntil) return false;
+                return rules.All.Any(r => r.Queue == kind && Buildable(r));
+            }
             ProductionQueueState? state = belief.Queues.FirstOrDefault(q => q.Kind == kind);
             if (state is not null)
             {
@@ -163,6 +177,10 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
                 return false;
             }
             Commands.Add(new ProduceCommand(options.ControllerId, rule.TypeId, rule.Queue));
+            if (!belief.QueuesKnown)
+            {
+                planner.busyWhileUnreported[rule.Queue] = belief.Time.Plus(Math.Max(0, rule.BuildSeconds) + options.UnknownQueueReorderSeconds);
+            }
             string pool = BudgetPools.ForRole(rule.Role);
             Reservations[pool] = Reservations.GetValueOrDefault(pool) + rule.Cost;
             credits -= rule.Cost;

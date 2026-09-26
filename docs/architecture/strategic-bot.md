@@ -87,7 +87,7 @@ a contract change records it in its report instead of editing the file.
 | D. Operations & tactics | `src/Bindery.Ra2.Bot/Operations/`, `src/Bindery.Ra2.Bot/Tactics/` | `OperationalPlanner` (budget split by intent shares; production chosen to close composition gaps using rules cost/build time/effectiveness vs known enemy composition; tech path via `PathTo`; power upkeep; harvester/refinery targets; build placement at region level with candidate cells around own base; squad formation from unleased combat units; objective assignment by priority; reinforcement; attack only when attack conditions hold), tactical controllers (`SquadController`: target selection by effectiveness × low health, focus fire, retreat/re-engage hysteresis, path via region graph; `HarvesterSafetyController`; `RepairController`; `DeployController` for MCV/deployables). |
 | E. Deterministic strategists | `src/Bindery.Ra2.Bot/Strategy/` | `PlaybookSelector` (rule-based baseline over features), `ContextualBanditStrategist` (LinUCB over playbooks with a fixed feature vector, `IOutcomeLearner`), `FeatureVector` (shared numeric encoding, documented order), `DistilledStrategist` (multinomial logistic regression trained from a decision dataset; escalates to an inner strategist when the state is out of distribution by Mahalanobis-diagonal distance), `DecisionDataset` (export/import from decision logs). |
 | F. Claude strategist | `src/Bindery.Ra2.Bot.Claude/` | `ClaudeStrategist` (Anthropic C# SDK 12.50.0; `claude-opus-5`; structured output via `OutputConfig`/`JsonOutputFormat` with a JSON schema for an `IntentDraft` DTO; adaptive thinking; effort option; per-request timeout; refusal and max-token stop reasons return null with a logged reason; token usage into `ProposalCost`), `IntentPromptBuilder` (compact deterministic JSON of features, relevant rule facts and the faction's playbook catalogue; stable system prompt first for prompt caching), `IntentDraftMapper` (DTO → `StrategicIntent`), `ClaudeStrategistOptions` including `Mode = Strategic \| Refine` (Refine = the `llm+fast` arm: may only change parameters of the active playbook). Behind an `IMessageClient` seam so tests run on canned responses; one live smoke test runs only when `BINDERY_BOT_LIVE_LLM=1`. |
-| G. Simulator & arena | `src/Bindery.Ra2.Bot.Sim/`, `tools/Bindery.Ra2.Bot.Arena/` | Region-graph skirmish simulator: seeded RNG, 5 authored 2-player maps (training `twin-valley`, `river-crossing`, `island-bridges`; held-out `open-steppe`, `fortress-choke`), economy (a free harvester with each refinery, as RA2's FreeUnit; harvest trips, ore depletion), production queues with prerequisites and power penalty, building placement, movement along region links, combat resolution per region using rules damage × effectiveness, fog per player (sight by region presence + last-seen), per-player `IObservationSource`/`ICommandSink`, oracle mode, reset, replay log. Opponents: the independent scripted AI in `src/Bindery.Ra2.Bot.Sim/Opponents/` (training `ai-rush`, `ai-balanced`, `ai-turtle`, `ai-air`, held-out `ai-horde`, `ai-armor`; easy/medium/hard; retail-style build lists and task-force waves, own observation frame only, no code shared with the bot's planner), and styles (`rush`, `turtle`, `tech`, `harass`, `balanced`) pinned to playbooks on a frozen copy of the stack as of 7f3e2c7 (`tools/Bindery.Ra2.Bot.Baseline`; `live-<style>` on the live stack). Arena CLI: arms × maps × opponents × seeds → JSON + Markdown report with win rate (held-out maps and held-out opponents separate), invalid plans, decision lateness, strategic churn, production idle time, resource float, trade efficiency, inference cost, hidden-information leakage probe. |
+| G. Simulator & arena | `src/Bindery.Ra2.Bot.Sim/`, `tools/Bindery.Ra2.Bot.Arena/` | Region-graph skirmish simulator: seeded RNG, 5 authored 2-player maps (training `twin-valley`, `river-crossing`, `island-bridges`; held-out `open-steppe`, `fortress-choke`), economy (a free harvester with each refinery, as RA2's FreeUnit; harvesters drive their route through every region between ore and refinery, exposed to raids, and are paid only at a refinery that still stands; ore depletion), production queues with prerequisites and power penalty (each queue runs on its own factories only, at √factories speed, pauses without one, and is paid as it builds, as in RA2), powered defenses that stop firing on low power, building placement (no overlapping footprints), repair only beside a service depot, movement along region links, combat resolution per region using rules damage × effectiveness, fog per player (sight by region presence + last-seen), per-player `IObservationSource`/`ICommandSink`, oracle mode, reset, replay log. Opponents: the independent scripted AI in `src/Bindery.Ra2.Bot.Sim/Opponents/` (training `ai-rush`, `ai-balanced`, `ai-turtle`, `ai-air`, held-out `ai-horde`, `ai-armor`; easy/medium/hard; retail-style build lists and task-force waves, own observation frame only, no code shared with the bot's planner), and styles (`rush`, `turtle`, `tech`, `harass`, `balanced`) pinned to playbooks on a frozen copy of the stack as of 7f3e2c7 (`tools/Bindery.Ra2.Bot.Baseline`; `live-<style>` on the live stack). Arena CLI: arms × maps × opponents × seeds → JSON + Markdown report with win rate (held-out maps and held-out opponents separate), invalid plans, decision lateness, strategic churn, production idle time, resource float, trade efficiency, inference cost, hidden-information leakage probe. |
 | H. RA2 bridge & docs | `src/Bindery.Ra2.Adapter/Bot/`, adapter tests for it, `README.md`, CI | `Ra2ObservationAssembler` (folds normalized ra2yrcpp observations into `ObservationFrame`s; fields the telemetry does not carry are reported as missing, not invented), `IRa2CommandTransport` seam and `Ra2CommandSink`, `Ra2BotHost` (the host loop: telemetry source → normalizer → assembler → `BotRuntime.Tick` → sink, flushed per frame, until match end; tested against `RecordedRa2TelemetrySource` and a fake transport), CI steps building and testing the bot projects on Linux and Windows. |
 
 ## Arena arms
@@ -149,8 +149,21 @@ not been re-run on them, so the bot still plays the authored parameters.
   item while credits ≥ the cheapest buildable item / match seconds.
 - **Resource float**: time-averaged credits on hand.
 - **Trade efficiency**: enemy value destroyed / own value lost.
+- **Asset value** (decides a timeout): credits, plus every live object at its
+  cost, plus what has been paid for queued production. A construction yard is
+  valued at its MCV's cost (the rules price the yard at nothing).
 - **Inference cost**: input/output tokens and USD per match at the published
-  per-million-token rate for the configured model.
+  per-million-token rate, including prompt-cache reads and writes at their own
+  multipliers. Every billed request counts, failed ones included (their share
+  is reported apart). A request re-served by a server-side fallback is priced
+  per attempt at each attempt's model rate (`ProposalCost.Usd`). The arm is
+  labelled with its configured model; the models that actually served replies
+  are tallied apart, and a request on a model without a list price is counted
+  as unpriced rather than priced at zero.
+- **Strategy table** (proposals, invalid plans, lateness, late discards): the
+  primary strategist's figures only. Fallback and emergency proposals are a
+  separate column, a shadow strategist's would-be invalid plans and lateness
+  have their own columns, and failed requests are counted.
 - **Hidden-information leakage**: count of validator `fog.*` rejections, plus
   the arena probe that perturbs hidden simulator state (enemy credits and
   queue, wounded hidden enemies, a hidden unit in an unseen region and one just
@@ -158,7 +171,9 @@ not been re-run on them, so the bot still plays the authored parameters.
   strategist context hash for up to 60 s, stopping early only when the objects
   the arm can see first differ (must be 0 differences). Sim-level lockstep tests
   (`SimFogLeakTests`) cover the combat and event paths the real bot may not reach
-  in that window. Entity ids are numbered per owner, so an id never reveals how
+  in that window. The table's fog-violation-frames column is a second,
+  per-frame check over the whole run of both simulations: arm frames that
+  carried an enemy object or event from a region the arm did not see (must be 0). Entity ids are numbered per owner, so an id never reveals how
   much the enemy has built.
 
 ## Integration record
@@ -492,3 +507,118 @@ rate with 95% Wilson interval): against the calibrated live styles selector
 opponents, but only +0.03 for the selector against the live styles. Full tables,
 the interpretation, what the strength and tuning work changed, and every known
 limitation are in [`strategic-bot-results.md`](strategic-bot-results.md).
+
+## Fix-branch merge and cross-area follow-ups (2026-09-26)
+
+The eight fix branches confirmed by review at 2321cb6 (`fix/ra2-sim-arena`,
+`-bridge-ci`, `-belief-features`, `-strategy`, `-arbitration-runtime`,
+`-operations-tactics`, `-claude`, `-rules-playbooks`) were merged into
+`feat/strategic-bot` after 33d5ce0. The follow-ups each area named for another
+area's code were then applied. All results in
+[`strategic-bot-results.md`](strategic-bot-results.md) predate this merge.
+
+**Simulator.**
+- Maps give both starts the same ore and roads. `twin-valley` has 9 regions
+  with an east home ore field. `open-steppe` has 13 regions, and its east half
+  mirrors the west.
+- A production queue runs on its own factories. Factories are declared in the
+  rules (`UnitRule.Produces`, RA2's `Factory=`; the fixture declares them, and
+  Soviet aircraft come from the war factory) and derived from prerequisites
+  only for rules that do not declare them.
+- Production is paid as it builds and waits when the money runs out. A cancel
+  refunds what was paid. `StandardBot.SimulatorOptions` therefore charges
+  while building, as a retail bot does.
+- Powered defenses go offline on low power. Harvesters drive their route.
+- A building may not overlap another (two-cell clearance), so the planner's
+  placement retry is exercised.
+- Repair happens only within three cells of an own service depot
+  (`UnitRule.Repairs`, RA2's `UnitRepair=yes`); the unit is sent there.
+- An attack on a target the attacker's side cannot see is refused.
+- Oracle frames pass events through the same per-player rule as belief frames,
+  with every region visible, so another player's kills stay theirs. Every frame
+  names the enemies (`ObservationFrame.Enemies`).
+
+**Contracts.**
+- `ObservationFrame` gains `QueuesKnown`, `CreditsKnown` and `PowerKnown` (a
+  source can say "not reported" instead of sending empty queues and zeros) and
+  `Enemies` (null keeps "every other owner is an enemy"). Belief skips owners
+  not in `Enemies`, keeps the last sampled credits and power, and reports
+  whether they were ever sampled.
+- `GameEvent.Owner` of `EntityKilledByUs` is the killer in every producer. The
+  RA2 assembler now uses this meaning too.
+- `StrategistContext` gains `Trigger` (`initial`, `cadence`, `event:*`,
+  `replan:*`), `ActiveRole` and `ActiveSince` (the arbiter's commitment clock).
+- `ProposalCost` gains `CacheCreationTokens` and `Usd` (the per-attempt price).
+- `StrategistProposal` gains `RefinesIntentId`.
+- `UnitRule` gains `Repairs` and `Produces`.
+
+**Runtime and arbitration.**
+- A firing abort trigger ends the intent (`intent_ended` reason `aborted`).
+- The base-threat override is spent once per threat episode and skips a
+  `Defend` or `Turtle` incumbent.
+- An unusable in-flight primary request is superseded (`proposal_failed`
+  reason `superseded`) as soon as a new trigger arrives, so a base attack
+  never waits for a stale request to time out.
+- A late shadow answer is logged with `wouldBeReason` `late:<reason>`. Shadow
+  records carry the features the shadow strategist was asked with, so
+  `DatasetFilter.ShadowOnly` can distill a shadow strategist.
+- `intent_activated` carries `mode`. Dataset examples take their frame and
+  snapshot version from the features the strategist saw (`featuresFrame`,
+  `featuresSnapshotVersion`), not from the activation.
+- A proposal with `RefinesIntentId` is discarded as late
+  (`refined_intent_ended`) when that intent is no longer active on arrival.
+- `TwoSpeedStrategist` sends every `event:*` and `replan:*` request to the
+  slow strategist, including one deferred behind an in-flight request.
+
+**Operations and tactics.**
+- Squads attack only contacts seen in the current frame. A fresh contact out
+  of sight (a building seen seconds ago) gets an attack-move to where it was
+  last seen. Artillery holds its stand-off cell with an attack-move while the
+  defence it besieges is in fog.
+- The planner's spendable credits exclude what queued production still owes
+  (`OperationalOptions.ProductionChargedWhileBuilding`, set from `BotOptions`).
+  When queues are not reported, it orders into a queue at most once per the
+  ordered item's build time plus five seconds, from its own record of orders.
+- `RepairController` selects depots by `UnitRule.Repairs`, not by role.
+- A deterministic strategist that sets `attackArmyValue` (bandit, tuner)
+  moves the playbook's matching `OwnArmyValue` attack condition with it
+  (`AttackArmyThreshold`, shared with the Claude strategist).
+
+**Claude.**
+- The prompt's `activeIntent` has `placeholder` (true for a fallback or
+  emergency intent, whose commitment window is 0), and the system prompt
+  states the yield rule. `secondsActive` uses the arbiter's clock.
+- Cost counts cache writes and prices each billed attempt of a
+  fallback-served request at its own model's rate.
+
+**Arena.**
+- Dataset export tags records with the arm's observation mode.
+- `--dataset` with oracle examples is refused for a belief `distilled` arm, and
+  an oracle `distilled` arm trains in oracle mode.
+- The bandit credits the match's last applied decision (`CompleteEpisode`
+  gets the final active intent).
+- Cost reports served-by models and unpriced requests.
+
+**Rules.** The importer reads `UnitRepair=` and `Factory=` into `Repairs` and
+`Produces`. The Rocketeer (E3) and Flak Track (HTK) are dual-purpose: an
+anti-infantry ground weapon plus the anti-air flag. Only `WeaponClass.AntiAir`
+weapons hit aircraft alone. The fixture requires each structure's
+construction yard and each infantry type's barracks.
+
+**Not done.**
+- No expansion beyond placement range. Producing an MCV, escorting it to a
+  distant `Expand` region and deploying it needs production plus a deploy flow
+  in Operations and `DeployController`.
+- `harvesterTarget` remains a production target only; the attack does not wait
+  for it.
+- No production caller of `RulesmdImporter` passes the player's country yet.
+- No production caller of `Ra2ObservationAssembler` passes `nonHostileOwners`
+  from the match plan yet.
+- The native ra2yrcpp telemetry source (outside this repository) must re-send
+  each visible enemy's upsert every frame cadence and carry `visible` or
+  `killer` on removals, per `Ra2BotTelemetryContract`. It reports no queues,
+  so every RA2 frame has `QueuesKnown` false.
+- A retail `BotRuntime` for `Ra2BotHost` must keep
+  `ProductionChargedWhileBuilding` true. It is now the default everywhere,
+  including `StandardBot.SimulatorOptions`.
+- `tools/Bindery.Ra2.Bot.Baseline` stays frozen.

@@ -18,14 +18,14 @@ namespace Bindery.Ra2.Bot.Runtime;
 public static class StandardBot
 {
     /// <summary>
-    /// Options for a simulator: deterministic strategists answer inline, tactics run at 5 Hz, and production is paid
-    /// in full when ordered (the simulator debits the whole cost at once).
+    /// Options for a simulator: deterministic strategists answer inline and tactics run at 5 Hz. Production is paid
+    /// as it builds, as in retail RA2 (the simulator debits it gradually), so these options differ from a retail
+    /// bot's only in speed and inline strategists.
     /// </summary>
     public static BotOptions SimulatorOptions { get; } = new(
         RunDeterministicStrategistsInline: true,
         TacticalHz: 5,
-        OperationsControllerId: "ops",
-        ProductionChargedWhileBuilding: false);
+        OperationsControllerId: "ops");
 
     /// <param name="primary">The configured strategist.</param>
     /// <param name="fallback">Deterministic fallback; a <see cref="PlaybookSelector"/> when null.</param>
@@ -52,7 +52,11 @@ public static class StandardBot
         ArgumentNullException.ThrowIfNull(playbooks);
         ArgumentNullException.ThrowIfNull(primary);
         options ??= SimulatorOptions;
-        operations = (operations ?? Tuning.TunedParameterSet.Active.ApplyTo(new OperationalOptions())) with { ControllerId = options.OperationsControllerId };
+        operations = (operations ?? Tuning.TunedParameterSet.Active.ApplyTo(new OperationalOptions())) with
+        {
+            ControllerId = options.OperationsControllerId,
+            ProductionChargedWhileBuilding = options.ProductionChargedWhileBuilding,
+        };
 
         BotComponents components = new(
             new BeliefModel(rules, new BeliefOptions()),

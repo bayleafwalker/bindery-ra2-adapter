@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using System.Diagnostics;
 using System.Globalization;
+using Bindery.Ra2.Bot.Strategy;
 
 namespace Bindery.Ra2.Bot.Claude;
 
@@ -219,12 +220,15 @@ public sealed class ClaudeStrategist : IStrategist
         }
         stopwatch.Stop();
 
+        string servedBy = string.IsNullOrEmpty(reply.ModelId) ? model : reply.ModelId;
         ProposalCost cost = new(
             stopwatch.Elapsed.TotalSeconds,
             reply.Usage.InputTokens,
             reply.Usage.OutputTokens,
             reply.Usage.CacheReadTokens,
-            string.IsNullOrEmpty(reply.ModelId) ? model : reply.ModelId);
+            servedBy,
+            reply.Usage.CacheCreationTokens,
+            PriceTable.CostUsd(reply.Usage.Attempts, servedBy));
         string raw = reply.Text;
         lock (gate)
         {
@@ -282,7 +286,8 @@ public sealed class ClaudeStrategist : IStrategist
         {
             lastFailure = null;
         }
-        return new StrategistProposal(intent, cost, raw);
+        // A refinement names the plan it refines, so the scheduler drops it if that plan ended while it was in flight.
+        return new StrategistProposal(intent, cost, raw, options.Mode == StrategistMode.Refine ? context.ActiveIntent!.IntentId : null);
     }
 
     /// <summary>

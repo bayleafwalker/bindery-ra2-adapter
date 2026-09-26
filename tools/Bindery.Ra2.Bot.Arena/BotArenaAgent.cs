@@ -67,6 +67,8 @@ public sealed class BotArenaAgent : IArenaAgent
         Stats.ProposalsFailed = (int)m.ProposalsFailed;
         // Proposals, invalid plans, lateness and cost come from the log, split by role (see DecisionLogMetrics).
         DecisionLogMetrics.Apply(Stats, log.Records);
+        // The arm's model is the one it is configured with; the models that served each reply are in ServedBy.
+        Stats.Model ??= ClaudeStrategists.Select(static c => c.Options.ResolvedModel).FirstOrDefault();
         CountDistillation();
         Analysis.PostGameReport analysis = Analysis.PostGameReport.Build(log.Records);
         Stats.ShadowCompared = analysis.Shadow.Compared;

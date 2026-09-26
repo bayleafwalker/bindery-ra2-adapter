@@ -55,6 +55,10 @@ public static class IntentComposer
         return intent with
         {
             PlaybookParameters = merged,
+            // The playbook's army attack condition tracks its attackArmyValue default: a strategist that tunes the
+            // parameter (the bandit, the tuner) moves the condition with it, or the old default would still gate the attack.
+            AttackConditions = AttackArmyThreshold.Retarget(
+                intent.AttackConditions, AttackArmyThreshold.Of(intent.PlaybookParameters), AttackArmyThreshold.Of(merged)),
             Objectives = objectives,
             Assumptions = Assumptions(features),
         };

@@ -12,12 +12,18 @@ namespace Bindery.Ra2.Bot.Tests.Tactics;
 internal sealed class FakeRulesDatabase(
     Dictionary<(string, string), double>? effectiveness = null,
     IEnumerable<string>? armedTypes = null,
-    IEnumerable<string>? unarmedTypes = null) : IRulesDatabase
+    IEnumerable<string>? unarmedTypes = null,
+    IEnumerable<string>? depotTypes = null) : IRulesDatabase
 {
     private readonly Dictionary<(string, string), double> effectiveness = effectiveness ?? [];
     private readonly SortedDictionary<string, UnitRule> byTypeId = new(
         (armedTypes ?? []).Select(Armed)
             .Concat((unarmedTypes ?? []).Select(static t => Armed(t) with { Damage = 0, Weapon = WeaponClass.None, Role = UnitRole.Harvester }))
+            // A service depot as the importer builds one: the Tech role, and the repair flag that says what it does.
+            .Concat((depotTypes ?? []).Select(static t => Armed(t) with
+            {
+                Kind = EntityKind.Building, Role = UnitRole.Tech, Queue = QueueKind.Building, Damage = 0, Weapon = WeaponClass.None, Speed = 0, Repairs = true,
+            }))
             .ToDictionary(static r => r.TypeId, StringComparer.Ordinal),
         StringComparer.Ordinal);
 

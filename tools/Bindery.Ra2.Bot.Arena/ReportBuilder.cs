@@ -290,7 +290,14 @@ public static class ReportBuilder
             bool fake = arm.Any(static a => a.Labels.Contains("llm-fake"));
             int n = Math.Max(1, arm.Count);
             string note = fake ? " (fake client: tokens estimated from prompt size, priced at the list rate; not a measurement)" : string.Empty;
-            sb.AppendLine($"- **{group.Key}** ({model ?? "no model"}): {tokensIn / n} in / {tokensOut / n} out tokens and ${F(usd / n, "0.0000")} per match, of which ${F(failedUsd / n, "0.0000")} on failed requests{note}.");
+            int unpriced = arm.Sum(static a => a.UnpricedRequests);
+            string unpricedNote = unpriced > 0 ? $"; {unpriced} requests on unpriced models are not in the cost" : string.Empty;
+            SortedDictionary<string, int> servedBy = new(StringComparer.Ordinal);
+            foreach ((string servingModel, int count) in arm.SelectMany(static a => a.ServedBy)) servedBy[servingModel] = servedBy.GetValueOrDefault(servingModel) + count;
+            string served = servedBy.Count > 1 || (servedBy.Count == 1 && servedBy.Keys.First() != model)
+                ? $"; served by {string.Join(", ", servedBy.Select(static kv => $"{kv.Key} x{kv.Value}"))}"
+                : string.Empty;
+            sb.AppendLine($"- **{group.Key}** ({model ?? "no model"}): {tokensIn / n} in / {tokensOut / n} out tokens and ${F(usd / n, "0.0000")} per match, of which ${F(failedUsd / n, "0.0000")} on failed requests{served}{unpricedNote}{note}.");
         }
         sb.AppendLine();
     }

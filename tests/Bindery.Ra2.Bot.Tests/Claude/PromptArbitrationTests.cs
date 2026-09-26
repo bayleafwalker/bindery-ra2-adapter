@@ -57,6 +57,40 @@ public sealed class PromptArbitrationTests
     }
 
     [Fact]
+    public void A_fallback_placeholder_is_shown_as_yielding_at_once_not_as_a_commitment()
+    {
+        // The arbiter lets any primary proposal replace a fallback's intent immediately ("yield"); the prompt must
+        // not show the model a commitment window it would never meet.
+        IntentArbiter arbiter = new(new FakePlaybooks());
+        Assert.Equal(ArbitrationOutcome.Activated, arbiter.Offer(new ValidationResult(true, Intent("fb", "allied-boom", StrategicPosture.Boom, 0), []), Calm(0), ProposalRole.Fallback).Outcome);
+        StrategistContext context = Context(arbiter, 10) with { ActiveRole = arbiter.ActiveRole, ActiveSince = arbiter.ActiveSince };
+
+        JsonElement active = Situation(context).GetProperty("activeIntent");
+        Assert.True(active.GetProperty("placeholder").GetBoolean());
+        Assert.Equal(0, active.GetProperty("minCommitRemainingSeconds").GetDouble());
+        Assert.Contains("activeIntent.placeholder", IntentPromptBuilder.SystemPrompt(StrategistMode.Strategic), StringComparison.Ordinal);
+        Assert.Equal(ArbitrationOutcome.Activated, arbiter.Preview(new ValidationResult(true, Intent("b", "allied-harass", StrategicPosture.Pressure, 10), []), Calm(10)).Outcome);
+
+        // A primary's own plan keeps its window, measured on the arbiter's clock.
+        IntentArbiter primary = new(new FakePlaybooks());
+        Offer(primary, Intent("a", "allied-boom", StrategicPosture.Boom, 0), 0);
+        JsonElement committed = Situation(Context(primary, 10) with { ActiveRole = primary.ActiveRole, ActiveSince = primary.ActiveSince }).GetProperty("activeIntent");
+        Assert.False(committed.GetProperty("placeholder").GetBoolean());
+        Assert.Equal(35, committed.GetProperty("minCommitRemainingSeconds").GetDouble());
+    }
+
+    [Fact]
+    public void The_commitment_clock_is_the_arbiters_even_past_its_bounded_history()
+    {
+        // ActiveSince is the arbiter's own clock; a history walk can only see the entries the arbiter kept.
+        IntentArbiter arbiter = new(new FakePlaybooks());
+        Offer(arbiter, Intent("a", "allied-boom", StrategicPosture.Boom, 0), 0);
+        StrategistContext context = Context(arbiter, 30) with { History = [], ActiveRole = arbiter.ActiveRole, ActiveSince = arbiter.ActiveSince };
+
+        Assert.Equal(30, Situation(context).GetProperty("activeIntent").GetProperty("secondsActive").GetDouble());
+    }
+
+    [Fact]
     public void History_collapses_renewals_so_earlier_plan_changes_stay_visible()
     {
         IntentArbiter arbiter = new(new FakePlaybooks());

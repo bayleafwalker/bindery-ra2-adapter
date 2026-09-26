@@ -2,6 +2,7 @@
 using Bindery.Ra2.Bot.Arbitration;
 using Bindery.Ra2.Bot.Claude;
 using Bindery.Ra2.Bot.Playbooks;
+using Bindery.Ra2.Bot.Strategy;
 using Xunit;
 
 namespace Bindery.Ra2.Bot.Tests.Claude;
@@ -21,6 +22,22 @@ public sealed class AttackThresholdTests
         Playbook playbook = Playbooks.All.Single(static p => p.Id == "allied-grizzly-timing");
         StrategicIntent intent = PlaybookIntents.FromPlaybook(playbook, features, "grizzly/1", source, 120, 0.7);
         return intent with { PlaybookParameters = new Dictionary<string, double> { ["attackArmyValue"] = attackArmyValue } };
+    }
+
+    [Fact]
+    public void A_deterministic_strategist_that_tunes_the_parameter_moves_the_condition_with_it()
+    {
+        // The bandit and the tuner set attackArmyValue through IntentComposer; the playbook's frozen condition
+        // must not keep gating the attack at the old default.
+        StrategicFeatures features = ClaudeFixtures.Features();
+        Playbook playbook = Playbooks.All.Single(static p => p.Id == "allied-grizzly-timing");
+
+        StrategicIntent tuned = IntentComposer.Compose(playbook, features, "bandit/1", IntentSource.Bandit, 0.6, "tuned",
+            parameters: new Dictionary<string, double> { ["attackArmyValue"] = 900 });
+        StrategicIntent untouched = IntentComposer.Compose(playbook, features, "bandit/2", IntentSource.Bandit, 0.6, "default");
+
+        Assert.Equal(900, Assert.Single(tuned.AttackConditions, static c => c.Metric == ConditionMetric.OwnArmyValue).Threshold);
+        Assert.Equal(playbook.AttackConditions, untouched.AttackConditions);
     }
 
     [Fact]
@@ -52,6 +69,8 @@ public sealed class AttackThresholdTests
         StrategistProposal? refined = await refiner.ProposeAsync(context);
 
         Assert.NotNull(refined);
+        // A refinement names the plan it refines, so the scheduler can drop it if that plan ends first.
+        Assert.Equal(active.IntentId, refined.RefinesIntentId);
         Assert.Equal(900, refined.Intent.PlaybookParameters["attackArmyValue"]);
         Assert.Equal(900, Assert.Single(refined.Intent.AttackConditions, static c => c.Metric == ConditionMetric.OwnArmyValue).Threshold);
     }

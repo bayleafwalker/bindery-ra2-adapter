@@ -79,7 +79,32 @@ public static class PriceTable
         return ((input * price.InputPerMTok) + (outputTokens * price.OutputPerMTok)) / 1_000_000.0;
     }
 
-    /// <summary>USD for one proposal's <see cref="ProposalCost"/>; null when its model is unknown.</summary>
-    public static double? CostUsd(ProposalCost cost) =>
-        CostUsd(cost.Model, cost.InputTokens, cost.OutputTokens, cost.CacheReadTokens);
+    /// <summary>
+    /// USD for one proposal's <see cref="ProposalCost"/>: its per-attempt price when the strategist computed one,
+    /// otherwise every token at the served model's rate; null when that model is unknown.
+    /// </summary>
+    public static double? CostUsd(ProposalCost cost)
+    {
+        ArgumentNullException.ThrowIfNull(cost);
+        return cost.Usd ?? CostUsd(cost.Model, cost.InputTokens, cost.OutputTokens, cost.CacheReadTokens, cost.CacheCreationTokens);
+    }
+
+    /// <summary>
+    /// USD for a request's billed attempts, each at its own model's rate (an attempt that names no model is priced
+    /// as <paramref name="servedBy"/>); null when there are no per-attempt figures or any attempt's model is unknown.
+    /// </summary>
+    public static double? CostUsd(IReadOnlyList<ModelAttemptUsage>? attempts, string? servedBy)
+    {
+        if (attempts is not { Count: > 0 }) return null;
+        double total = 0;
+        foreach (ModelAttemptUsage attempt in attempts)
+        {
+            if (CostUsd(attempt.Model ?? servedBy, attempt.InputTokens, attempt.OutputTokens, attempt.CacheReadTokens, attempt.CacheCreationTokens) is not { } usd)
+            {
+                return null;
+            }
+            total += usd;
+        }
+        return total;
+    }
 }

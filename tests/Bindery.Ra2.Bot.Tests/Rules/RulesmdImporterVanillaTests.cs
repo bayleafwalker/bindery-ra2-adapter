@@ -115,6 +115,7 @@ public sealed class RulesmdImporterVanillaTests
     TechLevel=3
     Cost=800
     Prerequisite=factory,gacnst
+    UnitRepair=yes
 
     [E1]
     Owner=British,French,Germans,Americans,Alliance
@@ -299,6 +300,25 @@ public sealed class RulesmdImporterVanillaTests
         Assert.Contains(depot.Prerequisites, g => g.SequenceEqual(["GACNST"]));
         RulesDatabase db = Database(Document);
         Assert.True(db.CanBuild(Faction.Allied, new HashSet<string> { "GACNST", "GAWEAP" }, "GADEPT"));
+    }
+
+    [Fact]
+    public void A_service_depot_is_marked_as_repairing_whatever_its_role()
+    {
+        UnitRule depot = Unit("GADEPT");
+        Assert.True(depot.Repairs);
+        Assert.Equal(UnitRole.Tech, depot.Role);
+        Assert.DoesNotContain(Document.Units, u => u.Repairs && u.TypeId != "GADEPT");
+    }
+
+    [Fact]
+    public void Factories_declare_the_queues_they_produce_for()
+    {
+        Assert.Equal([QueueKind.Building, QueueKind.Defense], Unit("GACNST").Produces!);
+        Assert.Equal([QueueKind.Infantry], Unit("GAPILE").Produces!);
+        Assert.Equal([QueueKind.Vehicle], Unit("GAWEAP").Produces!);
+        Assert.Equal([QueueKind.Naval], Unit("GAYARD").Produces!);
+        Assert.Null(Unit("GAPOWR").Produces);
     }
 
     [Fact]

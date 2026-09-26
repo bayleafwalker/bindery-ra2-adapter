@@ -49,6 +49,12 @@ public sealed record ArenaAgentStats
     /// <summary>Part of <see cref="Usd"/> billed by requests that failed (refusal, truncation, unparseable or unmappable reply).</summary>
     public double FailedRequestUsd { get; set; }
 
+    /// <summary>Billed requests per serving model (see <c>PlayerMatchMetrics.ServedBy</c>).</summary>
+    public Dictionary<string, int> ServedBy { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Billed requests on a model without a list price, left out of <see cref="Usd"/>.</summary>
+    public int UnpricedRequests { get; set; }
+
     public int Activations { get; set; }
     public int PostureFlips { get; set; }
     public int CommandsDropped { get; set; }

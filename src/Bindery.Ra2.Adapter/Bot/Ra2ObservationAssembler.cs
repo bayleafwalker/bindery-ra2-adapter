@@ -49,6 +49,9 @@ public sealed class Ra2ObservationAssembler
 
     private int credits;
     private PowerState power = new(0, 0);
+    private bool creditsSampled;
+    private bool powerSampled;
+    private readonly SortedSet<PlayerId> enemies = new(Comparer<PlayerId>.Create(static (a, b) => a.Value.CompareTo(b.Value)));
     private long latestFrame = -1;
     private long nextBoundary;
     private long lastFrameTime = -1;
@@ -202,6 +205,8 @@ public sealed class Ra2ObservationAssembler
             }
         }
 
+        if (owner != self) enemies.Add(owner);
+
         // A repeated upsert of a tracked entity is a state refresh (position, health, owner): the source re-sends it
         // to keep that state current, so it is not a second creation.
         bool tracked = entities.ContainsKey(id);
@@ -233,8 +238,9 @@ public sealed class Ra2ObservationAssembler
 
         // A kill is ours only when the payload names us as the killer; the event name alone says nothing about who
         // killed what, and an own unit's death is always a loss.
+        // A kill's owner is its killer (the contract's meaning, as in the simulator); a destruction's is the victim's owner.
         GameEventKind kind = killedByUs ? GameEventKind.EntityKilledByUs : GameEventKind.EntityDestroyed;
-        pendingEvents.Add(new GameEvent(kind, new GameTime(frame), id, removed?.Owner, removed?.TypeId, removed?.Position));
+        pendingEvents.Add(new GameEvent(kind, new GameTime(frame), id, killedByUs ? self : removed?.Owner, removed?.TypeId, removed?.Position));
     }
 
     private void ApplyCredits(NormalizedObservation observation)
@@ -243,6 +249,7 @@ public sealed class Ra2ObservationAssembler
         if (owner != self) return; // another player's economy sample; not our field to report missing
         if (!TryGetInt(observation.Payload, Ra2BotTelemetryContract.FieldCredits, observation, "credits_skipped", out int value)) return;
         credits = value;
+        creditsSampled = true;
     }
 
     private void ApplyPower(NormalizedObservation observation)
@@ -254,6 +261,7 @@ public sealed class Ra2ObservationAssembler
         ok &= TryGetInt(observation.Payload, Ra2BotTelemetryContract.FieldDrained, observation, "power_skipped", out int drained);
         if (!ok) return;
         power = new PowerState(produced, drained);
+        powerSampled = true;
     }
 
     private void ApplyPlayerDefeated(NormalizedObservation observation, long frame)
@@ -295,7 +303,15 @@ public sealed class Ra2ObservationAssembler
             [],
             [.. pendingEvents],
             visibleRegions,
-            map);
+            map,
+            // v1 telemetry reports no production queues, and credits and power only once sampled: the frame says so
+            // instead of presenting empty queues as idle and zeros as facts.
+            QueuesKnown: false,
+            CreditsKnown: creditsSampled,
+            PowerKnown: powerSampled,
+            // With a match setup that names allies or neutral houses, the frame names the enemies too: every other
+            // owner seen so far (the named ones never get here). Without one, null keeps "every other owner".
+            Enemies: nonHostileOwners.Count == 0 ? null : new HashSet<PlayerId>(enemies));
     }
 
     private void RecordMissing(NormalizedObservation observation, string field, string effect) =>

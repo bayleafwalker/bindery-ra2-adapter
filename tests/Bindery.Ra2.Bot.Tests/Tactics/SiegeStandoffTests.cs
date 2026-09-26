@@ -34,16 +34,37 @@ public sealed class SiegeStandoffTests
     private static OwnEntity Own(uint id, string type, UnitRole role, Cell cell) =>
         new(new EntityId(id), type, role, EntityKind.Vehicle, cell, Map.RegionOf(cell)!.Id, 1.0, 900, false);
 
-    private static BeliefSnapshot Belief(IReadOnlyList<OwnEntity> own, double seconds) => new(
+    /// <param name="towerInSight">Whether the tower is seen in this frame (its contact is fresh from now) or remembered from t=0.</param>
+    private static BeliefSnapshot Belief(IReadOnlyList<OwnEntity> own, double seconds, bool towerInSight) => new(
         1, GameTime.FromSeconds(seconds), ObservationMode.Belief, new PlayerId(0), Faction.Soviet, 5000, new PowerState(100, 50),
-        own, [Tower], [], [], new Dictionary<RegionId, GameTime>(), [], Map);
+        own, [towerInSight ? Tower with { LastSeenAt = GameTime.FromSeconds(seconds) } : Tower], [], [], new Dictionary<RegionId, GameTime>(), [], Map);
 
-    private static (IReadOnlyList<GameCommand> Commands, IRulesDatabase Rules) Tick(SquadController controller, FakeLeaseManager leases, IReadOnlyList<OwnEntity> own, double buffer, double seconds)
+    private static (IReadOnlyList<GameCommand> Commands, IRulesDatabase Rules) Tick(
+        SquadController controller, FakeLeaseManager leases, IReadOnlyList<OwnEntity> own, double buffer, double seconds, bool towerInSight = true)
     {
         IRulesDatabase rules = RulesDatabase.LoadEmbeddedFixture();
         foreach (OwnEntity e in own) leases.Grant(LeaseKey.Unit(e.Id), "squad:attack", GameTime.FromSeconds(seconds), 10);
         SquadOrder order = new("attack", ObjectiveKind.AttackRegion, Target, [.. own.Select(static e => e.Id)], Engage: true, RetreatBelowForceRatio: 0.6, StandoffBufferCells: buffer);
-        return (controller.Tick(Belief(own, seconds), [order], leases, rules), rules);
+        return (controller.Tick(Belief(own, seconds, towerInSight), [order], leases, rules), rules);
+    }
+
+    [Fact]
+    public void Artillery_in_position_does_not_target_a_tower_it_cannot_see_now()
+    {
+        // RA2 (and the simulator) refuse an attack order on a structure in fog: the artillery holds its stand-off
+        // cell with an attack-move, which fires on the tower as soon as anything shows it.
+        SquadController controller = new(new SquadControllerOptions());
+        FakeLeaseManager leases = new();
+        OwnEntity v3 = Own(1, "V3", UnitRole.Artillery, new Cell(0, 10));
+        (IReadOnlyList<GameCommand> approach, _) = Tick(controller, leases, [v3], buffer: 1, seconds: 0);
+        Cell standoff = Assert.IsType<MoveCommand>(Assert.Single(approach)).Destination;
+
+        OwnEntity inPosition = v3 with { Position = standoff, Region = Map.RegionOf(standoff)!.Id };
+        (IReadOnlyList<GameCommand> siege, _) = Tick(controller, leases, [inPosition], buffer: 1, seconds: 2, towerInSight: false);
+
+        Assert.Empty(siege.OfType<AttackCommand>());
+        AttackMoveCommand hold = Assert.Single(siege.OfType<AttackMoveCommand>());
+        Assert.Equal(standoff, hold.Destination);
     }
 
     [Fact]

@@ -1,6 +1,6 @@
 {
   "rulesetId": "bindery-sim-approx",
-  "provenance": "Hand-authored approximate fixture for the Bindery simulator and unit tests. Costs, build times, stats and the weapon-versus-armor matrix are plausible illustrative estimates chosen by the Bindery.Ra2.Bot.Rules package; they are NOT derived from retail Red Alert 2 / Yuri's Revenge game files and are NOT retail-accurate. BuildSeconds = max(2, cost * 0.06). Every structure lists its construction yard and every infantry type its barracks as a prerequisite, standing in for RA2's implicit producing factory; the Rocketeer (E3) and Flak Track (HTK) are dual-purpose (an anti-infantry ground weapon with the anti-air flag), as in RA2.",
+  "provenance": "Hand-authored approximate fixture for the Bindery simulator and unit tests. Costs, build times, stats and the weapon-versus-armor matrix are plausible illustrative estimates chosen by the Bindery.Ra2.Bot.Rules package; they are NOT derived from retail Red Alert 2 / Yuri's Revenge game files and are NOT retail-accurate. BuildSeconds = max(2, cost * 0.06). Every structure lists its construction yard and every infantry type its barracks as a prerequisite, standing in for RA2's implicit producing factory; the Rocketeer (E3) and Flak Track (HTK) are dual-purpose (an anti-infantry ground weapon with the anti-air flag), as in RA2. Service depots declare repairs and factories declare the queues they produce for (produces), so the simulator need not guess either from roles or prerequisites; Soviet aircraft (the Kirov) come from the war factory, Allied aircraft from the Airforce Command, as in RA2.",
   "units": [
     {
       "typeId": "AMCV",
@@ -323,7 +323,10 @@
       "speed": 0,
       "sight": 6,
       "antiAir": false,
-      "deployable": false
+      "deployable": false,
+      "produces": [
+        "Aircraft"
+      ]
     },
     {
       "typeId": "GADEPT",
@@ -354,7 +357,8 @@
       "speed": 0,
       "sight": 5,
       "antiAir": false,
-      "deployable": false
+      "deployable": false,
+      "repairs": true
     },
     {
       "typeId": "GAPATR",
@@ -416,7 +420,10 @@
       "speed": 0,
       "sight": 5,
       "antiAir": false,
-      "deployable": false
+      "deployable": false,
+      "produces": [
+        "Infantry"
+      ]
     },
     {
       "typeId": "GAPOWR",
@@ -577,7 +584,10 @@
       "speed": 0,
       "sight": 6,
       "antiAir": false,
-      "deployable": false
+      "deployable": false,
+      "produces": [
+        "Vehicle"
+      ]
     },
     {
       "typeId": "GAWEAT",
@@ -632,7 +642,11 @@
       "speed": 0,
       "sight": 8,
       "antiAir": false,
-      "deployable": false
+      "deployable": false,
+      "produces": [
+        "Building",
+        "Defense"
+      ]
     },
     {
       "typeId": "HARR",
@@ -830,7 +844,11 @@
       "speed": 0,
       "sight": 8,
       "antiAir": false,
-      "deployable": false
+      "deployable": false,
+      "produces": [
+        "Building",
+        "Defense"
+      ]
     },
     {
       "typeId": "NADEPT",
@@ -861,7 +879,8 @@
       "speed": 0,
       "sight": 5,
       "antiAir": false,
-      "deployable": false
+      "deployable": false,
+      "repairs": true
     },
     {
       "typeId": "NAFLAK",
@@ -924,7 +943,10 @@
       "speed": 0,
       "sight": 5,
       "antiAir": false,
-      "deployable": false
+      "deployable": false,
+      "produces": [
+        "Infantry"
+      ]
     },
     {
       "typeId": "NAMISL",
@@ -1208,7 +1230,11 @@
       "speed": 0,
       "sight": 6,
       "antiAir": false,
-      "deployable": false
+      "deployable": false,
+      "produces": [
+        "Vehicle",
+        "Aircraft"
+      ]
     },
     {
       "typeId": "PBOX",

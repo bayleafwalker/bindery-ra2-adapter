@@ -30,13 +30,23 @@ public sealed record DecisionExample(
 /// <param name="Roles">Arbiter roles to keep (<c>Primary</c>, <c>Fallback</c>, <c>Emergency</c>); null keeps all.</param>
 /// <param name="Sources">Intent sources to keep; null keeps all.</param>
 /// <param name="IncludeRenewals">Whether renewals (the same playbook re-affirmed on a later snapshot) are examples.</param>
+/// <param name="IncludeShadow">
+/// Whether a shadow strategist's validated answers (<see cref="DecisionRecordKinds.ShadowProposal"/> records, role
+/// <c>Shadow</c>) are examples too. They never took effect, but they are what the shadow strategist chose for the
+/// features it was asked with, which is what distilling it needs; an answer the validator rejected is not an
+/// example. Subject to <paramref name="Roles"/> like every other record.
+/// </param>
 public sealed record DatasetFilter(
     IReadOnlySet<string>? Roles = null,
     IReadOnlySet<IntentSource>? Sources = null,
-    bool IncludeRenewals = true)
+    bool IncludeRenewals = true,
+    bool IncludeShadow = false)
 {
     /// <summary>Primary-slot decisions only: what the configured strategist chose, not placeholders.</summary>
     public static DatasetFilter PrimaryOnly { get; } = new(new HashSet<string>(StringComparer.Ordinal) { "Primary" });
+
+    /// <summary>Shadow decisions only: what a shadow strategist (an LLM run alongside the selector) would have chosen.</summary>
+    public static DatasetFilter ShadowOnly { get; } = new(new HashSet<string>(StringComparer.Ordinal) { "Shadow" }, IncludeShadow: true);
 }
 
 /// <summary>
@@ -45,14 +55,19 @@ public sealed record DatasetFilter(
 /// writes with (at least) these fields — the contract this type reads:
 /// <list type="bullet">
 /// <item><c>featureVersion</c>: <see cref="FeatureVector.Version"/> of the vector below.</item>
-/// <item><c>features</c>: <see cref="FeatureVector.Encode"/> of the features the arbiter decided on.</item>
+/// <item><c>features</c>: <see cref="FeatureVector.Encode"/> of the features the strategist saw (was asked with),
+/// whose snapshot version and frame are <c>featuresSnapshotVersion</c> and <c>featuresFrame</c> when present (the
+/// example's <see cref="DecisionExample.SnapshotVersion"/> and <see cref="DecisionExample.Frame"/>; older logs fall
+/// back to the record's own, the activation's).</item>
 /// <item><c>faction</c>: the player's faction.</item>
 /// <item><c>intent</c>: the activated intent in canonical <c>IntentJson</c> form (playbook, posture, source, ...).</item>
 /// <item><c>role</c>, <c>renewal</c>: arbiter slot and whether the activation renewed the incumbent.</item>
 /// <item><c>mode</c> (optional): the <see cref="ObservationMode"/> of the features; when absent, the mode the
 /// caller passes to <see cref="FromDecisionLog"/> (the mode the run was played in).</item>
 /// </list>
-/// Records without a vector of the current version are skipped (and counted), never guessed.
+/// With <see cref="DatasetFilter.IncludeShadow"/>, <see cref="DecisionRecordKinds.ShadowProposal"/> records carry
+/// the same fields (and <c>accepted</c>, <c>wouldBe</c>); a shadow example is a renewal when the arbiter would have
+/// renewed it. Records without a vector of the current version are skipped (and counted), never guessed.
 /// </summary>
 public sealed class DecisionDataset
 {
@@ -63,6 +78,8 @@ public sealed class DecisionDataset
     public const string RoleField = "role";
     public const string RenewalField = "renewal";
     public const string ModeField = "mode";
+    public const string FeaturesSnapshotVersionField = "featuresSnapshotVersion";
+    public const string FeaturesFrameField = "featuresFrame";
 
     public DecisionDataset(IReadOnlyList<DecisionExample> examples, int skipped = 0)
     {
@@ -94,12 +111,16 @@ public sealed class DecisionDataset
         int skipped = 0;
         foreach (DecisionRecord record in records)
         {
-            if (!string.Equals(record.Kind, DecisionRecordKinds.IntentActivated, StringComparison.Ordinal)) continue;
+            bool shadow = string.Equals(record.Kind, DecisionRecordKinds.ShadowProposal, StringComparison.Ordinal);
+            if (!(shadow && filter.IncludeShadow) && !string.Equals(record.Kind, DecisionRecordKinds.IntentActivated, StringComparison.Ordinal)) continue;
             JsonElement data = record.Data;
             if (data.ValueKind != JsonValueKind.Object) { skipped++; continue; }
 
             string role = data.TryGetProperty(RoleField, out JsonElement r) && r.ValueKind == JsonValueKind.String ? r.GetString()! : string.Empty;
-            bool renewal = data.TryGetProperty(RenewalField, out JsonElement rn) && rn.ValueKind == JsonValueKind.True;
+            bool renewal = shadow
+                ? data.TryGetProperty("wouldBe", out JsonElement wb) && wb.ValueKind == JsonValueKind.String && wb.GetString() == nameof(Arbitration.ArbitrationOutcome.Renewed)
+                : data.TryGetProperty(RenewalField, out JsonElement rn) && rn.ValueKind == JsonValueKind.True;
+            if (shadow && !(data.TryGetProperty("accepted", out JsonElement accepted) && accepted.ValueKind == JsonValueKind.True)) continue;
             if (filter.Roles is not null && !filter.Roles.Contains(role)) continue;
             if (renewal && !filter.IncludeRenewals) continue;
 
@@ -121,9 +142,13 @@ public sealed class DecisionDataset
                 }
             }
 
+            long frame = data.TryGetProperty(FeaturesFrameField, out JsonElement ff) && ff.ValueKind == JsonValueKind.Number ? ff.GetInt64() : record.Time.Frame;
+            long snapshotVersion = data.TryGetProperty(FeaturesSnapshotVersionField, out JsonElement fv) && fv.ValueKind == JsonValueKind.Number
+                ? fv.GetInt64()
+                : record.SnapshotVersion;
             examples.Add(new DecisionExample(
                 version, vector, faction, intent!.PlaybookId, intent.Posture, intent.Source, role, renewal,
-                record.Time.Frame, record.SnapshotVersion, matchId, recordMode));
+                frame, snapshotVersion, matchId, recordMode));
         }
         return new DecisionDataset(examples, skipped);
     }

@@ -51,6 +51,32 @@ public sealed class DecisionLogMetricsTests
         Assert.Equal(3 * stats.FailedRequestUsd, stats.Usd, 9);
     }
 
+    [Fact]
+    public void Cost_counts_cache_writes_prices_each_request_as_billed_and_keeps_the_serving_models_apart()
+    {
+        ProposalCost cacheWrite = new(4, 1000, 100, 0, "claude-sonnet-5", CacheCreationTokens: 50_000);
+        // A fallback-served reply whose declined attempt the strategist priced at its own model's rate.
+        ProposalCost fallbackServed = new(4, 1000, 100, 0, "claude-opus-4-8", Usd: 0.5);
+        ProposalCost unpriced = new(4, 1000, 100, 0, "claude-unknown-9");
+        DecisionRecord[] records =
+        [
+            R(DecisionRecordKinds.Proposal, new { role = "Primary", strategistId = "claude", latencyFrames = 60, cost = fallbackServed }),
+            R(DecisionRecordKinds.Proposal, new { role = "Primary", strategistId = "claude", latencyFrames = 60, cost = cacheWrite }),
+            R(DecisionRecordKinds.ProposalFailed, new { strategist = "claude", code = "parse_failed", cost = unpriced }),
+        ];
+        ArenaAgentStats stats = new();
+
+        DecisionLogMetrics.Apply(stats, records);
+
+        Assert.Equal(3 * 1000 + 50_000, stats.TokensIn);
+        double expected = 0.5 + Bindery.Ra2.Bot.Claude.PriceTable.CostUsd("claude-sonnet-5", 1000, 100, 0, 50_000)!.Value;
+        Assert.Equal(expected, stats.Usd, 12);
+        Assert.Equal(1, stats.UnpricedRequests);
+        // The serving models are tallied; none of them relabels the arm.
+        Assert.Null(stats.Model);
+        Assert.Equal(new Dictionary<string, int> { ["claude-opus-4-8"] = 1, ["claude-sonnet-5"] = 1, ["claude-unknown-9"] = 1 }, stats.ServedBy);
+    }
+
     // End to end: every llm proposal waits the fixed simulated latency, so the arm's lateness can never be below it,
     // however many instant fallback proposals the match also had.
     [Fact]

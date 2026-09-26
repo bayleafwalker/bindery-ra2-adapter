@@ -33,10 +33,19 @@ public sealed record ModelRequest(
     bool ServerFallbacks);
 
 /// <summary>Token accounting for one reply, as reported by the API.</summary>
-public sealed record ModelUsage(long InputTokens, long OutputTokens, long CacheReadTokens, long CacheCreationTokens)
+/// <param name="Attempts">
+/// The billed attempts behind the totals, each with the model that ran it (a request re-served by a server-side
+/// fallback bills the declined attempt and the fallback, possibly on models with different prices); null when the
+/// API reported only totals.
+/// </param>
+public sealed record ModelUsage(long InputTokens, long OutputTokens, long CacheReadTokens, long CacheCreationTokens,
+    IReadOnlyList<ModelAttemptUsage>? Attempts = null)
 {
     public static readonly ModelUsage None = new(0, 0, 0, 0);
 }
+
+/// <summary>One billed attempt of a request: its model (null when the API did not name one) and its tokens.</summary>
+public sealed record ModelAttemptUsage(string? Model, long InputTokens, long OutputTokens, long CacheReadTokens, long CacheCreationTokens);
 
 /// <summary>
 /// A completed API response, before any interpretation. <see cref="StopReason"/>

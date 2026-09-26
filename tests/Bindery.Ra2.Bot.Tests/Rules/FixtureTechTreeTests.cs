@@ -39,6 +39,22 @@ public sealed class FixtureTechTreeTests
         }
     }
 
+    [Theory]
+    [MemberData(nameof(Fixtures))]
+    public void Service_depots_repair_and_every_unit_queue_has_a_declared_factory(string file)
+    {
+        RulesDatabase db = Load(file);
+        Assert.Equal(["GADEPT", "NADEPT"], db.All.Where(static r => r.Repairs).Select(static r => r.TypeId).Order(StringComparer.Ordinal));
+        foreach (UnitRule unit in db.All.Where(static r => r.Kind != EntityKind.Building))
+        {
+            // Some building of the unit's side declares its queue, so the simulator never has to guess a factory.
+            Assert.Contains(db.All, f => f.Kind == EntityKind.Building && f.Produces is { } q && q.Contains(unit.Queue)
+                && f.Factions.Intersect(unit.Factions).Any());
+        }
+        Assert.Contains(QueueKind.Aircraft, db.Get("GAAIRC").Produces!);
+        Assert.Contains(QueueKind.Aircraft, db.Get("NAWEAP").Produces!);
+    }
+
     [Fact]
     public void WithoutAConstructionYard_NoStructureIsBuildable()
     {

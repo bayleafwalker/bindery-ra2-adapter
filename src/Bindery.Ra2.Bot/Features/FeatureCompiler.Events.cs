@@ -21,7 +21,7 @@ public sealed partial class FeatureCompiler
                     HandleEntityDestroyed(snapshot, evt, events);
                     break;
                 case GameEventKind.EntityKilledByUs:
-                    HandleEntityKilledByUs(evt);
+                    HandleEntityKilledByUs(snapshot, evt);
                     break;
                 case GameEventKind.UnderAttack:
                     HandleUnderAttack(snapshot, evt, events);
@@ -51,13 +51,14 @@ public sealed partial class FeatureCompiler
     }
 
     /// <summary>
-    /// Adds the victim's cost to the kills tally. The event's owner is not a reliable "who killed" field (the
-    /// simulator names the killer, the RA2 assembler the victim), and oracle frames carry the opponent's kill events
-    /// too, so the one check that holds under every producer is that the victim was never one of our own entities:
-    /// our own dead are losses (<see cref="HandleEntityDestroyed"/>), never kills.
+    /// Adds the victim's cost to the kills tally. The event's owner is the killer (<see cref="GameEvent.Owner"/>), so
+    /// another player's kill (an oracle stream, a hand-built frame) is not ours; and as a second guard that holds even
+    /// for a producer that got the owner wrong, a victim that was one of our own entities is a loss
+    /// (<see cref="HandleEntityDestroyed"/>), never a kill.
     /// </summary>
-    private void HandleEntityKilledByUs(GameEvent evt)
+    private void HandleEntityKilledByUs(BeliefSnapshot snapshot, GameEvent evt)
     {
+        if (evt.Owner is { } killer && killer != snapshot.Self) return;
         if (evt.Entity is { } id && ownEntityMemory.ContainsKey(id)) return;
         if (evt.TypeId is { } typeId && rules.TryGet(typeId, out UnitRule rule)) cumulativeKillsValue += rule.Cost;
     }
