@@ -107,9 +107,16 @@ nix shell nixpkgs#dotnet-sdk_8 -c dotnet run --project tools/Bindery.Ra2.Bot.Are
 ```
 
 Arms: `selector`, `bandit`, `llm-shadow`, `llm`, `llm+fast`, `distilled`
-(`--arms all`); opponents: `rush`, `turtle`, `tech`, `harass`, `balanced`
-(`--opponents all`); maps: `training`, `heldout` or `all`. Every side is a full
-`BotRuntime`; the arm plays Allied on odd seeds and Soviet on even ones.
+(`--arms all`); opponents (`--opponents all`): the independent scripted AI
+`ai-rush`, `ai-balanced`, `ai-turtle`, `ai-air` (optionally `:easy`, `:medium`,
+`:hard`; default hard; `src/Bindery.Ra2.Bot.Sim/Opponents`, no code shared with
+the bot's planner), and the pinned-playbook styles `rush`, `turtle`, `tech`,
+`harass`, `balanced`, which run a frozen copy of the bot's stack as of commit
+7f3e2c7 (`tools/Bindery.Ra2.Bot.Baseline`) so they stay a stationary benchmark
+(`live-<style>` runs the style on the live stack); maps: `training`, `heldout`
+or `all`. The arm is a full `BotRuntime` and plays Allied on odd seeds and
+Soviet on even ones. `--trace <dir>` writes a per-match diagnostic (state every
+10 s, destroyed entities, the arm's decision log).
 `--oracle` gives the arm full-state frames (results are labelled), and
 `--dataset <file>` trains the distilled arm on an exported dataset (otherwise on
 the run's selector decisions). The output directory holds `results.json`,
