@@ -17,12 +17,14 @@ public sealed class HarvesterSafetyController(HarvesterSafetyOptions options) : 
     {
         ArgumentNullException.ThrowIfNull(belief);
         ArgumentNullException.ThrowIfNull(leases);
+        ArgumentNullException.ThrowIfNull(rules);
 
         List<EnemyContact> combatContacts = belief.Enemies
             .Where(e => !e.ConfirmedDestroyed &&
                         e.Confidence >= options.MinConfidence &&
                         belief.Time.SecondsSince(e.LastSeenAt) <= options.MaxContactAgeSeconds &&
-                        e.Kind is EntityKind.Infantry or EntityKind.Vehicle or EntityKind.Aircraft)
+                        e.Kind is EntityKind.Infantry or EntityKind.Vehicle or EntityKind.Aircraft &&
+                        CanHurt(e, rules))
             .ToList();
 
         List<OwnEntity> harvesters = belief.Own.Where(static e => e.Role == UnitRole.Harvester)
@@ -65,6 +67,14 @@ public sealed class HarvesterSafetyController(HarvesterSafetyOptions options) : 
         foreach (EntityId gone in lastOrder.Keys.Where(id => !harvesters.Any(h => h.Id == id)).ToList()) lastOrder.Remove(gone);
         return commands;
     }
+
+    /// <summary>
+    /// Only an armed contact is a threat: enemy harvesters, MCVs and engineers share ore fields with ours, and
+    /// fleeing them would cost income every trip. A type the rules do not know is assumed armed (a harvester is
+    /// worth more than the trip it loses by fleeing a false alarm).
+    /// </summary>
+    private static bool CanHurt(EnemyContact contact, IRulesDatabase rules) =>
+        !rules.TryGet(contact.TypeId, out UnitRule rule) || (rule.Weapon != WeaponClass.None && rule.Damage > 0);
 
     /// <summary>
     /// Orders are edge-triggered: a harvester is told to harvest a field, or to flee, only when that differs
