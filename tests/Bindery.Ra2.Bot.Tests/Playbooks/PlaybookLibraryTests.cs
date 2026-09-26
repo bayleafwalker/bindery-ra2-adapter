@@ -129,4 +129,51 @@ public sealed class PlaybookLibraryTests
         Assert.True(library.TryGet("custom-combined", out _));
         Assert.True(library.TryGet("allied-boom", out _));
     }
+
+    [Fact]
+    public void LoadJson_PlaybookMissingCollections_ThrowsInvalidDataNamingIt()
+    {
+        const string json = """{ "playbooks": [ { "id": "x", "description": "d", "posture": "Defend" } ] }""";
+        InvalidDataException error = Assert.Throws<InvalidDataException>(() => PlaybookLibrary.LoadJson(json));
+        Assert.Contains("'x'", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LoadJson_MissingPlaybooksArray_ThrowsInvalidData()
+    {
+        Assert.Throws<InvalidDataException>(() => PlaybookLibrary.LoadJson("{}"));
+    }
+
+    [Fact]
+    public void LoadJson_ParameterDefaultOutsideRange_ThrowsInvalidData()
+    {
+        const string json = """
+        { "playbooks": [ { "id": "p", "description": "d", "factions": ["Allied"], "posture": "Defend",
+          "budget": { "economy": 0.25, "army": 0.25, "tech": 0.25, "defense": 0.25 },
+          "composition": [], "techGoals": [], "attackConditions": [], "abortTriggers": [],
+          "parameters": [ { "name": "k", "min": 1, "max": 2, "default": 5, "description": "d" } ], "minCommitSeconds": 45 } ] }
+        """;
+        Assert.Throws<InvalidDataException>(() => PlaybookLibrary.LoadJson(json));
+    }
+
+    [Fact]
+    public void Constructor_DuplicateIds_Throws()
+    {
+        Playbook first = new(
+            "dup", "first", [Faction.Allied], StrategicPosture.Defend,
+            new BudgetShares(0.25, 0.25, 0.25, 0.25), [], [], [], [], [], 45);
+        ArgumentException error = Assert.Throws<ArgumentException>(() =>
+            new PlaybookLibrary([first, first with { Description = "second" }]));
+        Assert.Contains("dup", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AuthoredPlaybooks_DeclareEveryParameterThePlannerReads()
+    {
+        // The planner reads these names from the intent; the validator drops any name the active playbook does not
+        // declare, so a consumed name no playbook declares can never reach the planner.
+        HashSet<string> declared = PlaybookLibrary.LoadAuthored().All
+            .SelectMany(static p => p.Parameters).Select(static p => p.Name).ToHashSet(StringComparer.Ordinal);
+        Assert.All(Bindery.Ra2.Bot.Tuning.TuningKnobs.ConsumedPlaybookParameters, name => Assert.Contains(name, declared));
+    }
 }

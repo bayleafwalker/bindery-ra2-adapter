@@ -1,6 +1,6 @@
 {
   "rulesetId": "bindery-sim-approx",
-  "provenance": "Hand-authored approximate fixture for the Bindery simulator and unit tests. Costs, build times, stats and the weapon-versus-armor matrix are plausible illustrative estimates chosen by the Bindery.Ra2.Bot.Rules package; they are NOT derived from retail Red Alert 2 / Yuri's Revenge game files and are NOT retail-accurate. BuildSeconds = max(2, cost * 0.06).",
+  "provenance": "Hand-authored approximate fixture for the Bindery simulator and unit tests. Costs, build times, stats and the weapon-versus-armor matrix are plausible illustrative estimates chosen by the Bindery.Ra2.Bot.Rules package; they are NOT derived from retail Red Alert 2 / Yuri's Revenge game files and are NOT retail-accurate. BuildSeconds = max(2, cost * 0.06). Every structure lists its construction yard and every infantry type its barracks as a prerequisite, standing in for RA2's implicit producing factory; the Rocketeer (E3) and Flak Track (HTK) are dual-purpose (an anti-infantry ground weapon with the anti-air flag), as in RA2.",
   "units": [
     {
       "typeId": "AMCV",
@@ -162,6 +162,9 @@
       "power": 0,
       "prerequisites": [
         [
+          "GAPILE"
+        ],
+        [
           "GAAIRC"
         ]
       ],
@@ -169,7 +172,7 @@
       "strength": 75,
       "armor": "None",
       "damage": 15,
-      "weapon": "AntiAir",
+      "weapon": "AntiInfantry",
       "range": 5,
       "speed": 6.0,
       "sight": 6,
@@ -217,6 +220,9 @@
       "buildSeconds": 42.0,
       "power": 0,
       "prerequisites": [
+        [
+          "NAHAND"
+        ],
         [
           "NATECH"
         ]
@@ -302,6 +308,9 @@
       "power": -20,
       "prerequisites": [
         [
+          "GAYARD"
+        ],
+        [
           "GAWEAP"
         ]
       ],
@@ -330,6 +339,9 @@
       "power": -10,
       "prerequisites": [
         [
+          "GAYARD"
+        ],
+        [
           "GAWEAP"
         ]
       ],
@@ -357,6 +369,9 @@
       "buildSeconds": 60.0,
       "power": -50,
       "prerequisites": [
+        [
+          "GAYARD"
+        ],
         [
           "GAWEAP"
         ]
@@ -445,6 +460,9 @@
       "power": -75,
       "prerequisites": [
         [
+          "GAYARD"
+        ],
+        [
           "GAWEAP"
         ],
         [
@@ -506,6 +524,9 @@
       "buildSeconds": 90.0,
       "power": -30,
       "prerequisites": [
+        [
+          "GAYARD"
+        ],
         [
           "GAWEAP"
         ],
@@ -571,6 +592,9 @@
       "buildSeconds": 300.0,
       "power": -100,
       "prerequisites": [
+        [
+          "GAYARD"
+        ],
         [
           "GATECH"
         ]
@@ -690,7 +714,7 @@
       "strength": 400,
       "armor": "Light",
       "damage": 20,
-      "weapon": "AntiAir",
+      "weapon": "AntiInfantry",
       "range": 6,
       "speed": 6.0,
       "sight": 5,
@@ -822,6 +846,9 @@
       "power": -10,
       "prerequisites": [
         [
+          "NACNST"
+        ],
+        [
           "NAWEAP"
         ]
       ],
@@ -849,6 +876,9 @@
       "buildSeconds": 60.0,
       "power": -50,
       "prerequisites": [
+        [
+          "NACNST"
+        ],
         [
           "NAWEAP"
         ]
@@ -909,6 +939,9 @@
       "buildSeconds": 300.0,
       "power": -100,
       "prerequisites": [
+        [
+          "NACNST"
+        ],
         [
           "NATECH"
         ]
@@ -994,6 +1027,9 @@
       "power": -20,
       "prerequisites": [
         [
+          "NACNST"
+        ],
+        [
           "NAWEAP"
         ]
       ],
@@ -1054,6 +1090,9 @@
       "power": -5,
       "prerequisites": [
         [
+          "NACNST"
+        ],
+        [
           "NAHAND"
         ]
       ],
@@ -1081,6 +1120,9 @@
       "buildSeconds": 90.0,
       "power": -30,
       "prerequisites": [
+        [
+          "NACNST"
+        ],
         [
           "NAWEAP"
         ],
@@ -1112,6 +1154,9 @@
       "buildSeconds": 90.0,
       "power": -75,
       "prerequisites": [
+        [
+          "NACNST"
+        ],
         [
           "NAWEAP"
         ],
@@ -1178,6 +1223,9 @@
       "buildSeconds": 24.0,
       "power": -5,
       "prerequisites": [
+        [
+          "GAYARD"
+        ],
         [
           "GAPILE"
         ]
