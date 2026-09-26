@@ -254,8 +254,9 @@ public sealed class ScriptedSkirmishAi
     private void QueueArmy(ObservationFrame frame, List<ObservedEntity> own, int credits, List<GameCommand> commands)
     {
         HashSet<string> owned = OwnedBuildingTypes(own);
-        // Keep a small reserve while the base list still has an unaffordable step, so the army does not starve it.
-        int reserve = BaseComplete(own, frame) ? 0 : 600;
+        // Keep a reserve while the base list is unfinished, so the army does not starve it: at least 600, and the
+        // next missing step's cost, so a cheap infantry task force cannot keep the war factory from ever being paid.
+        int reserve = BaseComplete(own, frame) ? 0 : Math.Max(600, NextBaseStepCost(own, frame));
         Dictionary<string, int> free = own.Where(e => IsCombat(e.TypeId) && !attackers.Contains(e.Id))
             .GroupBy(e => e.TypeId, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
         foreach (TaskForceSlot slot in CurrentTaskForce())
@@ -402,6 +403,9 @@ public sealed class ScriptedSkirmishAi
 
     private bool BaseComplete(List<ObservedEntity> own, ObservationFrame frame) =>
         script.Build.All(s => Count(own, frame, s.TypeId) >= s.Count);
+
+    private int NextBaseStepCost(List<ObservedEntity> own, ObservationFrame frame) =>
+        script.Build.FirstOrDefault(s => Count(own, frame, s.TypeId) < s.Count) is { } step && rules.TryGet(step.TypeId, out UnitRule rule) ? rule.Cost : 0;
 
     private string? PowerType() => rules.All
         .Where(r => r.Factions.Contains(faction) && r.Role == UnitRole.Power && r.Kind == EntityKind.Building)

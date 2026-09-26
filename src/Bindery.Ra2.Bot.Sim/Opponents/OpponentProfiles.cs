@@ -47,7 +47,10 @@ public sealed record OpponentScript(
 /// <summary>
 /// The independent opponent styles (training <c>ai-rush</c>, <c>ai-balanced</c>, <c>ai-turtle</c>, <c>ai-air</c>; held-out <c>ai-horde</c>, <c>ai-armor</c>) per
 /// faction, written against the fixture's type ids. They share no code or tables with the bot's playbooks: they
-/// are deliberately a different author's view of how to play, so bot changes cannot move both sides.
+/// are deliberately a different author's view of how to play, so bot changes cannot move both sides. The training
+/// styles differ before the bot's first attack lands, or they would be one opponent under three names:
+/// <c>ai-rush</c> masses six infantry from the barracks for its first wave, and <c>ai-turtle</c> starts its
+/// defences once the refinery stands, before the war factory.
 /// </summary>
 public static class OpponentProfiles
 {
@@ -111,7 +114,7 @@ public static class OpponentProfiles
             "ai-rush" => new(
                 [new("GAPOWR", 1), new("GAPILE", 1), new("GAREFN", 1), new("GAWEAP", 1), new("GAPOWR", 2)],
                 [new("PBOX", 1)], 4,
-                [new("MTNK", 3), new("E1", 2)], 1, 10, 0, 1),
+                [new("E1", 6), new("MTNK", 2)], 1, 12, 0, 1),
             "ai-armor" => new(
                 [new("GAPOWR", 1), new("GAPILE", 1), new("GAREFN", 1), new("GAWEAP", 1), new("GAPOWR", 2), new("GAREFN", 2), new("GAWEAP", 2), new("GAPOWR", 3)],
                 [new("PBOX", 2), new("GAPATR", 2)], 1,
@@ -122,7 +125,7 @@ public static class OpponentProfiles
                 [new("E1", 10), new("MTNK", 4)], 2, 24, 360, 2),
             "ai-turtle" => new(
                 [new("GAPOWR", 1), new("GAPILE", 1), new("GAREFN", 1), new("GAWEAP", 1), new("GAPOWR", 2), new("GAREFN", 2), new("GAAIRC", 1), new("GAPOWR", 3), new("GATECH", 1), new("GAPOWR", 4), new("GAPOWR", 5)],
-                [new("PBOX", 2), new("GAPATR", 1), new("GAPRIS", 3)], 4,
+                [new("PBOX", 2), new("GAPATR", 1), new("GAPRIS", 3)], 2,
                 [new("MTNK", 4), new("SREF", 2), new("E1", 2)], 1, 12, 420, 2),
             "ai-air" => new(
                 [new("GAPOWR", 1), new("GAPILE", 1), new("GAREFN", 1), new("GAWEAP", 1), new("GAPOWR", 2), new("GAREFN", 2), new("GAAIRC", 1), new("GAPOWR", 3)],
@@ -138,7 +141,7 @@ public static class OpponentProfiles
             "ai-rush" => new(
                 [new("NAPOWR", 1), new("NAHAND", 1), new("NAREFN", 1), new("NAWEAP", 1), new("NAPOWR", 2)],
                 [new("NASNGN", 1)], 4,
-                [new("HTNK", 3), new("E2", 3)], 1, 10, 0, 1),
+                [new("E2", 6), new("HTNK", 2)], 1, 12, 0, 1),
             "ai-armor" => new(
                 [new("NAPOWR", 1), new("NAHAND", 1), new("NAREFN", 1), new("NAWEAP", 1), new("NAPOWR", 2), new("NAREFN", 2), new("NAWEAP", 2), new("NAPOWR", 3)],
                 [new("NASNGN", 2), new("NAFLAK", 2)], 1,
@@ -149,7 +152,7 @@ public static class OpponentProfiles
                 [new("E2", 12), new("HTNK", 4)], 2, 24, 360, 2),
             "ai-turtle" => new(
                 [new("NAPOWR", 1), new("NAHAND", 1), new("NAREFN", 1), new("NAWEAP", 1), new("NAPOWR", 2), new("NAREFN", 2), new("NARADR", 1), new("NAPOWR", 3), new("NATECH", 1), new("NAPOWR", 4), new("NAPOWR", 5)],
-                [new("NASNGN", 2), new("NAFLAK", 1), new("NATSLA", 3)], 4,
+                [new("NASNGN", 2), new("NAFLAK", 1), new("NATSLA", 3)], 2,
                 [new("HTNK", 4), new("APOC", 1), new("E2", 3)], 1, 12, 420, 2),
             "ai-air" => new(
                 [new("NAPOWR", 1), new("NAHAND", 1), new("NAREFN", 1), new("NAWEAP", 1), new("NAPOWR", 2), new("NAREFN", 2), new("NARADR", 1), new("NAPOWR", 3), new("NATECH", 1), new("NAPOWR", 4)],

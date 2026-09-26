@@ -52,7 +52,7 @@ public sealed class ScriptedSkirmishAiTests
         List<UnitRule> rules = [.. own.Select(e => Rules.Get(e.TypeId))];
         Assert.Contains(rules, r => r.Role == UnitRole.Economy);
         Assert.Contains(rules, r => r.Role == UnitRole.Harvester);
-        Assert.True(rules.Count(r => r.Kind == EntityKind.Building && r.Role == UnitRole.Production) >= 3, "yard, barracks and war factory");
+        Assert.True(rules.Count(r => r.Kind == EntityKind.Building && r.Role == UnitRole.Production) >= 3, "yard, barracks and war factory: " + string.Join(",", own.Select(e => e.TypeId)) + " cr=" + sim.Observe(Ai, ObservationMode.Oracle).Credits + " " + sim.Observe(Ai, ObservationMode.Oracle).Power + " q=" + string.Join(",", sim.Observe(Ai, ObservationMode.Oracle).Queues.SelectMany(q => q.Items.Select(i => q.Kind + ":" + i.TypeId + ":" + i.Ready))));
         Assert.True(ai.WavesLaunched >= 1, $"{style} launched no attack wave by 800 s");
         Assert.Equal(0, sim.RejectedCommandCount(Ai));
     }
