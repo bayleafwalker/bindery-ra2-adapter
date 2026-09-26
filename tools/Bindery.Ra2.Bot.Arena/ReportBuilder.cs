@@ -44,6 +44,7 @@ public static class ReportBuilder
         AppendStrategy(sb, matches);
         AppendCommands(sb, matches);
         AppendInferenceCost(sb, matches);
+        AppendDistillation(sb, matches);
         AppendLeakage(sb, matches, probes);
         return sb.ToString();
     }
@@ -186,6 +187,36 @@ public static class ReportBuilder
             int n = Math.Max(1, arm.Count);
             string note = fake ? " (fake client: tokens estimated from prompt size, priced at the list rate; not a measurement)" : string.Empty;
             sb.AppendLine($"- **{group.Key}** ({model ?? "no model"}): {tokensIn / n} in / {tokensOut / n} out tokens and ${F(usd / n, "0.0000")} per match{note}.");
+        }
+        sb.AppendLine();
+    }
+
+    /// <summary>
+    /// Step 7's trade-off: how often the distilled model had to ask the LLM, next to what a match cost, and what a
+    /// match of its teacher (the <c>llm</c> arm with the same qualifiers) cost in the same run.
+    /// </summary>
+    private static void AppendDistillation(StringBuilder sb, IReadOnlyList<MatchRecord> matches)
+    {
+        List<IGrouping<string, MatchRecord>> distilled = [.. matches
+            .Where(static m => m.Arm.StartsWith("distilled", StringComparison.Ordinal))
+            .GroupBy(static m => m.Arm)
+            .OrderBy(static g => g.Key, StringComparer.Ordinal)];
+        if (distilled.Count == 0) return;
+        sb.AppendLine("## Distillation");
+        sb.AppendLine();
+        sb.AppendLine("Decisions: primary requests the distilled strategist answered. Escalations: those it handed to the LLM (out of distribution, low confidence, or no trained playbook for the faction). Cost per match includes the escalations' tokens; the teacher column is the matching `llm` arm in this run.");
+        sb.AppendLine();
+        sb.AppendLine("| Arm | Decisions | Escalations (rate) | USD per match | Teacher USD per match |");
+        sb.AppendLine("|---|---|---|---|---|");
+        foreach (IGrouping<string, MatchRecord> group in distilled)
+        {
+            List<PlayerMatchMetrics> arm = [.. group.Select(static m => m.Players["arm"])];
+            int decisions = arm.Sum(static a => a.DistilledDecisions);
+            int escalations = arm.Sum(static a => a.DistilledEscalations);
+            string teacherArm = "llm" + group.Key["distilled".Length..];
+            List<PlayerMatchMetrics> teacher = [.. matches.Where(m => m.Arm == teacherArm).Select(static m => m.Players["arm"])];
+            string teacherCost = teacher.Count == 0 ? "n/a (not in this run)" : $"${F(teacher.Average(static t => t.Usd), "0.0000")}";
+            sb.AppendLine($"| {group.Key} | {decisions} | {escalations}/{decisions} ({Rate(escalations, decisions)}) | ${F(arm.Average(static a => a.Usd), "0.0000")} | {teacherCost} |");
         }
         sb.AppendLine();
     }

@@ -20,8 +20,9 @@ public sealed record SkippedArm(string Arm, string Reason);
 /// </summary>
 /// <remarks>
 /// Order: the distilled arm needs a dataset, so when <c>--dataset</c> is absent it trains on the
-/// selector arm's primary decisions from this run (running the selector's training-map matches
-/// first, unreported, if the selector arm was not requested) and says so in its label. The bandit's
+/// <c>llm</c> arm's primary decisions on the training maps of this run (the spec's "a dataset from
+/// <c>llm</c> runs"), running that arm's training-map matches first, unreported, if it was not requested,
+/// and says so in its label; it is never trained on the selector. The bandit's
 /// matches run sequentially in a fixed order because it learns across them; other arms run in
 /// parallel. A live LLM arm runs its first match alone and is skipped with the recorded reason if no
 /// credential resolved.
@@ -68,8 +69,11 @@ public static class Program
             context.DistillSource = Path.GetFileName(options.Dataset);
         }
 
-        // Distilled last, after its dataset source.
+        // Distilled last, after its teacher.
         arms = [.. arms.OrderBy(static a => a.Name == "distilled" ? 1 : 0)];
+        (ArmSpec Teacher, bool Reported)? teacher = context.DistillDataset is null && arms.Any(static a => a.Name == "distilled")
+            ? DistillTeacher(arms, options.LlmFake)
+            : null;
         List<MatchRecord> results = [];
         List<SkippedArm> skipped = [];
         List<LeakageProbeResult> probes = [];
@@ -77,10 +81,22 @@ public static class Program
 
         foreach (ArmSpec arm in arms)
         {
-            if (arm.Name == "distilled" && context.DistillDataset is null)
+            if (arm.Name == "distilled" && context.DistillDataset is null && teacher is { } t)
             {
-                context.DistillDataset = SelectorDataset(options, maps, rules, factory);
-                context.DistillSource = "selector decisions gathered in this run (training maps, unreported)";
+                if (context.LlmSkipReason is { } noTeacher)
+                {
+                    skipped.Add(new SkippedArm(arm.ToString(), $"no teacher: the llm arm could not run ({noTeacher})"));
+                    continue;
+                }
+                context.DistillDataset = TeacherDataset(t.Teacher, options, maps, rules, factory);
+                context.DistillSource = t.Reported
+                    ? "llm arm in this run (training maps)"
+                    : "llm arm run for this purpose (training maps, unreported)";
+                if (context.LlmSkipReason is { } failed)
+                {
+                    skipped.Add(new SkippedArm(arm.ToString(), $"no teacher: the llm arm could not run ({failed})"));
+                    continue;
+                }
             }
 
             List<(ArmSpec Arm, string Opponent, SimMap Map, string Split, int Seed)> jobs = Jobs(arm, options, maps);
@@ -122,12 +138,10 @@ public static class Program
             {
                 dataset.WriteNdjson(writer);
             }
-            if (arm.Name == "selector" && !arm.Oracle && context.DistillDataset is null && arms.Any(static a => a.Name == "distilled"))
+            if (teacher is { Reported: true } reportedTeacher && arm == reportedTeacher.Teacher && context.DistillDataset is null)
             {
-                context.DistillDataset = DecisionDataset.Merge(Enumerable.Range(0, jobs.Count)
-                    .Where(i => logs.ContainsKey(i) && jobs[i].Split == "training")
-                    .Select(i => DecisionDataset.FromDecisionLog(logs[i], DatasetFilter.PrimaryOnly, MatchId(jobs[i]))));
-                context.DistillSource = "selector decisions in this run (training maps)";
+                context.DistillDataset = dataset;
+                context.DistillSource = "llm arm in this run (training maps)";
             }
 
             LeakageProbeResult probe = LeakageProbe.Run(arm, maps[0].Map, 1, rules, factory);
@@ -149,13 +163,37 @@ public static class Program
         Console.WriteLine($"Wrote {ordered.Count} match results, {probes.Count} leakage probes and report.md to {options.OutDir} in {wall.Elapsed.TotalSeconds:0}s.");
     }
 
-    /// <summary>Runs the selector on the training maps (unreported) to gather decisions when the selector arm was not requested.</summary>
-    private static DecisionDataset SelectorDataset(CliOptions options, List<(SimMap Map, string Split)> maps, IRulesDatabase rules, BotAgentFactory factory)
+    /// <summary>
+    /// The arm whose decisions teach the distilled arm: the run's own belief-frame <c>llm</c> arm when there is one
+    /// (<c>Reported</c> true: its dataset is taken after it runs), else a belief-frame <c>llm</c> arm to run on the
+    /// training maps first, unreported. Never the selector: distilling one rule set into another says nothing
+    /// about step 7.
+    /// </summary>
+    public static (ArmSpec Teacher, bool Reported) DistillTeacher(IReadOnlyList<ArmSpec> arms, bool llmFake)
+    {
+        ArgumentNullException.ThrowIfNull(arms);
+        ArmSpec? inRun = arms.FirstOrDefault(static a => a.Name == "llm" && !a.Oracle);
+        return inRun is not null ? (inRun, true) : (new ArmSpec("llm", false, llmFake), false);
+    }
+
+    /// <summary>Runs the teacher on the training maps (unreported) and returns its primary decisions.</summary>
+    private static DecisionDataset TeacherDataset(ArmSpec teacher, CliOptions options, List<(SimMap Map, string Split)> maps, IRulesDatabase rules, BotAgentFactory factory)
     {
         List<(ArmSpec Arm, string Opponent, SimMap Map, string Split, int Seed)> jobs =
-            Jobs(new ArmSpec("selector", false, options.LlmFake), options, [.. maps.Where(static m => m.Split == "training")]);
+            Jobs(teacher, options, [.. maps.Where(static m => m.Split == "training")]);
         ConcurrentDictionary<int, IReadOnlyList<DecisionRecord>> logs = new();
-        Parallel.For(0, jobs.Count, i => RunJob(jobs[i], options, rules, factory, log => logs[i] = log));
+        if (options.LlmFake)
+        {
+            Parallel.For(0, jobs.Count, i => RunJob(jobs[i], options, rules, factory, log => logs[i] = log));
+        }
+        else
+        {
+            for (int i = 0; i < jobs.Count; i++)
+            {
+                int index = i;
+                RunJob(jobs[i], options, rules, factory, log => logs[index] = log);
+            }
+        }
         return DecisionDataset.Merge(Enumerable.Range(0, jobs.Count)
             .Where(logs.ContainsKey)
             .Select(i => DecisionDataset.FromDecisionLog(logs[i], DatasetFilter.PrimaryOnly, MatchId(jobs[i]))));

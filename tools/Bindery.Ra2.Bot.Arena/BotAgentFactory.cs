@@ -66,7 +66,8 @@ public sealed class ArenaRunContext
 /// <item><c>llm-shadow</c>: selector active, Claude strategist in the shadow slot.</item>
 /// <item><c>llm</c>: Claude strategist, selector fallback.</item>
 /// <item><c>llm+fast</c>: Claude strategist every 20 s plus Claude Refine (Haiku) in between, requested every 5 s.</item>
-/// <item><c>distilled</c>: <see cref="DistilledStrategist"/> over the run's dataset, escalating to a selector.</item>
+/// <item><c>distilled</c>: <see cref="DistilledStrategist"/> over the run's dataset (the <c>llm</c> arm's decisions),
+/// escalating out-of-distribution states to the Claude strategist (fake or live, behind the same latency).</item>
 /// <item>Opponents <c>rush</c>, <c>turtle</c>, <c>tech</c>, <c>harass</c>, <c>balanced</c>: <see cref="PinnedPlaybookStrategist"/>
 /// on the matching playbook for the side's faction.</item>
 /// </list>
@@ -171,7 +172,8 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
                     break;
                 case "distilled":
                     DecisionDataset dataset = context.DistillDataset ?? DecisionDataset.Empty;
-                    primary = new DistilledStrategist(dataset, new PlaybookSelector(id: "distilled-escalation"));
+                    // The proposal reserves the LLM for unusual states: escalations go to Claude, not to a rule set.
+                    primary = new DistilledStrategist(dataset, Llm(StrategistMode.Strategic, claude, labels), id: BotArenaAgent.DistilledId);
                     labels.Add($"distilled-from:{context.DistillSource ?? "none"} ({dataset.Count} examples)");
                     break;
                 default:

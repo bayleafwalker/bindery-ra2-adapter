@@ -93,10 +93,39 @@ public sealed class BotArenaAgent : IArenaAgent
                 }
             }
         }
+        CountDistillation();
         // Failed requests still cost tokens; the Claude strategist reports them through LastFailure only.
         Stats.DecisionLogHash = log.ComputeHash();
         onFinish?.Invoke(won, ownAssetValue, enemyAssetValue, this);
     }
+
+    /// <summary>
+    /// Distilled decisions and escalations, from the log: every primary request to the distilled strategist is a
+    /// decision; an escalation is one answered by an intent of another source (the inner strategist's own) or not
+    /// answered at all (the model itself always answers, so only an escalated request can fail).
+    /// </summary>
+    private void CountDistillation()
+    {
+        foreach (DecisionRecord record in log.Records)
+        {
+            if (record.Data.ValueKind != JsonValueKind.Object
+                || !record.Data.TryGetProperty("strategistId", out JsonElement id) || id.GetString() != DistilledId
+                || !record.Data.TryGetProperty("role", out JsonElement role) || role.GetString() != "Primary")
+            {
+                continue;
+            }
+            if (record.Kind == RuntimeRecordKinds.Request) Stats.DistilledDecisions++;
+            else if (record.Kind == DecisionRecordKinds.ProposalFailed) Stats.DistilledEscalations++;
+            else if (record.Kind == DecisionRecordKinds.Proposal
+                && record.Data.GetProperty("intent").GetProperty("source").GetString() != nameof(IntentSource.Distilled))
+            {
+                Stats.DistilledEscalations++;
+            }
+        }
+    }
+
+    /// <summary>The distilled strategist's id in decision logs.</summary>
+    public const string DistilledId = "distilled";
 
     public void Dispose() => runtime.Dispose();
 }

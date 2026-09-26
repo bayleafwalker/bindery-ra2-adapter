@@ -96,7 +96,7 @@ a contract change records it in its report instead of editing the file.
 | `llm-shadow` | `PlaybookSelector` active, `ClaudeStrategist` shadow | step 4 |
 | `llm` | `ClaudeStrategist`, selector fallback | step 5 |
 | `llm+fast` | `llm` plus `ClaudeStrategist(Mode=Refine, claude-haiku-4-5)` at 5 s | comparison only |
-| `distilled` | `DistilledStrategist` over a dataset from `llm` runs | step 7 |
+| `distilled` | `DistilledStrategist` over a dataset from `llm` runs, escalating to `ClaudeStrategist` | step 7; escalation rate and cost per match in the report |
 | `*-oracle` | any arm with oracle frames | diagnostic; labelled; `--arms x,x-oracle` or `--oracle both` runs both on the same jobs and reports belief − oracle per metric |
 
 LLM arms need `ANTHROPIC_API_KEY` (or an `ant auth` profile) and are skipped
@@ -278,4 +278,18 @@ Gaps an operator review found after integration, and how each was closed.
   belief 49/100, oracle 81/100; score −0.32 [−0.44, −0.21] (5 better, 37
   worse, Holm p < 0.0001), trade share −0.16, value destroyed −3138: in this
   simulator perception costs the selector about a third of a win per match.
+- **Distillation teacher and escalation.** Without `--dataset` the distilled arm
+  trained on the selector's decisions and escalated to a second selector. It now
+  trains on the `llm` arm's primary decisions on the run's training maps (that
+  arm runs first; if it was not requested it runs unreported, and without a
+  credential the distilled arm is skipped with the reason), and escalates to the
+  Claude strategist behind the same simulated latency (`DistilledStrategist`
+  forwards `OnFrame` to it, so an escalation completes on its latency frame and
+  the scheduler never waits for it inline). The log shows who decided (an
+  escalated proposal is Claude's, source `Llm`); the report's Distillation table
+  gives decisions, escalations and rate from the log next to cost per match and
+  the teacher's cost. First contested run (fake client, 100 matches each):
+  `llm` 32/100 at $1.13 per match (list price on estimated tokens), `distilled`
+  39/100 at $0.0028 per match, 10 escalations in 3,246 decisions (0.3%),
+  trained on 1,848 examples.
 

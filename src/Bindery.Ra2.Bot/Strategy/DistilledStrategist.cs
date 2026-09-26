@@ -32,8 +32,12 @@ public sealed record DistilledOptions(
 /// decision escalates. Escalations are counted in <see cref="Escalations"/>, and the
 /// escalated proposal is the inner strategist's own, unchanged, so the decision log
 /// shows who actually decided.
+/// <para>The inner strategist is normally the LLM (the proposal reserves it for unusual states), which answers
+/// through a game-time latency wrapper; this strategist forwards <see cref="OnFrame"/> to it, so an escalated
+/// request completes on the frame its latency elapses. Being frame-aware also keeps the scheduler from waiting
+/// for it inline; the model's own decisions are synchronous and are collected on the frame they are asked.</para>
 /// </remarks>
-public sealed class DistilledStrategist : IStrategist
+public sealed class DistilledStrategist : IStrategist, Runtime.IFrameAwareStrategist
 {
     private readonly IStrategist inner;
     private readonly DistilledOptions options;
@@ -75,6 +79,14 @@ public sealed class DistilledStrategist : IStrategist
     public string Id { get; }
 
     public IntentSource Source => IntentSource.Distilled;
+
+    /// <summary>The strategist escalations go to.</summary>
+    public IStrategist Inner => inner;
+
+    public void OnFrame(GameTime now)
+    {
+        if (inner is Runtime.IFrameAwareStrategist aware) aware.OnFrame(now);
+    }
 
     public IReadOnlyList<string> Classes => classes;
 

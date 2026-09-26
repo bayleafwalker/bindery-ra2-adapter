@@ -13,7 +13,8 @@ public sealed record ArmSpec(string Name, bool Oracle, bool LlmFake)
 {
     public override string ToString() => Oracle ? $"{Name}-oracle" : Name;
 
-    public bool UsesLlm => Name is "llm" or "llm-shadow" or "llm+fast";
+    /// <summary>Arms that call the LLM: the LLM arms, and <c>distilled</c>, which escalates unusual states to it.</summary>
+    public bool UsesLlm => Name is "llm" or "llm-shadow" or "llm+fast" or "distilled";
 }
 
 /// <summary>Per-agent counters the arena turns into the report's metrics; filled from the bot's metrics and decision log.</summary>
@@ -38,6 +39,12 @@ public sealed record ArenaAgentStats
     public string? Model { get; set; }
     public double Usd { get; set; }
     public string? DecisionLogHash { get; set; }
+
+    /// <summary>Primary requests the distilled strategist answered (its own model or by escalation).</summary>
+    public int DistilledDecisions { get; set; }
+
+    /// <summary>Of those, requests escalated to the inner (LLM) strategist.</summary>
+    public int DistilledEscalations { get; set; }
 
     /// <summary>Labels that qualify the results (<c>llm-fake</c>, <c>oracle</c>, <c>distilled-from:...</c>).</summary>
     public List<string> Labels { get; } = [];

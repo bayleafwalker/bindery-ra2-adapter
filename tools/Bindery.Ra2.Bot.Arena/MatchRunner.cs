@@ -34,6 +34,12 @@ public sealed record PlayerMatchMetrics(
     IReadOnlyList<string> Labels,
     double? FirstAttackSeconds = null)
 {
+    /// <summary>Primary requests the distilled strategist answered; 0 for other arms.</summary>
+    public int DistilledDecisions { get; init; }
+
+    /// <summary>Of those, requests escalated to the LLM.</summary>
+    public int DistilledEscalations { get; init; }
+
     public double TradeEfficiency => AssetValueLostByPlayer <= 0
         ? (AssetValueDestroyedByOpponent > 0 ? AssetValueDestroyedByOpponent : 1.0)
         : AssetValueDestroyedByOpponent / (double)AssetValueLostByPlayer;
@@ -225,6 +231,10 @@ public static class MatchRunner
             BuildingsBuilt: buildingsBuilt,
             PeakArmyValue: peakArmy,
             DecisionLogHash: stats.DecisionLogHash,
-            Labels: [.. stats.Labels]);
+            Labels: [.. stats.Labels])
+        {
+            DistilledDecisions = stats.DistilledDecisions,
+            DistilledEscalations = stats.DistilledEscalations,
+        };
     }
 }

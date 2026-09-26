@@ -135,7 +135,10 @@ sign-test p and Holm-adjusted p.
 side on the same jobs, and the report adds a per-metric belief − oracle table
 (the perception-bottleneck diagnostic); and
 `--dataset <file>` trains the distilled arm on an exported dataset (otherwise on
-the run's selector decisions). The output directory holds `results.json`,
+the `llm` arm's training-map decisions from the same run, running that arm first,
+unreported, if it was not requested); the distilled arm escalates
+out-of-distribution states to the Claude strategist (fake or live), and the
+report's Distillation table shows its escalation rate next to cost per match. The output directory holds `results.json`,
 `probes.json` (per-arm leakage probes and skipped arms), `report.md` and one
 `dataset-<arm>.ndjson` of training-map decisions per arm.
 
