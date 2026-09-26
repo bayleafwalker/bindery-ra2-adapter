@@ -52,11 +52,18 @@ public sealed record SchedulerTickReport(bool IntentChanged, int ResultsCollecte
 /// <list type="bullet">
 /// <item><b>Primary</b>: asked at start, every <see cref="SchedulerOptions.StrategicCadenceSeconds"/>, on a new
 /// event with severity ≥ <see cref="SchedulerOptions.MajorEventSeverity"/>, and when the arbiter requests a replan.
-/// Triggers that arrive while a request is in flight are remembered and served when it finishes.</item>
+/// Triggers that arrive while a request is in flight are remembered and served when it finishes, or at once when
+/// its answer could no longer be applied (overtaken by a severe event or past
+/// <see cref="SchedulerOptions.MaxProposalAgeSeconds"/>): that request is then cancelled and logged as
+/// <c>superseded</c>, so a slow or hung strategist cannot hold the slot until the timeout while the bot has no
+/// strategic answer to a base attack.</item>
 /// <item><b>Fallback</b> (deterministic): asked when there is no active intent, when the active intent is an
 /// emergency placeholder, or when the arbiter asks for it (expiry, abort).</item>
 /// <item><b>Shadow</b> (optional): asked alongside the primary with the same context; its results are validated
-/// and logged as <c>strategy.shadow</c> with what the arbiter <em>would</em> have done, and never applied.</item>
+/// and logged as <c>strategy.shadow</c> with what the arbiter <em>would</em> have done, and never applied. A shadow
+/// answer the primary path would have discarded as late is logged with <c>wouldBe</c> Refused and
+/// <c>wouldBeReason</c> <c>late:&lt;reason&gt;</c>, so shadow-vs-live comparisons do not credit it; it does not count
+/// in <see cref="BotMetrics.LateDiscarded"/>, which measures the live path.</item>
 /// </list>
 /// If after all that there is still no active intent, the emergency intent (a playbook's defaults) is validated
 /// and installed, so the planner always has direction. Requests unanswered after
@@ -152,6 +159,17 @@ public sealed class StrategyScheduler : IDisposable
 
         string? trigger = PrimaryTrigger(features);
         pendingTrigger ??= trigger;
+        if (pendingTrigger is not null && primaryRequest is not null && LateReason(primaryRequest, now) is not null)
+        {
+            // Its answer would be discarded as late anyway: free the slot for the request that is wanted now.
+            Request superseded = primaryRequest;
+            primaryRequest = null;
+            superseded.Cancellation.Cancel();
+            Observe(superseded.Task);
+            superseded.Cancellation.Dispose();
+            Failed(superseded, features, "superseded", LateReason(superseded, now));
+            collected++;
+        }
         if (pendingTrigger is not null && primaryRequest is null)
         {
             string reason = pendingTrigger;
@@ -305,7 +323,7 @@ public sealed class StrategyScheduler : IDisposable
                 // The fault is reported when the task is polled.
             }
         }
-        return new Request(role, strategist, task, cancellation, features.SnapshotVersion, features.Time, trigger);
+        return new Request(role, strategist, task, cancellation, features, trigger);
     }
 
     private int Poll(ref Request? slot, BeliefSnapshot belief, StrategicFeatures features)
@@ -368,10 +386,14 @@ public sealed class StrategyScheduler : IDisposable
         JsonElement intentJson = IntentJson.ToElement(intent);
         ValidationContext context = new(features, belief, rules, playbooks, arbiter.Active, arbiter.ActiveSince);
 
+        double age = now.SecondsSince(request.SnapshotTime);
+        string? late = LateReason(request, now);
         if (request.Role == ProposalRole.Shadow)
         {
             ValidationResult shadowResult = validator.Validate(intent, context);
-            ArbitrationDecision wouldBe = arbiter.Preview(shadowResult, features, ProposalRole.Primary);
+            ArbitrationDecision wouldBe = late is null
+                ? arbiter.Preview(shadowResult, features, ProposalRole.Primary)
+                : new ArbitrationDecision(ArbitrationOutcome.Refused, $"late:{late}", intent);
             metrics.ShadowProposals++;
             log.Write(new DecisionRecord(DecisionRecordKinds.ShadowProposal, now, features.SnapshotVersion, BotJson.ToElement(new
             {
@@ -404,10 +426,6 @@ public sealed class StrategyScheduler : IDisposable
             intent = intentJson,
         })));
 
-        double age = now.SecondsSince(request.SnapshotTime);
-        string? late = age > Options.MaxProposalAgeSeconds ? "age"
-            : request.Invalidator is not null ? "event"
-            : null;
         if (late is not null)
         {
             Late(request, intent, features, late, age, request.Invalidator);
@@ -415,7 +433,7 @@ public sealed class StrategyScheduler : IDisposable
         }
 
         ValidationResult result = validator.Validate(intent, context);
-        ArbitrationDecision? decision = result.Accepted ? arbiter.Offer(result, features, request.Role) : null;
+        ArbitrationDecision? decision = result.Accepted ? arbiter.Offer(result, features, request.Role, request.Features) : null;
         log.Write(new DecisionRecord(DecisionRecordKinds.Validation, now, features.SnapshotVersion, BotJson.ToElement(new
         {
             role = request.Role,
@@ -432,6 +450,12 @@ public sealed class StrategyScheduler : IDisposable
         if (stale is not null) Late(request, intent, features, $"validator:{stale.Code}", age, null);
         else metrics.Rejected++;
     }
+
+    /// <summary>Why an answer to <paramref name="request"/> arriving now would be discarded (invariant 2), or null.</summary>
+    private string? LateReason(Request request, GameTime now) =>
+        now.SecondsSince(request.SnapshotTime) > Options.MaxProposalAgeSeconds ? "age"
+        : request.Invalidator is not null ? "event"
+        : null;
 
     private void Late(Request request, StrategicIntent intent, StrategicFeatures features, string reason, double age, StrategicEvent? evt)
     {
@@ -488,17 +512,18 @@ public sealed class StrategyScheduler : IDisposable
         IStrategist strategist,
         Task<StrategistProposal?> task,
         CancellationTokenSource cancellation,
-        long snapshotVersion,
-        GameTime snapshotTime,
+        StrategicFeatures features,
         string trigger)
     {
+        /// <summary>The features the strategist was asked with (logged with an activation as what it saw).</summary>
+        public StrategicFeatures Features { get; } = features;
         public ProposalRole Role { get; } = role;
         public IStrategist Strategist { get; } = strategist;
         public Task<StrategistProposal?> Task { get; } = task;
         public CancellationTokenSource Cancellation { get; } = cancellation;
-        public long SnapshotVersion { get; } = snapshotVersion;
-        public GameTime SnapshotTime { get; } = snapshotTime;
-        public GameTime StartedAt { get; } = snapshotTime;
+        public long SnapshotVersion { get; } = features.SnapshotVersion;
+        public GameTime SnapshotTime { get; } = features.Time;
+        public GameTime StartedAt { get; } = features.Time;
         public string Trigger { get; } = trigger;
         public StrategicEvent? Invalidator { get; set; }
     }
