@@ -23,18 +23,30 @@ namespace Bindery.Ra2.Adapter.Bot;
 /// (string), <c>x</c>, <c>y</c> (cell coordinates), <c>health</c>,
 /// <c>maxHealth</c> (int). When <c>owner</c> is not the controlled player,
 /// <c>visible</c> (bool) is additionally required and must be <c>true</c> for
-/// the entity to appear in a frame: this is the fog boundary.
+/// the entity to appear in a frame: this is the fog boundary. The first
+/// upsert of an id is its <see cref="GameEventKind.EntityCreated"/>; a repeat
+/// upsert of a tracked id refreshes its position, health and owner without a
+/// new event, so own-entity state is only as current as the source re-sends
+/// it (v1 has no separate state event). An enemy upsert
+/// is a <i>sighting</i>: the enemy appears only in the frame whose window
+/// (since the previous frame) holds a sighting of it, so the source re-sends
+/// the upsert at least once per frame cadence for every enemy in sight, and
+/// sends it with <c>visible</c> false when the enemy leaves sight. Visible
+/// regions are derived from the controlled player's own entities only.
 /// </description></item>
 /// <item><description>
 /// <c>game.unit.destroyed</c>, <c>game.building.destroyed</c>,
 /// <c>game.unit.killed</c>: <c>frame</c>, <c>id</c>; optional <c>killer</c>
-/// (player id) and <c>visible</c> (bool). The entity is removed from tracked
+/// (player id); <c>visible</c> (bool), required for an enemy's removal unless
+/// <c>killer</c> is the controlled player. The entity is removed from tracked
 /// state. An own entity's removal is always an
 /// <see cref="GameEventKind.EntityDestroyed"/> (a loss). An enemy's removal is
-/// reported only when the entity is currently observed (an enemy upsert with
-/// <c>visible</c> false drops it from tracked state) and the payload does not
-/// say <c>visible</c> false; it is <see cref="GameEventKind.EntityKilledByUs"/>
-/// only when <c>killer</c> is the controlled player, else
+/// reported only when the entity was sighted and has not left sight since
+/// (a bare id never seen is never reported), and the player saw it: the
+/// payload says <c>visible</c> true, or <c>killer</c> is the controlled
+/// player. A missing <c>visible</c> is reported missing and the removal
+/// skipped. It is <see cref="GameEventKind.EntityKilledByUs"/> only when
+/// <c>killer</c> is the controlled player, else
 /// <see cref="GameEventKind.EntityDestroyed"/>. Owner, type and position come
 /// from tracked state.
 /// </description></item>

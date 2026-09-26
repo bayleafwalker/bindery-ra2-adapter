@@ -255,3 +255,8 @@ call.
   `IRa2TelemetrySource` and `IRa2CommandTransport` from the ra2yrcpp fork, and
   telemetry for production queues, ore and superweapon timers, which
   observation/v1 does not carry (the planner then treats queues as empty).
+  observation/v1 also has no separate entity-state event: an entity's
+  position, health and owner are only as current as the source's last upsert
+  of it, so the native source must re-send upserts for own units and, once per
+  frame cadence, for every enemy in sight (an enemy not re-sighted drops out of
+  the frame and lives on only in belief memory).

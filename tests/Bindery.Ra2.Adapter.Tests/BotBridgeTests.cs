@@ -243,7 +243,7 @@ public sealed class BotBridgeTests
 
         List<ObservationFrame> frames = [];
         frames.AddRange(assembler.Ingest(Event("game.unit.killed", new { frame = 3, id = 8, killer = 0 })));
-        frames.AddRange(assembler.Ingest(Event("game.unit.killed", new { frame = 15, id = 9 })));
+        frames.AddRange(assembler.Ingest(Event("game.unit.killed", new { frame = 15, id = 9, visible = true })));
 
         List<GameEvent> events = [.. frames.SelectMany(static f => f.Events)];
         Assert.Contains(events, static e => e.Kind == GameEventKind.EntityKilledByUs && e.Entity == new EntityId(8));
@@ -338,6 +338,41 @@ public sealed class BotBridgeTests
         Assert.Equal(2, transport.Sent.Count);
         Assert.Equal("deploy", transport.Sent[0].Kind);
         Assert.Equal("stop", transport.Sent[1].Kind);
+    }
+
+    private sealed class FailOnceTransport : IRa2CommandTransport
+    {
+        private bool failed;
+
+        public List<Ra2CommandEnvelope> Sent { get; } = [];
+
+        public Task SendAsync(Ra2CommandEnvelope envelope, CancellationToken cancellationToken = default)
+        {
+            if (!failed)
+            {
+                failed = true;
+                throw new IOException("transport down");
+            }
+            Sent.Add(envelope);
+            return Task.CompletedTask;
+        }
+    }
+
+    [Fact]
+    public async Task Ra2CommandSink_AFailedSend_KeepsTheEnvelope_AndARetrySendsEverythingInOrder()
+    {
+        FailOnceTransport transport = new();
+        Ra2CommandSink sink = new(transport);
+        sink.Submit(new StopCommand("op", [new EntityId(1)]));
+        sink.Submit(new StopCommand("op", [new EntityId(2)]));
+
+        await Assert.ThrowsAsync<IOException>(() => sink.FlushAsync());
+        Assert.Equal(2, sink.BufferedCount);
+
+        await sink.FlushAsync();
+
+        Assert.Equal(0, sink.BufferedCount);
+        Assert.Equal([1u, 2u], transport.Sent.Select(static e => e.Fields.GetProperty("units")[0].GetUInt32()));
     }
 
     // --- MapInfoLoader ---

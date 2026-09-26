@@ -92,6 +92,24 @@ public sealed class Ra2BotHostTests
     }
 
     [Fact]
+    public async Task Host_ends_on_a_match_end_between_cadence_boundaries()
+    {
+        IRulesDatabase rules = RulesDatabase.LoadEmbeddedFixture();
+        using BotRuntime runtime = StandardBot.Create(rules, PlaybookLibrary.LoadDefault(), new PlaybookSelector());
+        List<RawObservation> raws =
+        [
+            Raw(1, Ra2TelemetryEventTypes.CreditsSampled, new { frame = 15, owner = 0, credits = 5 }),
+            Raw(2, Ra2TelemetryEventTypes.MatchEnded, new { frame = 21 }),
+        ];
+        Ra2BotHost host = new(runtime, new Ra2ObservationAssembler(new PlayerId(0), Faction.Allied, Map), new Ra2CommandSink(new RecordingTransport()));
+
+        Ra2BotHostReport report = await host.RunAsync(new RecordedSource(raws));
+
+        Assert.True(report.MatchEnded);
+        Assert.Equal(2, report.Frames);
+    }
+
+    [Fact]
     public async Task Cancelling_the_run_returns_the_report_so_far_with_the_match_not_ended()
     {
         IRulesDatabase rules = RulesDatabase.LoadEmbeddedFixture();

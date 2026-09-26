@@ -22,7 +22,10 @@ namespace Bindery.Ra2.Adapter.Bot;
 /// included only when its payload says <c>visible == true</c>. When the
 /// payload lacks a visibility flag entirely, the entity is excluded and the
 /// omission is recorded, so engine-omniscient state can never leak into a
-/// <see cref="ObservationMode.Belief"/> frame through a telemetry gap.
+/// <see cref="ObservationMode.Belief"/> frame through a telemetry gap. A
+/// sighting counts only for the frame whose window holds it, visible regions
+/// come from own entities alone, and an enemy's removal is reported only when
+/// the player saw it (see <see cref="Ra2BotTelemetryContract"/>).
 /// </description></item>
 /// </list>
 ///
@@ -39,6 +42,7 @@ public sealed class Ra2ObservationAssembler
     private readonly Faction faction;
     private readonly MapInfo map;
     private readonly long frameCadence;
+    private readonly HashSet<PlayerId> nonHostileOwners;
     private readonly Dictionary<EntityId, EntityState> entities = [];
     private readonly List<GameEvent> pendingEvents = [];
     private readonly List<MissingFieldEntry> missingFields = [];
@@ -47,6 +51,8 @@ public sealed class Ra2ObservationAssembler
     private PowerState power = new(0, 0);
     private long latestFrame = -1;
     private long nextBoundary;
+    private long lastFrameTime = -1;
+    private bool matchEnded;
 
     /// <param name="self">The controlled player this assembler builds frames for.</param>
     /// <param name="faction">
@@ -57,7 +63,14 @@ public sealed class Ra2ObservationAssembler
     /// <param name="frameCadence">
     /// Frames between emitted <see cref="ObservationFrame"/>s. Must be positive.
     /// </param>
-    public Ra2ObservationAssembler(PlayerId self, Faction faction, MapInfo map, int frameCadence = GameTime.FramesPerSecond)
+    /// <param name="nonHostileOwners">
+    /// Players that are not enemies of the controlled one: allies in a team
+    /// game and the neutral/civilian/special houses. The bot's frame contract
+    /// treats every other owner as an enemy and v1 telemetry carries no
+    /// alliance field, so the caller supplies them from the match setup
+    /// (like <paramref name="faction"/>). Their entities never enter a frame.
+    /// </param>
+    public Ra2ObservationAssembler(PlayerId self, Faction faction, MapInfo map, int frameCadence = GameTime.FramesPerSecond, IEnumerable<PlayerId>? nonHostileOwners = null)
     {
         ArgumentNullException.ThrowIfNull(map);
         if (frameCadence <= 0) throw new ArgumentOutOfRangeException(nameof(frameCadence), frameCadence, "frame cadence must be positive");
@@ -65,6 +78,8 @@ public sealed class Ra2ObservationAssembler
         this.faction = faction;
         this.map = map;
         this.frameCadence = frameCadence;
+        this.nonHostileOwners = [.. nonHostileOwners ?? []];
+        if (this.nonHostileOwners.Contains(self)) throw new ArgumentException("the controlled player cannot be listed as a non-hostile owner", nameof(nonHostileOwners));
         nextBoundary = frameCadence;
     }
 
@@ -75,29 +90,53 @@ public sealed class Ra2ObservationAssembler
     /// Folds one normalized event into tracked state. Returns zero or more
     /// frames: normally zero (no cadence boundary crossed) or one, but more
     /// than one when a gap in telemetry frame numbers jumps past several
-    /// boundaries at once — each such filler frame carries no new events.
+    /// boundaries at once.
     /// </summary>
+    /// <remarks>
+    /// Boundaries strictly before the event's frame are emitted <i>before</i>
+    /// the event is applied, so a frame stamped with time T never carries
+    /// state or events from after T (belief would otherwise stamp a sighting
+    /// earlier than it happened, and event windows would see the future).
+    /// The frames emitted for a gap therefore hold the state as of the last
+    /// event before it and no new events; the event itself lands in the
+    /// first frame at or after its own time. <c>game.lifecycle.ended</c> is
+    /// the exception that ends the stream: it emits a final frame at once, and
+    /// every later event is ignored.
+    /// </remarks>
     public IReadOnlyList<ObservationFrame> Ingest(NormalizedObservation observation)
     {
         ArgumentNullException.ThrowIfNull(observation);
-        Apply(observation);
+        if (matchEnded) return []; // nothing after the end of the match is part of it
+        if (!TryGetLong(observation.Payload, Ra2BotTelemetryContract.FieldFrame, observation, "event_skipped", out long frame)) return [];
 
-        if (latestFrame < nextBoundary) return [];
         List<ObservationFrame> emitted = [];
-        while (latestFrame >= nextBoundary)
+        EmitBoundaries(frame - 1, emitted);
+        latestFrame = Math.Max(latestFrame, frame);
+        Apply(observation, frame);
+        EmitBoundaries(latestFrame, emitted);
+        if (matchEnded && pendingEvents.Count > 0)
+        {
+            // The match end is the last telemetry there will be, so waiting for the next boundary would hold it
+            // (and any defeat or destruction since the last boundary) back forever: flush a final frame now.
+            emitted.Add(BuildFrame(new GameTime(latestFrame)));
+            pendingEvents.Clear();
+        }
+        return emitted;
+    }
+
+    /// <summary>Emits one frame per cadence boundary at or before <paramref name="upTo"/>.</summary>
+    private void EmitBoundaries(long upTo, List<ObservationFrame> emitted)
+    {
+        while (upTo >= nextBoundary)
         {
             emitted.Add(BuildFrame(new GameTime(nextBoundary)));
             pendingEvents.Clear();
             nextBoundary += frameCadence;
         }
-        return emitted;
     }
 
-    private void Apply(NormalizedObservation observation)
+    private void Apply(NormalizedObservation observation, long frame)
     {
-        if (!TryGetLong(observation.Payload, Ra2BotTelemetryContract.FieldFrame, observation, "event_skipped", out long frame)) return;
-        latestFrame = Math.Max(latestFrame, frame);
-
         switch (observation.EventType)
         {
             case "game.unit.created":
@@ -120,6 +159,7 @@ public sealed class Ra2ObservationAssembler
                 break;
             case "game.lifecycle.ended":
                 pendingEvents.Add(new GameEvent(GameEventKind.MatchEnded, new GameTime(frame), null, null, null, null));
+                matchEnded = true;
                 break;
             default:
                 // Not yet part of bindery.ra2.bot-observation/v1; ignored, not reported missing.
@@ -139,6 +179,14 @@ public sealed class Ra2ObservationAssembler
         ok &= TryGetInt(payload, Ra2BotTelemetryContract.FieldMaxHealth, observation, "entity_excluded", out int maxHealth);
         if (!ok) return;
 
+        if (nonHostileOwners.Contains(owner))
+        {
+            // An ally or a neutral house is not an enemy contact; the frame contract has no place for it. An entity
+            // that changed hands to such an owner leaves tracked state too.
+            entities.Remove(id);
+            return;
+        }
+
         if (owner != self)
         {
             // Fog boundary: an enemy entity is included only when the payload
@@ -154,8 +202,11 @@ public sealed class Ra2ObservationAssembler
             }
         }
 
-        entities[id] = new EntityState(id, owner, typeId, position, health, maxHealth);
-        pendingEvents.Add(new GameEvent(GameEventKind.EntityCreated, new GameTime(frame), id, owner, typeId, position));
+        // A repeated upsert of a tracked entity is a state refresh (position, health, owner): the source re-sends it
+        // to keep that state current, so it is not a second creation.
+        bool tracked = entities.ContainsKey(id);
+        entities[id] = new EntityState(id, owner, typeId, position, health, maxHealth, frame);
+        if (!tracked) pendingEvents.Add(new GameEvent(GameEventKind.EntityCreated, new GameTime(frame), id, owner, typeId, position));
     }
 
     private void ApplyEntityRemoval(NormalizedObservation observation, long frame)
@@ -165,18 +216,23 @@ public sealed class Ra2ObservationAssembler
         JsonElement payload = observation.Payload;
         entities.Remove(id, out EntityState? removed);
         bool own = removed is { } r && r.Owner == self;
+        bool killedByUs = !own && payload.TryGetProperty(Ra2BotTelemetryContract.FieldKiller, out JsonElement k)
+            && k.ValueKind == JsonValueKind.Number && k.TryGetInt32(out int killer) && killer == self.Value;
         if (!own)
         {
-            // Fog boundary: an enemy's removal is reported only for an entity currently observed (it is dropped from
-            // tracked state when it goes out of sight) and not marked invisible by the payload itself.
+            // Fog boundary: an enemy's removal is reported only for an entity we have observed (never a bare id we
+            // never saw, and never one that went out of sight since), and only when the player saw it happen: the
+            // payload says visible, or we are the killer. A missing flag is a contract gap, recorded and not guessed.
             if (removed is null) return;
-            if (payload.TryGetProperty(Ra2BotTelemetryContract.FieldVisible, out JsonElement v) && v.ValueKind == JsonValueKind.False) return;
+            if (!killedByUs)
+            {
+                bool present = TryGetBool(payload, Ra2BotTelemetryContract.FieldVisible, observation, "removal_skipped", out bool visible);
+                if (!present || !visible) return;
+            }
         }
 
         // A kill is ours only when the payload names us as the killer; the event name alone says nothing about who
         // killed what, and an own unit's death is always a loss.
-        bool killedByUs = !own && payload.TryGetProperty(Ra2BotTelemetryContract.FieldKiller, out JsonElement k)
-            && k.ValueKind == JsonValueKind.Number && k.TryGetInt32(out int killer) && killer == self.Value;
         GameEventKind kind = killedByUs ? GameEventKind.EntityKilledByUs : GameEventKind.EntityDestroyed;
         pendingEvents.Add(new GameEvent(kind, new GameTime(frame), id, removed?.Owner, removed?.TypeId, removed?.Position));
     }
@@ -208,14 +264,22 @@ public sealed class Ra2ObservationAssembler
 
     private ObservationFrame BuildFrame(GameTime time)
     {
+        // Fog: an own entity is always observed; an enemy only when telemetry sighted it in this frame's window.
+        // A sighting from an earlier window is memory, which belief keeps and decays; the bridge must not present
+        // it as seen now.
         List<ObservedEntity> observedEntities = entities.Values
+            .Where(e => e.Owner == self || e.LastSightedFrame > lastFrameTime)
             .OrderBy(static e => e.Id.Value)
             .Select(static e => new ObservedEntity(e.Id, e.Owner, e.TypeId, e.Position, e.Health, e.MaxHealth))
             .ToList();
+        lastFrameTime = time.Frame;
 
+        // What the player sees is around its own units and buildings; where an enemy stands says nothing about
+        // whether that region is in sight (the enemy may be seen at the edge of our vision).
         HashSet<RegionId> visibleRegions = [];
         foreach (ObservedEntity entity in observedEntities)
         {
+            if (entity.Owner != self) continue;
             Region? region = map.RegionOf(entity.Position);
             if (region is not null) visibleRegions.Add(region.Id);
         }
@@ -242,16 +306,23 @@ public sealed class Ra2ObservationAssembler
         if (payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty(field, out JsonElement element) && element.ValueKind == JsonValueKind.Number)
         {
             if (element.TryGetInt64(out value)) return true;
-            if (element.TryGetDouble(out double d)) { value = (long)Math.Round(d); return true; }
+            if (element.TryGetDouble(out double d) && Math.Abs(d) < 9.2e18) { value = (long)Math.Round(d); return true; }
         }
         value = 0;
         RecordMissing(observation, field, effect);
         return false;
     }
 
+    // Narrowing casts are unchecked in C#, so an out-of-range payload value would wrap into a valid-looking one (an
+    // id aliasing another tracked entity, a health turning negative). It is a contract violation: recorded with an
+    // "_out_of_range" effect and the entity or event excluded, like a missing field.
     private bool TryGetInt(JsonElement payload, string field, NormalizedObservation observation, string effect, out int value)
     {
-        if (TryGetLong(payload, field, observation, effect, out long raw)) { value = (int)raw; return true; }
+        if (TryGetLong(payload, field, observation, effect, out long raw))
+        {
+            if (raw is >= int.MinValue and <= int.MaxValue) { value = (int)raw; return true; }
+            RecordMissing(observation, field, effect + " (out_of_range)");
+        }
         value = 0;
         return false;
     }
@@ -292,14 +363,18 @@ public sealed class Ra2ObservationAssembler
 
     private bool TryGetEntityId(JsonElement payload, string field, NormalizedObservation observation, string effect, out EntityId id)
     {
-        if (TryGetLong(payload, field, observation, effect, out long raw) && raw >= 0) { id = new EntityId((uint)raw); return true; }
+        if (TryGetLong(payload, field, observation, effect, out long raw))
+        {
+            if (raw is >= 0 and <= uint.MaxValue) { id = new EntityId((uint)raw); return true; }
+            RecordMissing(observation, field, effect + " (out_of_range)");
+        }
         id = default;
         return false;
     }
 
     private bool TryGetPlayerId(JsonElement payload, string field, NormalizedObservation observation, string effect, out PlayerId playerId)
     {
-        if (TryGetLong(payload, field, observation, effect, out long raw)) { playerId = new PlayerId((int)raw); return true; }
+        if (TryGetInt(payload, field, observation, effect, out int raw)) { playerId = new PlayerId(raw); return true; }
         playerId = default;
         return false;
     }
@@ -309,9 +384,16 @@ public sealed class Ra2ObservationAssembler
         bool hasX = TryGetDouble(payload, Ra2BotTelemetryContract.FieldX, observation, effect, out double x);
         bool hasY = TryGetDouble(payload, Ra2BotTelemetryContract.FieldY, observation, effect, out double y);
         if (!hasX || !hasY) { cell = default; return false; }
+        if (Math.Abs(x) > int.MaxValue || Math.Abs(y) > int.MaxValue)
+        {
+            RecordMissing(observation, Math.Abs(x) > int.MaxValue ? Ra2BotTelemetryContract.FieldX : Ra2BotTelemetryContract.FieldY, effect + " (out_of_range)");
+            cell = default;
+            return false;
+        }
         cell = new Cell((int)Math.Round(x), (int)Math.Round(y));
         return true;
     }
 
-    private sealed record EntityState(EntityId Id, PlayerId Owner, string TypeId, Cell Position, int Health, int MaxHealth);
+    /// <param name="LastSightedFrame">Frame of the latest upsert: for an enemy, the latest sighting.</param>
+    private sealed record EntityState(EntityId Id, PlayerId Owner, string TypeId, Cell Position, int Health, int MaxHealth, long LastSightedFrame);
 }

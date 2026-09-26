@@ -31,13 +31,19 @@ public sealed class Ra2CommandSink : ICommandSink
         buffer.Enqueue(ToEnvelope(command));
     }
 
-    /// <summary>Sends every buffered envelope, in submission order, then clears the buffer.</summary>
+    /// <summary>
+    /// Sends every buffered envelope, in submission order, then clears the buffer. An envelope leaves the buffer
+    /// only after the transport accepted it: when a send throws (an IO fault, or cancellation) the failed envelope
+    /// and everything behind it stay buffered, so the exception reaches the caller and a retry resends them in the
+    /// order the bot issued them instead of silently losing one order the planner believes went out.
+    /// </summary>
     public async Task FlushAsync(CancellationToken cancellationToken = default)
     {
         while (buffer.Count > 0)
         {
-            Ra2CommandEnvelope envelope = buffer.Dequeue();
+            Ra2CommandEnvelope envelope = buffer.Peek();
             await transport.SendAsync(envelope, cancellationToken).ConfigureAwait(false);
+            buffer.Dequeue();
         }
     }
 
