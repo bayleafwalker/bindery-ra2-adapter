@@ -142,7 +142,10 @@ public sealed class SkirmishSimulation
             state.PendingEvents.Clear();
             if (frameEvents.Count == 0) continue;
             HashSet<RegionId> visible = VisibleRegionsFor(state.Id);
-            state.PendingEvents.AddRange(frameEvents.Where(e => IsEventForPlayer(e, state.Id, visible)));
+            foreach (GameEvent gameEvent in frameEvents)
+            {
+                if (EventForPlayer(gameEvent, state.Id, visible) is { } delivered) state.PendingEvents.Add(delivered);
+            }
         }
 
         CheckVictory();
@@ -757,10 +760,16 @@ public sealed class SkirmishSimulation
     /// one it can hit (the region is the engagement zone, whatever the distance inside it), otherwise an enemy in
     /// another region within its weapon range in cells. The second rule is what lets long-range artillery bombard
     /// across a border, and a defense reach only as far as its range. Damage is applied per region of the target,
-    /// in region order, then target id order.
+    /// in region order, then target id order. Cross-border fire needs the target's region to be visible to the
+    /// attacker's owner, as RA2 cannot acquire a target in fog: otherwise a long-range unit would kill enemies its
+    /// owner never saw, and the kill event would tell the owner their type and cell.
     /// </summary>
     private void ResolveCombat()
     {
+        Dictionary<PlayerId, HashSet<RegionId>> visibleTo = [];
+        HashSet<RegionId> VisibleTo(PlayerId player) =>
+            visibleTo.TryGetValue(player, out HashSet<RegionId>? set) ? set : visibleTo[player] = VisibleRegionsFor(player);
+
         Dictionary<RegionId, List<SimEntity>> byRegion = [];
         foreach (SimEntity e in entities)
         {
@@ -776,7 +785,7 @@ public sealed class SkirmishSimulation
             foreach (SimEntity attacker in present.OrderBy(e => e.Id.Value))
             {
                 if (!rules.TryGet(attacker.TypeId, out UnitRule rule) || rule.Weapon == WeaponClass.None || rule.Range <= 0 || rule.Damage <= 0) continue;
-                SimEntity? target = ChooseTarget(attacker, rule, present) ?? ChooseTargetInRange(attacker, rule, alive);
+                SimEntity? target = ChooseTarget(attacker, rule, present) ?? ChooseTargetInRange(attacker, rule, alive, VisibleTo(attacker.Owner));
                 if (target is null) continue;
                 double amount = rule.Damage * rules.Effectiveness(attacker.TypeId, target.TypeId);
                 if (amount <= 0) continue;
@@ -820,10 +829,13 @@ public sealed class SkirmishSimulation
                        .FirstOrDefault();
     }
 
-    /// <summary>An enemy outside the attacker's region but within its range in cells: the explicit target first, else the weakest.</summary>
-    private SimEntity? ChooseTargetInRange(SimEntity attacker, UnitRule attackerRule, List<SimEntity> alive)
+    /// <summary>
+    /// An enemy outside the attacker's region, in a region its owner can see, and within its range in cells: the
+    /// explicit target first, else the weakest.
+    /// </summary>
+    private SimEntity? ChooseTargetInRange(SimEntity attacker, UnitRule attackerRule, List<SimEntity> alive, HashSet<RegionId> ownerVisible)
     {
-        bool InRange(SimEntity e) => e.Alive && e.Owner != attacker.Owner && e.Region != attacker.Region
+        bool InRange(SimEntity e) => e.Alive && e.Owner != attacker.Owner && e.Region != attacker.Region && ownerVisible.Contains(e.Region)
             && attacker.Position.DistanceTo(e.Position) <= attackerRule.Range && CanTarget(attackerRule, e);
         if (attacker.ExplicitTarget is { } explicitId && alive.Find(e => e.Id == explicitId) is { } explicitTarget && InRange(explicitTarget))
         {
@@ -886,16 +898,20 @@ public sealed class SkirmishSimulation
         return visible;
     }
 
-    private bool IsEventForPlayer(GameEvent gameEvent, PlayerId player, HashSet<RegionId> visible)
+    /// <summary>
+    /// The event as this player may receive it, or null when it may not. A kill is the killer's event, but it
+    /// describes the victim, so it is delivered only when the victim's cell is visible (a superweapon can kill in
+    /// fog). A superweapon launch is announced to every player, but only its owner learns which building fired.
+    /// </summary>
+    private GameEvent? EventForPlayer(GameEvent gameEvent, PlayerId player, HashSet<RegionId> visible)
     {
-        if (gameEvent.Owner == player) return true;
-        if (gameEvent.Kind == GameEventKind.SuperweaponLaunched) return true; // announced to every player
-        if (gameEvent.Position is { } position)
+        bool PositionVisible() => gameEvent.Position is { } position && map.Map.RegionOf(position) is { } region && visible.Contains(region.Id);
+        return gameEvent.Kind switch
         {
-            Region? region = map.Map.RegionOf(position);
-            if (region is not null && visible.Contains(region.Id)) return true;
-        }
-        return false;
+            GameEventKind.SuperweaponLaunched => gameEvent.Owner == player ? gameEvent : gameEvent with { Entity = null },
+            GameEventKind.EntityKilledByUs => gameEvent.Owner == player && PositionVisible() ? gameEvent : null,
+            _ => gameEvent.Owner == player || PositionVisible() ? gameEvent : null,
+        };
     }
 
     // ----- victory -----

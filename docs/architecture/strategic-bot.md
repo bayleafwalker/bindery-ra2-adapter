@@ -231,7 +231,10 @@ Gaps an operator review found after integration, and how each was closed.
   fails if it is ignored. For stand-off to mean anything the simulator now lets a
   unit with no target in its own region fire at an enemy in another region
   within its weapon range in cells (same-region fire is unchanged and takes
-  precedence); an attack order on a target already in range no longer walks into
+  precedence), provided its owner can see that region: RA2 cannot acquire a
+  target in fog, so stand-off bombardment needs a spotter. A kill event reaches
+  the killer only when the victim's cell is visible to it, and a superweapon
+  launch names the firing building only to its owner; an attack order on a target already in range no longer walks into
   its region. Contract change: `SquadOrder.StandoffBufferCells` (optional,
   default 0).
 - **State compiler completeness.** Superweapons: the simulator charges a
