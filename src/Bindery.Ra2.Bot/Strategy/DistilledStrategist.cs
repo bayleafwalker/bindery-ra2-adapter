@@ -99,7 +99,13 @@ public sealed class DistilledStrategist : IStrategist, Runtime.IFrameAwareStrate
     /// <summary>Why the most recent decision escalated, or null when the model decided.</summary>
     public string? LastEscalationReason { get; private set; }
 
-    public async Task<StrategistProposal?> ProposeAsync(StrategistContext context, CancellationToken cancellationToken = default)
+    /// <remarks>
+    /// Not an <c>async</c> method on purpose: an escalation returns the inner strategist's own task, so it completes
+    /// exactly when the inner one does (on its latency frame). Awaiting it here would complete this task in a
+    /// thread-pool continuation instead, a moment later, and the frame the scheduler first sees it complete would
+    /// depend on thread timing, breaking determinism and replay.
+    /// </remarks>
+    public Task<StrategistProposal?> ProposeAsync(StrategistContext context, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(context);
         Decisions++;
@@ -131,14 +137,14 @@ public sealed class DistilledStrategist : IStrategist, Runtime.IFrameAwareStrate
         {
             Escalations++;
             LastEscalationReason = escalate ?? "predicted playbook missing from the library";
-            return await inner.ProposeAsync(context, cancellationToken).ConfigureAwait(false);
+            return inner.ProposeAsync(context, cancellationToken);
         }
 
         LastEscalationReason = null;
         StrategicIntent intent = IntentComposer.Compose(
             playbook, features, $"{Id}/{features.SnapshotVersion}", Source, best.Value.Probability,
             $"distilled: p={best.Value.Probability:0.00} over {classes.Length} playbooks from {trainedOn} examples");
-        return new StrategistProposal(intent, new ProposalCost(0, 0, 0, 0, null), null);
+        return Task.FromResult<StrategistProposal?>(new StrategistProposal(intent, new ProposalCost(0, 0, 0, 0, null), null));
     }
 
     /// <summary>RMS standardised distance from the training mean (diagonal Mahalanobis).</summary>
