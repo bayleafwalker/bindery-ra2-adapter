@@ -60,56 +60,19 @@ public sealed class BotArenaAgent : IArenaAgent
             })));
         }
         BotMetrics m = runtime.Metrics;
-        Stats.Proposals = (int)m.Proposals;
-        Stats.Rejected = (int)m.Rejected;
-        Stats.LateDiscarded = (int)m.LateDiscarded;
         Stats.Activations = (int)m.Activations;
         Stats.PostureFlips = (int)m.PostureFlips;
         Stats.CommandsDropped = (int)m.CommandsDropped;
         Stats.ShadowProposals = (int)m.ShadowProposals;
         Stats.ProposalsFailed = (int)m.ProposalsFailed;
-
-        foreach (DecisionRecord record in log.Records)
-        {
-            if (record.Kind == DecisionRecordKinds.Proposal && record.Data.TryGetProperty("latencyFrames", out JsonElement frames))
-            {
-                Stats.LateSeconds.Add(frames.GetInt64() / (double)GameTime.FramesPerSecond);
-            }
-            if (record.Kind == DecisionRecordKinds.Validation && record.Data.TryGetProperty("issues", out JsonElement issues))
-            {
-                foreach (JsonElement issue in issues.EnumerateArray())
-                {
-                    if (issue.TryGetProperty("code", out JsonElement code) && code.GetString() is { } c
-                        && c.StartsWith("fog.", StringComparison.Ordinal)
-                        && issue.TryGetProperty("severity", out JsonElement severity) && severity.GetString() == nameof(ValidationSeverity.Reject))
-                    {
-                        Stats.FogRejections++;
-                    }
-                }
-            }
-            if ((record.Kind == DecisionRecordKinds.Proposal || record.Kind == DecisionRecordKinds.ShadowProposal)
-                && record.Data.TryGetProperty("cost", out JsonElement cost) && cost.ValueKind == JsonValueKind.Object)
-            {
-                long input = cost.TryGetProperty("inputTokens", out JsonElement i) ? i.GetInt64() : 0;
-                long output = cost.TryGetProperty("outputTokens", out JsonElement o) ? o.GetInt64() : 0;
-                long cached = cost.TryGetProperty("cacheReadTokens", out JsonElement c) ? c.GetInt64() : 0;
-                string? model = cost.TryGetProperty("model", out JsonElement md) && md.ValueKind == JsonValueKind.String ? md.GetString() : null;
-                Stats.TokensIn += input + cached;
-                Stats.TokensOut += output;
-                if (model is not null)
-                {
-                    Stats.Model ??= model;
-                    Stats.Usd += PriceTable.CostUsd(model, input, output, cached) ?? 0;
-                }
-            }
-        }
+        // Proposals, invalid plans, lateness and cost come from the log, split by role (see DecisionLogMetrics).
+        DecisionLogMetrics.Apply(Stats, log.Records);
         CountDistillation();
         Analysis.PostGameReport analysis = Analysis.PostGameReport.Build(log.Records);
         Stats.ShadowCompared = analysis.Shadow.Compared;
         Stats.ShadowAgreed = analysis.Shadow.Agreed;
         foreach ((string playbook, double seconds) in analysis.PlaybookSeconds) Stats.PlaybookSeconds[playbook] = seconds;
         foreach ((string posture, double seconds) in analysis.PostureSeconds) Stats.PostureSeconds[posture] = seconds;
-        // Failed requests still cost tokens; the Claude strategist reports them through LastFailure only.
         Stats.DecisionLogHash = log.ComputeHash();
         onFinish?.Invoke(won, ownAssetValue, enemyAssetValue, this);
     }

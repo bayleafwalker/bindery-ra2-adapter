@@ -35,6 +35,19 @@ public sealed record PlayerMatchMetrics(
     IReadOnlyList<string> Labels,
     double? FirstAttackSeconds = null)
 {
+    /// <summary>Fallback and emergency proposals, kept out of <see cref="Proposals"/> and the lateness figures.</summary>
+    public int FallbackProposals { get; init; }
+
+    /// <summary>The shadow strategist's lateness per proposal, invalid proposals and <c>fog.*</c> rejections.</summary>
+    public IReadOnlyList<double> ShadowLateSeconds { get; init; } = [];
+
+    public int ShadowRejected { get; init; }
+
+    public int ShadowFogRejections { get; init; }
+
+    /// <summary>Part of <see cref="Usd"/> billed by failed requests.</summary>
+    public double FailedRequestUsd { get; init; }
+
     /// <summary>Seconds each playbook was active (the arm's intent timeline).</summary>
     public IReadOnlyDictionary<string, double> PlaybookSeconds { get; init; } = new Dictionary<string, double>();
 
@@ -275,6 +288,11 @@ public static class MatchRunner
             DecisionLogHash: stats.DecisionLogHash,
             Labels: [.. stats.Labels])
         {
+            FallbackProposals = stats.FallbackProposals,
+            ShadowLateSeconds = [.. stats.ShadowLateSeconds],
+            ShadowRejected = stats.ShadowRejected,
+            ShadowFogRejections = stats.ShadowFogRejections,
+            FailedRequestUsd = stats.FailedRequestUsd,
             DistilledDecisions = stats.DistilledDecisions,
             DistilledEscalations = stats.DistilledEscalations,
             ShadowCompared = stats.ShadowCompared,

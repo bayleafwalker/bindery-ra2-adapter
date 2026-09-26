@@ -235,12 +235,12 @@ public static class ReportBuilder
     {
         sb.AppendLine("## Strategy layer (arm side)");
         sb.AppendLine();
-        sb.AppendLine("Invalid plans: rejected / proposals. Lateness: seconds from a proposal's snapshot to its validation; late-discard count / proposals. Churn: activations and posture flips per 10 game minutes.");
+        sb.AppendLine("Proposals, invalid plans and lateness are the arm's primary strategist's: rejected / proposals; seconds from a proposal's snapshot to its validation; late-discard count / proposals. Fallback and emergency proposals (immediate and always valid) are counted apart so they cannot flatter the strategist under test. Shadow columns are the shadow strategist's own lateness and would-be invalid plans. Churn: activations and posture flips per 10 game minutes.");
         sb.AppendLine();
         sb.AppendLine("Shadow agreement: shadow proposals naming the same playbook as the primary proposal for the same request / shadow proposals whose request got a primary proposal.");
         sb.AppendLine();
-        sb.AppendLine("| Arm | Proposals | Invalid plans | Mean lateness s | Late-discarded | Failed requests | Shadow proposals | Shadow agreement | Activations /10 min | Posture flips /10 min |");
-        sb.AppendLine("|---|---|---|---|---|---|---|---|---|---|");
+        sb.AppendLine("| Arm | Proposals | Invalid plans | Mean lateness s | Late-discarded | Fallback proposals | Failed requests | Shadow proposals | Shadow invalid | Shadow mean lateness s | Shadow agreement | Activations /10 min | Posture flips /10 min |");
+        sb.AppendLine("|---|---|---|---|---|---|---|---|---|---|---|---|---|");
         foreach (var group in matches.GroupBy(static m => m.Arm).OrderBy(static g => g.Key, StringComparer.Ordinal))
         {
             List<PlayerMatchMetrics> arm = group.Select(static m => m.Players["arm"]).ToList();
@@ -249,7 +249,10 @@ public static class ReportBuilder
             int late = arm.Sum(static a => a.LateDiscarded);
             List<double> lateness = arm.SelectMany(static a => a.LateSeconds).ToList();
             double minutes = Math.Max(1.0 / 60, group.Sum(static m => m.DurationSeconds) / 60.0);
-            sb.AppendLine($"| {group.Key} | {proposals} | {rejected}/{proposals} ({Rate(rejected, proposals)}) | {(lateness.Count == 0 ? "n/a" : F(lateness.Average(), "0.00"))} | {late}/{proposals} ({Rate(late, proposals)}) | {arm.Sum(static a => a.ProposalsFailed)} | {arm.Sum(static a => a.ShadowProposals)} | {Agreement(arm)} | {F(arm.Sum(static a => a.Activations) / minutes * 10, "0.00")} | {F(arm.Sum(static a => a.PostureFlips) / minutes * 10, "0.00")} |");
+            int shadow = arm.Sum(static a => a.ShadowProposals), shadowRejected = arm.Sum(static a => a.ShadowRejected);
+            List<double> shadowLateness = arm.SelectMany(static a => a.ShadowLateSeconds).ToList();
+            string shadowInvalid = shadow == 0 ? "n/a" : $"{shadowRejected}/{shadow} ({Rate(shadowRejected, shadow)})";
+            sb.AppendLine($"| {group.Key} | {proposals} | {rejected}/{proposals} ({Rate(rejected, proposals)}) | {(lateness.Count == 0 ? "n/a" : F(lateness.Average(), "0.00"))} | {late}/{proposals} ({Rate(late, proposals)}) | {arm.Sum(static a => a.FallbackProposals)} | {arm.Sum(static a => a.ProposalsFailed)} | {shadow} | {shadowInvalid} | {(shadowLateness.Count == 0 ? "n/a" : F(shadowLateness.Average(), "0.00"))} | {Agreement(arm)} | {F(arm.Sum(static a => a.Activations) / minutes * 10, "0.00")} | {F(arm.Sum(static a => a.PostureFlips) / minutes * 10, "0.00")} |");
         }
         sb.AppendLine();
     }
@@ -282,11 +285,12 @@ public static class ReportBuilder
             long tokensIn = arm.Sum(static a => a.TokensIn);
             long tokensOut = arm.Sum(static a => a.TokensOut);
             double usd = arm.Sum(static a => a.Usd);
+            double failedUsd = arm.Sum(static a => a.FailedRequestUsd);
             string? model = arm.Select(static a => a.Model).FirstOrDefault(static m => m is not null);
             bool fake = arm.Any(static a => a.Labels.Contains("llm-fake"));
             int n = Math.Max(1, arm.Count);
             string note = fake ? " (fake client: tokens estimated from prompt size, priced at the list rate; not a measurement)" : string.Empty;
-            sb.AppendLine($"- **{group.Key}** ({model ?? "no model"}): {tokensIn / n} in / {tokensOut / n} out tokens and ${F(usd / n, "0.0000")} per match{note}.");
+            sb.AppendLine($"- **{group.Key}** ({model ?? "no model"}): {tokensIn / n} in / {tokensOut / n} out tokens and ${F(usd / n, "0.0000")} per match, of which ${F(failedUsd / n, "0.0000")} on failed requests{note}.");
         }
         sb.AppendLine();
     }
@@ -436,7 +440,8 @@ public static class ReportBuilder
         sb.AppendLine();
         foreach (var group in matches.GroupBy(static m => m.Arm).OrderBy(static g => g.Key, StringComparer.Ordinal))
         {
-            sb.AppendLine($"- **{group.Key}**: {group.Sum(static m => m.Players["arm"].FogRejections)} validator `fog.*` rejections.");
+            int shadowFog = group.Sum(static m => m.Players["arm"].ShadowFogRejections);
+            sb.AppendLine($"- **{group.Key}**: {group.Sum(static m => m.Players["arm"].FogRejections)} validator `fog.*` rejections{(group.Any(static m => m.Players["arm"].ShadowProposals > 0) ? $"; shadow strategist: {shadowFog}" : string.Empty)}.");
         }
         sb.AppendLine();
         sb.AppendLine("Probe: two lockstep simulations, hidden state of one perturbed (`SimLeakageProbe`: enemy credits and queue, wounded hidden enemies, a hidden unit in an unseen region, one announced there through the event path, and one just across a border inside the arm's weapon reach), strategist-context hash compared on every following frame until the window closes or the objects the arm can see first differ. A differing frame is one where the context changed while everything visible was still identical. Fog-violation frames are arm frames, over the whole run of both simulations, that carried an enemy object or event from a region the arm did not see: a per-frame check that finds leaks the perturbation does not exercise.");

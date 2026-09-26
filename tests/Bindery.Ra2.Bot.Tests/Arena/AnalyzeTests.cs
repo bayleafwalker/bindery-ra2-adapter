@@ -50,6 +50,6 @@ public sealed class AnalyzeTests : IDisposable
 
         string report = ReportBuilder.Build([M(1, P(10, 8, 6)), M(2, P(10, 8, 2))], [], [], CliOptions.Parse(["run", "--arms", "llm-shadow"]), "test");
 
-        Assert.Contains("| 20 | 8/16 (0.500) |", report, StringComparison.Ordinal);
+        Assert.Contains("| 20 | 0/20 (0.000) | n/a | 8/16 (0.500) |", report, StringComparison.Ordinal);
     }
 }
