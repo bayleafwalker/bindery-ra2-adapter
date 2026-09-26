@@ -37,23 +37,25 @@ public sealed class ScriptedSkirmishAiTests
     }
 
     [Theory]
-    [InlineData("ai-rush", Faction.Allied)]
-    [InlineData("ai-balanced", Faction.Soviet)]
-    [InlineData("ai-turtle", Faction.Allied)]
-    [InlineData("ai-air", Faction.Soviet)]
-    public void Builds_a_base_with_harvesters_and_launches_attack_waves(string style, Faction faction)
+    [InlineData("ai-rush", Faction.Allied, 800)]
+    [InlineData("ai-balanced", Faction.Soviet, 800)]
+    // The turtle's first wave needs eight vehicles and infantry from one war factory and one barracks, which no
+    // longer borrow speed from the construction yard (a queue runs on its own factories only).
+    [InlineData("ai-turtle", Faction.Allied, 1100)]
+    [InlineData("ai-air", Faction.Soviet, 800)]
+    public void Builds_a_base_with_harvesters_and_launches_attack_waves(string style, Faction faction, double seconds)
     {
-        SkirmishSimulation sim = NewSim(3, faction, 900);
+        SkirmishSimulation sim = NewSim(3, faction, seconds + 100);
         ScriptedSkirmishAi ai = new(Rules, Ai, faction, sim.Map, style, OpponentDifficulty.Hard, 3);
 
-        Play(sim, ai, 800);
+        Play(sim, ai, seconds);
 
         List<ObservedEntity> own = [.. sim.Observe(Ai, ObservationMode.Oracle).Entities.Where(e => e.Owner == Ai)];
         List<UnitRule> rules = [.. own.Select(e => Rules.Get(e.TypeId))];
         Assert.Contains(rules, r => r.Role == UnitRole.Economy);
         Assert.Contains(rules, r => r.Role == UnitRole.Harvester);
         Assert.True(rules.Count(r => r.Kind == EntityKind.Building && r.Role == UnitRole.Production) >= 3, "yard, barracks and war factory: " + string.Join(",", own.Select(e => e.TypeId)) + " cr=" + sim.Observe(Ai, ObservationMode.Oracle).Credits + " " + sim.Observe(Ai, ObservationMode.Oracle).Power + " q=" + string.Join(",", sim.Observe(Ai, ObservationMode.Oracle).Queues.SelectMany(q => q.Items.Select(i => q.Kind + ":" + i.TypeId + ":" + i.Ready))));
-        Assert.True(ai.WavesLaunched >= 1, $"{style} launched no attack wave by 800 s");
+        Assert.True(ai.WavesLaunched >= 1, $"{style} launched no attack wave by {seconds} s");
         Assert.Equal(0, sim.RejectedCommandCount(Ai));
     }
 

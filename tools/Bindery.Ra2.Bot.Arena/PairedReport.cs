@@ -43,10 +43,12 @@ public static class PairedReport
     }
 
     /// <summary>
-    /// What makes two matches the same game: the arm, map and seed, the arm's decision log, and the outcome (winner,
-    /// reason, duration, both sides' final assets and builds). Two opponents that never diverge from each other
-    /// before the match ends (styles that share an opening) produce the same key; counting both would count one
-    /// game twice. Null when the record has no decision log hash, so it is never taken for a duplicate.
+    /// What makes two matches the same game: the arm, map and the arm's faction, the arm's decision log, and the
+    /// outcome (winner, reason, duration, both sides' final assets and builds). Two opponents that never diverge from
+    /// each other before the match ends (styles that share an opening) produce the same key, and so do two seeds that
+    /// change nothing (without combat noise a seed only moves rally points, so seeds of one faction often replay the
+    /// same game); counting either twice would count one game as two samples. Null when the record has no decision
+    /// log hash, so it is never taken for a duplicate.
     /// </summary>
     public static string? GameKey(MatchRecord m)
     {
@@ -54,7 +56,7 @@ public static class PairedReport
         if (!m.Players.TryGetValue("arm", out PlayerMatchMetrics? arm) || arm.DecisionLogHash is null) return null;
         m.Players.TryGetValue("opponent", out PlayerMatchMetrics? opponent);
         return string.Create(CultureInfo.InvariantCulture,
-            $"{m.Arm}|{m.Map}|{m.Seed}|{arm.DecisionLogHash}|{m.Winner}|{m.Reason}|{m.DurationSeconds:R}|{arm.FinalAssetValue}|{arm.UnitsBuilt}|{opponent?.FinalAssetValue}|{opponent?.UnitsBuilt}|{opponent?.BuildingsBuilt}");
+            $"{m.Arm}|{m.Map}|{arm.Faction}|{arm.DecisionLogHash}|{m.Winner}|{m.Reason}|{m.DurationSeconds:R}|{arm.FinalAssetValue}|{arm.UnitsBuilt}|{opponent?.FinalAssetValue}|{opponent?.UnitsBuilt}|{opponent?.BuildingsBuilt}");
     }
 
     /// <summary>The matches with every repeat of an identical game (same <see cref="GameKey"/>) dropped, first by opponent name kept.</summary>

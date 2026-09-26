@@ -26,6 +26,26 @@ public sealed class SimMapsTests
         AssertFullyConnected(map);
     }
 
+    // The arm always starts in the first start region, so a map must give both starts the same economy and the
+    // same roads: equal distances to every ore field (sorted) and to the enemy start. Otherwise a win rate carries a
+    // positional edge the arm did not earn.
+    [Theory]
+    [MemberData(nameof(AllMaps))]
+    public void Both_starts_have_the_same_distances_to_ore_and_to_each_other(SimMap map)
+    {
+        RegionGraph graph = new(map.Map);
+        IReadOnlyDictionary<RegionId, double> fromWest = graph.DistancesFrom(map.StartRegions[0]);
+        IReadOnlyDictionary<RegionId, double> fromEast = graph.DistancesFrom(map.StartRegions[1]);
+        double[] OreDistances(IReadOnlyDictionary<RegionId, double> d) =>
+            [.. map.Map.OreFields.Select(f => Math.Round(d.TryGetValue(f.Region, out double v) ? v : double.PositiveInfinity, 3)).Order()];
+        int[] OreValues(IReadOnlyDictionary<RegionId, double> d) =>
+            [.. map.Map.OreFields.OrderBy(f => d.TryGetValue(f.Region, out double v) ? v : double.PositiveInfinity).ThenBy(static f => f.InitialValue).Select(static f => f.InitialValue)];
+
+        Assert.Equal(OreDistances(fromWest), OreDistances(fromEast));
+        Assert.Equal(OreValues(fromWest), OreValues(fromEast));
+        Assert.Equal(fromWest[map.StartRegions[1]], fromEast[map.StartRegions[0]]);
+    }
+
     // Full connectivity (checked below, from one start region over an undirected link graph) already
     // implies every region is reachable from both start regions using some combination of ground and
     // naval links; an "island" region reachable only by sea is fine, one reachable by neither is a map bug.

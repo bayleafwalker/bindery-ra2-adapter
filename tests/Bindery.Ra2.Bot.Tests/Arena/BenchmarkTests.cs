@@ -131,4 +131,14 @@ public sealed class BenchmarkTests
         Assert.Contains("| 2/2 | 1/1 |", report, StringComparison.Ordinal);
         Assert.Contains("Warning: the faction mix is unbalanced for selector/training (2 Allied, 1 Soviet)", report, StringComparison.Ordinal);
     }
+
+    // Seeds that change nothing (the arm plays the same faction, the same decisions and the same outcome) are one
+    // game, not two samples: without combat noise seeds 1 and 3 often play out identically.
+    [Fact]
+    public void Identical_games_on_different_seeds_count_once()
+    {
+        List<MatchRecord> matches = [Game("selector", "ai-rush", 1, "same"), Game("selector", "ai-rush", 3, "same"), Game("selector", "ai-rush", 5, "other")];
+
+        Assert.Equal(2, PairedReport.DistinctGames(matches).Count);
+    }
 }

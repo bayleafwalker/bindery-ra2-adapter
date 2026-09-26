@@ -29,6 +29,7 @@ public sealed class SkirmishSimulation
     private readonly List<SimEntity> entities = [];
     private readonly Dictionary<RegionId, double> oreRemaining = [];
     private readonly List<(PlayerId Player, GameCommand Command)> pending = [];
+    private readonly Dictionary<QueueKind, HashSet<string>> factoryTypes;
     private List<GameEvent> frameEvents = [];
     // Each player's objects are numbered in a range of their own. One shared counter would let a player read the
     // enemy's hidden production off the gap between two of its own ids, which RA2 never shows.
@@ -58,6 +59,7 @@ public sealed class SkirmishSimulation
         if (settings.CombatNoise is < 0 or >= 1) throw new ArgumentOutOfRangeException(nameof(settings), "Combat noise must be in [0, 1).");
         Graph = new RegionGraph(map.Map);
         Players = settings.Players.Select(p => p.Id).ToList();
+        factoryTypes = FactoryTypesByQueue(rules);
 
         foreach (OreField field in map.Map.OreFields)
         {
@@ -105,13 +107,25 @@ public sealed class SkirmishSimulation
     public IReadOnlyList<GameCommand> RecentRejections(PlayerId player) =>
         players.TryGetValue(player, out SimPlayerState? s) ? [.. s.RecentRejections] : [];
 
+    /// <summary>
+    /// Credits, plus every live object at <see cref="SimValuation.ValueOf"/>, plus every queued item (paid for when it
+    /// was queued, including a finished building waiting for placement). The timeout winner is decided by it, so value
+    /// must not vanish into production that has not finished yet.
+    /// </summary>
     public int AssetValue(PlayerId player)
     {
         if (!players.TryGetValue(player, out SimPlayerState? state)) return 0;
         int total = state.Credits;
         foreach (SimEntity e in entities)
         {
-            if (e.Owner == player && e.Alive && rules.TryGet(e.TypeId, out UnitRule rule)) total += rule.Cost;
+            if (e.Owner == player && e.Alive) total += SimValuation.ValueOf(rules, e.TypeId);
+        }
+        foreach (QueueRuntime queue in state.Queues.Values)
+        {
+            foreach (QueueItemRuntime item in queue.Items)
+            {
+                if (rules.TryGet(item.TypeId, out UnitRule rule)) total += rule.Cost;
+            }
         }
         return total;
     }
@@ -138,6 +152,7 @@ public sealed class SkirmishSimulation
             AdvanceEconomy();
             AdvanceProduction();
             AdvanceSuperweapons();
+            DropTargetsInFog();
             ResolveCombat();
             AdvanceRepair();
         }
@@ -171,7 +186,10 @@ public sealed class SkirmishSimulation
         {
             if (!e.Alive) continue;
             bool own = e.Owner == player;
-            bool visibleEnemy = mode == ObservationMode.Oracle || (own is false && visible.Contains(e.Region));
+            // Visibility is decided by the cell the object is reported at (the rule events use too), so a frame can
+            // never carry a position in a region it does not see.
+            bool visibleEnemy = mode == ObservationMode.Oracle
+                || (own is false && map.Map.RegionOf(e.Position) is { } at && visible.Contains(at.Id));
             if (!own && !visibleEnemy) continue;
             rules.TryGet(e.TypeId, out UnitRule rule);
             observed.Add(new ObservedEntity(e.Id, e.Owner, e.TypeId, e.Position, e.Health, e.MaxHealth, e.Deployed, own ? e.ExplicitTarget : null));
@@ -181,7 +199,7 @@ public sealed class SkirmishSimulation
         foreach (QueueRuntime q in state.Queues.Values.OrderBy(q => q.Kind))
         {
             List<QueueItem> items = q.Items.Select((i, idx) => new QueueItem(i.TypeId, Math.Clamp(i.Progress, 0, 1), i.Ready, OnHold: idx > 0)).ToList();
-            queues.Add(new ProductionQueueState(q.Kind, items, CountFactories(state)));
+            queues.Add(new ProductionQueueState(q.Kind, items, CountFactories(state, q.Kind)));
         }
 
         List<GameEvent> events = mode == ObservationMode.Oracle
@@ -196,24 +214,51 @@ public sealed class SkirmishSimulation
         return new ObservationFrame(Time, mode, player, state.Faction, state.Credits, power, observed, queues, events, visible, map.Map, ore, SuperweaponTimers(player, mode));
     }
 
-    /// <summary>Deterministic digest of all visible-and-hidden state, for replay verification.</summary>
+    /// <summary>
+    /// Deterministic digest of all visible-and-hidden state, for replay verification. It covers everything a later
+    /// frame depends on (queues and their progress, pending placements, sub-cell positions, orders, harvester
+    /// cycles, both random streams), so two simulations with equal hashes cannot diverge afterwards on the same
+    /// commands. Power is derived from the objects and so is covered by them. Doubles are written in the invariant
+    /// round-trip form.
+    /// </summary>
     public string ComputeStateHash()
     {
+        static string D(double value) => value.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+        static string Id(RegionId? region) => region is { } r ? r.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) : "-";
         StringBuilder sb = new();
-        sb.Append(Time.Frame).Append('|');
+        sb.Append(Time.Frame).Append('|').Append(MatchEnded).Append(':').Append(Winner?.Value).Append(':').Append(EndReason).Append('|')
+          .Append(rng.State).Append(':').Append(combatRng.State).Append('|');
         foreach (SimPlayerState p in players.Values.OrderBy(p => p.Id.Value))
         {
-            sb.Append(p.Id.Value).Append(':').Append(p.Credits).Append(':').Append(p.RejectedCommands).Append(';');
+            sb.Append(p.Id.Value).Append(':').Append(p.Credits).Append(':').Append(p.RejectedCommands).Append(':').Append(p.Defeated).Append(':')
+              .Append(nextEntityIdByOwner.GetValueOrDefault(p.Id));
+            foreach (QueueRuntime q in p.Queues.Values.OrderBy(static q => q.Kind))
+            {
+                sb.Append("/q").Append(q.Kind);
+                foreach (QueueItemRuntime item in q.Items) sb.Append(',').Append(item.TypeId).Append('@').Append(D(item.Progress)).Append(item.AwaitingPlacement ? "!" : string.Empty);
+            }
+            foreach (PendingPlacement placement in p.PendingPlacements) sb.Append("/p").Append(placement.TypeId).Append('@').Append(placement.Queue);
+            sb.Append(';');
         }
+        sb.Append(nextProbeEntityId).Append('|');
         foreach (SimEntity e in entities.OrderBy(e => e.Id.Value))
         {
             sb.Append(e.Id.Value).Append(':').Append(e.Owner.Value).Append(':').Append(e.TypeId).Append(':')
-              .Append(e.Health).Append(':').Append(e.Position.X).Append(',').Append(e.Position.Y).Append(':')
-              .Append(e.SuperweaponCharge.ToString("R", System.Globalization.CultureInfo.InvariantCulture)).Append(';');
+              .Append(e.Health).Append('/').Append(e.MaxHealth).Append(':').Append(e.Position.X).Append(',').Append(e.Position.Y).Append(':')
+              .Append(D(e.ExactX)).Append(',').Append(D(e.ExactY)).Append(':').Append(e.Region.Value).Append(':').Append(e.Deployed).Append(':')
+              .Append(e.ExplicitTarget?.Value).Append(':').Append(string.Join(',', e.RemainingPath.Select(static r => r.Value))).Append(':')
+              .Append(e.FinalDestination is { } dest ? $"{dest.X},{dest.Y}" : "-").Append(':').Append(e.HoldForCombat).Append(':')
+              .Append(e.Phase).Append(':').Append(Id(e.AssignedOreRegion)).Append(':').Append(Id(e.TargetRefineryRegion)).Append(':')
+              .Append(e.CarriedValue).Append(':').Append(D(e.PhaseSecondsRemaining)).Append(':').Append(e.RepairRequested).Append(':')
+              .Append(D(e.SuperweaponCharge)).Append(';');
         }
         foreach ((RegionId region, double remaining) in oreRemaining.OrderBy(kv => kv.Key.Value))
         {
-            sb.Append(region.Value).Append('=').Append(remaining).Append(';');
+            sb.Append(region.Value).Append('=').Append(D(remaining)).Append(';');
+        }
+        foreach ((PlayerId player, GameCommand command) in pending)
+        {
+            sb.Append("cmd:").Append(player.Value).Append(':').Append(command).Append(';');
         }
         byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()));
         return Convert.ToHexString(hash);
@@ -224,6 +269,10 @@ public sealed class SkirmishSimulation
     internal RegionId StartRegionOf(PlayerId player) => startRegionOwner.First(kv => kv.Value == player).Key;
 
     internal IReadOnlySet<RegionId> VisibleRegionsForProbe(PlayerId player) => VisibleRegionsFor(player);
+
+    /// <summary>Whether a harvester is on its way to a refinery with a load; for focused economy tests.</summary>
+    internal bool DebugIsReturningWithLoad(EntityId harvester) =>
+        entities.Find(e => e.Id == harvester) is { Phase: HarvesterPhase.ToRefinery, CarriedValue: > 0 };
 
     internal void DebugAdjustCredits(PlayerId player, int delta) => players[player].Credits += delta;
 
@@ -251,6 +300,44 @@ public sealed class SkirmishSimulation
         };
         entity.SnapTo(position);
         entities.Add(entity);
+    }
+
+    /// <summary>
+    /// Spawns an entity in a region and announces it through the normal event path (a completed build and a new
+    /// object, as a factory there would), so each player receives the events only as its fog allows. The probe uses
+    /// it to exercise event gating, which a silent spawn never reaches. Ids come from the probe range.
+    /// </summary>
+    internal EntityId DebugSpawnAnnounced(PlayerId owner, string typeId, RegionId region)
+    {
+        UnitRule rule = rules.Get(typeId);
+        Cell position = RegionCenter(region);
+        SimEntity entity = new()
+        {
+            Id = new EntityId(nextProbeEntityId++),
+            Owner = owner,
+            TypeId = typeId,
+            Position = position,
+            Region = region,
+            Health = rule.Strength,
+            MaxHealth = rule.Strength,
+        };
+        entity.SnapTo(position);
+        entities.Add(entity);
+        GameEvent[] announced =
+        [
+            new(GameEventKind.ProductionCompleted, Time, null, owner, typeId, position),
+            new(GameEventKind.EntityCreated, Time, entity.Id, owner, typeId, position),
+        ];
+        frameEvents.AddRange(announced);
+        foreach (SimPlayerState state in players.Values.OrderBy(static p => p.Id.Value))
+        {
+            HashSet<RegionId> visible = VisibleRegionsFor(state.Id);
+            foreach (GameEvent gameEvent in announced)
+            {
+                if (EventForPlayer(gameEvent, state.Id, visible) is { } delivered) state.PendingEvents.Add(delivered);
+            }
+        }
+        return entity.Id;
     }
 
     /// <summary>
@@ -447,6 +534,13 @@ public sealed class SkirmishSimulation
         int index = queue.Items.FindLastIndex(i => i.TypeId == c.TypeId);
         if (index < 0) return false;
         if (rules.TryGet(c.TypeId, out UnitRule rule)) state.Credits += rule.Cost;
+        // A finished building also waits in PendingPlacements; refunding it must take that placement away too, or
+        // the refunded building could still be placed for free.
+        if (queue.Items[index].AwaitingPlacement)
+        {
+            int placement = state.PendingPlacements.FindIndex(p => p.TypeId == c.TypeId && p.Queue == c.Queue);
+            if (placement >= 0) state.PendingPlacements.RemoveAt(placement);
+        }
         queue.Items.RemoveAt(index);
         return true;
     }
@@ -523,10 +617,16 @@ public sealed class SkirmishSimulation
         return any;
     }
 
+    /// <summary>
+    /// An attack order names an enemy the issuer can see now (RA2 cannot target an object in fog); otherwise it is
+    /// rejected. Accepting it would walk the units to the target's true, hidden region, so a belief-mode bot could
+    /// follow enemies through fog, or find objects it never saw by guessing their ids.
+    /// </summary>
     private bool ApplyAttack(PlayerId player, AttackCommand c)
     {
         SimEntity? target = entities.Find(e => e.Id == c.Target && e.Alive);
         if (target is null) return false;
+        if (target.Owner != player && !IsVisibleTo(target, VisibleRegionsFor(player))) return false;
         bool any = false;
         foreach (EntityId id in c.Units)
         {
@@ -643,6 +743,10 @@ public sealed class SkirmishSimulation
                 e.ExactX += dx * t;
                 e.ExactY += dy * t;
                 e.Position = new Cell((int)Math.Round(e.ExactX), (int)Math.Round(e.ExactY));
+                // A unit is in the region it stands in from the moment it crosses the border, not when it reaches
+                // the next region's centre: fog, combat and sight all work by region, and a lagging region let a
+                // unit that had walked into fog still be seen (and shot at) where it no longer was.
+                if (map.Map.RegionOf(e.Position) is { } now) e.Region = now.Id;
             }
         }
     }
@@ -657,35 +761,42 @@ public sealed class SkirmishSimulation
         {
             if (!e.Alive || !rules.TryGet(e.TypeId, out UnitRule rule) || rule.Role != UnitRole.Harvester) continue;
             SimPlayerState state = players[e.Owner];
-            StepHarvester(e, rule, state);
+            StepHarvester(e, state);
         }
     }
 
-    private void StepHarvester(SimEntity e, UnitRule rule, SimPlayerState state)
+    /// <summary>
+    /// One second of a harvester's cycle. Trips to the ore and back are driven by the normal movement system, so
+    /// the harvester is present in every region on its route, where it can be seen and shot. A load is paid out
+    /// only at a refinery that still stands; with none, the harvester keeps its load and waits, and it does not
+    /// start a new load while its owner has no refinery at all. A harvester under a move order finishes the move
+    /// before resuming its cycle.
+    /// </summary>
+    private void StepHarvester(SimEntity e, SimPlayerState state)
     {
         switch (e.Phase)
         {
             case HarvesterPhase.Idle:
+                if (e.RemainingPath.Count > 0) return;
+                if (e.CarriedValue > 0)
+                {
+                    StartToRefinery(e);
+                    return;
+                }
+                if (NearestRefineryRegion(e.Owner, e.Region) is null) return;
                 RegionId? oreRegion = e.AssignedOreRegion is { } assigned && oreRemaining.GetValueOrDefault(assigned) > 0
                     ? assigned
                     : NearestOreRegion(e.Region);
-                if (oreRegion is null) return;
-                double toOre = Graph.TravelSeconds(e.Region, oreRegion.Value, rule.Speed);
-                if (double.IsInfinity(toOre)) return;
+                if (oreRegion is null || !RouteTo(e, oreRegion.Value)) return;
                 e.AssignedOreRegion = oreRegion;
                 e.Phase = HarvesterPhase.ToOre;
-                e.PhaseSecondsRemaining = Math.Max(toOre, 1.0 / GameTime.FramesPerSecond);
                 break;
 
             case HarvesterPhase.ToOre:
-                e.PhaseSecondsRemaining -= 1;
-                if (e.PhaseSecondsRemaining <= 0 && e.AssignedOreRegion is { } target)
-                {
-                    e.Region = target;
-                    e.SnapTo(RegionCenter(target));
-                    e.Phase = HarvesterPhase.Harvesting;
-                    e.PhaseSecondsRemaining = HarvesterHarvestSeconds;
-                }
+                if (e.RemainingPath.Count > 0) return;
+                if (e.AssignedOreRegion is not { } target || e.Region != target) { e.Phase = HarvesterPhase.Idle; return; }
+                e.Phase = HarvesterPhase.Harvesting;
+                e.PhaseSecondsRemaining = HarvesterHarvestSeconds;
                 break;
 
             case HarvesterPhase.Harvesting:
@@ -697,45 +808,59 @@ public sealed class SkirmishSimulation
                     if (e.AssignedOreRegion is { } depletedRegion) oreRemaining[depletedRegion] = Math.Max(0, available - load);
                     e.CarriedValue = load;
                     e.Phase = HarvesterPhase.Idle;
-                    if (load > 0)
-                    {
-                        RegionId? refineryRegion = NearestRefineryRegion(e.Owner, e.Region);
-                        if (refineryRegion is not null)
-                        {
-                            double toRefinery = Graph.TravelSeconds(e.Region, refineryRegion.Value, rule.Speed);
-                            if (!double.IsInfinity(toRefinery))
-                            {
-                                e.TargetRefineryRegion = refineryRegion;
-                                e.Phase = HarvesterPhase.ToRefinery;
-                                e.PhaseSecondsRemaining = Math.Max(toRefinery, 1.0 / GameTime.FramesPerSecond);
-                            }
-                        }
-                    }
+                    if (load > 0) StartToRefinery(e);
                 }
                 break;
 
             case HarvesterPhase.ToRefinery:
-                e.PhaseSecondsRemaining -= 1;
-                if (e.PhaseSecondsRemaining <= 0 && e.TargetRefineryRegion is { } refinery)
+                if (e.RemainingPath.Count > 0) return;
+                if (e.TargetRefineryRegion is not { } refinery || e.Region != refinery || !HasRefineryIn(e.Owner, refinery))
                 {
-                    e.Region = refinery;
-                    e.SnapTo(RegionCenter(refinery));
-                    e.Phase = HarvesterPhase.Unloading;
-                    e.PhaseSecondsRemaining = HarvesterUnloadSeconds;
+                    // Stopped, or the refinery it was heading for is gone: look again next second.
+                    e.Phase = HarvesterPhase.Idle;
+                    return;
                 }
+                e.Phase = HarvesterPhase.Unloading;
+                e.PhaseSecondsRemaining = HarvesterUnloadSeconds;
                 break;
 
             case HarvesterPhase.Unloading:
                 e.PhaseSecondsRemaining -= 1;
                 if (e.PhaseSecondsRemaining <= 0)
                 {
+                    e.Phase = HarvesterPhase.Idle;
+                    if (e.TargetRefineryRegion is not { } at || !HasRefineryIn(e.Owner, at)) return; // keeps the load
                     state.Credits += (int)Math.Round(e.CarriedValue * state.IncomeMultiplier);
                     e.CarriedValue = 0;
-                    e.Phase = HarvesterPhase.Idle;
                 }
                 break;
         }
     }
+
+    /// <summary>Sends a loaded harvester to its owner's nearest refinery; with none, it stays idle and keeps the load.</summary>
+    private void StartToRefinery(SimEntity e)
+    {
+        RegionId? refineryRegion = NearestRefineryRegion(e.Owner, e.Region);
+        if (refineryRegion is null || !RouteTo(e, refineryRegion.Value)) return;
+        e.TargetRefineryRegion = refineryRegion;
+        e.Phase = HarvesterPhase.ToRefinery;
+    }
+
+    /// <summary>Paths a unit to a region's centre through the regions between; false when it cannot get there.</summary>
+    private bool RouteTo(SimEntity e, RegionId destination)
+    {
+        IReadOnlyList<RegionId> path = Graph.Path(e.Region, destination);
+        if (path.Count == 0) return false;
+        e.RemainingPath.Clear();
+        for (int i = 1; i < path.Count; i++) e.RemainingPath.Add(path[i]);
+        e.FinalDestination = RegionCenter(destination);
+        e.HoldForCombat = false;
+        if (e.RemainingPath.Count == 0) e.RemainingPath.Add(destination); // walk to the centre of the region it is in
+        return true;
+    }
+
+    private bool HasRefineryIn(PlayerId owner, RegionId region) =>
+        entities.Any(e => e.Owner == owner && e.Alive && e.Region == region && rules.TryGet(e.TypeId, out UnitRule r) && r.Role == UnitRole.Economy);
 
     private RegionId? NearestOreRegion(RegionId from)
     {
@@ -761,10 +886,11 @@ public sealed class SkirmishSimulation
         {
             if (state.Defeated) continue;
             PowerState power = ComputePower(state);
-            int factories = CountFactories(state);
-            double multiplier = factories <= 0 ? 0 : Math.Sqrt(factories) * (power.LowPower ? 0.5 : 1.0);
             foreach (QueueRuntime queue in state.Queues.Values.OrderBy(q => q.Kind))
             {
+                // A queue runs on the factories of its own kind only, and pauses while it has none (RA2).
+                int factories = CountFactories(state, queue.Kind);
+                double multiplier = factories <= 0 ? 0 : Math.Sqrt(factories) * (power.LowPower ? 0.5 : 1.0);
                 if (queue.Items.Count == 0 || multiplier <= 0) continue;
                 QueueItemRuntime active = queue.Items[0];
                 if (active.AwaitingPlacement) continue;
@@ -782,7 +908,7 @@ public sealed class SkirmishSimulation
                     else
                     {
                         queue.Items.RemoveAt(0);
-                        Cell spawnAt = RallyPointFor(state.Id);
+                        Cell spawnAt = RallyPointFor(state.Id, queue.Kind);
                         Region region = map.Map.RegionOf(spawnAt) ?? RegionById(map.StartRegions[0]);
                         SpawnEntity(state.Id, rule.TypeId, spawnAt, region.Id);
                     }
@@ -819,17 +945,47 @@ public sealed class SkirmishSimulation
         return timers;
     }
 
-    private Cell RallyPointFor(PlayerId owner)
+    /// <summary>Where a finished unit appears: beside the newest factory of its queue (any building if it has none).</summary>
+    private Cell RallyPointFor(PlayerId owner, QueueKind queue)
     {
-        SimEntity? factory = entities.Where(e => e.Owner == owner && e.Alive && rules.TryGet(e.TypeId, out UnitRule r) && r.Kind == EntityKind.Building)
-                                      .OrderBy(e => e.Id.Value).LastOrDefault();
+        SimEntity? factory = entities.Where(e => e.Owner == owner && e.Alive && IsFactoryFor(e.TypeId, queue)).OrderBy(e => e.Id.Value).LastOrDefault()
+            ?? entities.Where(e => e.Owner == owner && e.Alive && rules.TryGet(e.TypeId, out UnitRule r) && r.Kind == EntityKind.Building)
+                       .OrderBy(e => e.Id.Value).LastOrDefault();
         if (factory is not null) return new Cell(factory.Position.X + 1 + rng.NextInt(3), factory.Position.Y + 1 + rng.NextInt(3));
         int index = players.Keys.OrderBy(p => p.Value).ToList().IndexOf(owner);
         return RegionCenter(map.StartRegions[Math.Max(0, index)]);
     }
 
-    private int CountFactories(SimPlayerState state) =>
-        entities.Count(e => e.Owner == state.Id && e.Alive && rules.TryGet(e.TypeId, out UnitRule r) && r.Role == UnitRole.Production);
+    private int CountFactories(SimPlayerState state, QueueKind queue) =>
+        entities.Count(e => e.Owner == state.Id && e.Alive && IsFactoryFor(e.TypeId, queue));
+
+    /// <summary>
+    /// Whether a type is a factory for a queue: a production building listed among the prerequisites of that queue's
+    /// items (barracks for infantry, war factory for vehicles), and for the building and defense queues the
+    /// production buildings that serve no unit queue (the construction yard). A queue the rules give no factory
+    /// falls back to every production building.
+    /// </summary>
+    private bool IsFactoryFor(string typeId, QueueKind queue) =>
+        rules.TryGet(typeId, out UnitRule r) && r.Role == UnitRole.Production && r.Kind == EntityKind.Building
+        && (!factoryTypes.TryGetValue(queue, out HashSet<string>? types) || types.Count == 0 || types.Contains(typeId));
+
+    private static Dictionary<QueueKind, HashSet<string>> FactoryTypesByQueue(IRulesDatabase rules)
+    {
+        HashSet<string> production = rules.All.Where(static r => r.Role == UnitRole.Production && r.Kind == EntityKind.Building)
+                                              .Select(static r => r.TypeId).ToHashSet(StringComparer.Ordinal);
+        Dictionary<QueueKind, HashSet<string>> byQueue = [];
+        foreach (QueueKind queue in Enum.GetValues<QueueKind>())
+        {
+            if (queue is QueueKind.Building or QueueKind.Defense) continue;
+            byQueue[queue] = rules.All.Where(r => r.Queue == queue)
+                                      .SelectMany(static r => r.Prerequisites.SelectMany(static g => g))
+                                      .Where(production.Contains).ToHashSet(StringComparer.Ordinal);
+        }
+        HashSet<string> yards = production.Where(t => !byQueue.Values.Any(s => s.Contains(t))).ToHashSet(StringComparer.Ordinal);
+        byQueue[QueueKind.Building] = yards;
+        byQueue[QueueKind.Defense] = yards;
+        return byQueue;
+    }
 
     private PowerState ComputePower(SimPlayerState state)
     {
@@ -851,13 +1007,17 @@ public sealed class SkirmishSimulation
     /// across a border, and a defense reach only as far as its range. Damage is applied per region of the target,
     /// in region order, then target id order. Cross-border fire needs the target's region to be visible to the
     /// attacker's owner, as RA2 cannot acquire a target in fog: otherwise a long-range unit would kill enemies its
-    /// owner never saw, and the kill event would tell the owner their type and cell.
+    /// owner never saw, and the kill event would tell the owner their type and cell. A building that drains power
+    /// does not fire while its owner is on low power.
     /// </summary>
     private void ResolveCombat()
     {
         Dictionary<PlayerId, HashSet<RegionId>> visibleTo = [];
         HashSet<RegionId> VisibleTo(PlayerId player) =>
             visibleTo.TryGetValue(player, out HashSet<RegionId>? set) ? set : visibleTo[player] = VisibleRegionsFor(player);
+
+        // Low power takes powered base defenses offline, as in RA2 (the usual way to break a turtle).
+        Dictionary<PlayerId, bool> lowPower = players.Values.ToDictionary(static p => p.Id, p => ComputePower(p).LowPower);
 
         Dictionary<RegionId, List<SimEntity>> byRegion = [];
         foreach (SimEntity e in entities)
@@ -874,6 +1034,7 @@ public sealed class SkirmishSimulation
             foreach (SimEntity attacker in present.OrderBy(e => e.Id.Value))
             {
                 if (!rules.TryGet(attacker.TypeId, out UnitRule rule) || rule.Weapon == WeaponClass.None || rule.Range <= 0 || rule.Damage <= 0) continue;
+                if (rule.Kind == EntityKind.Building && rule.Power < 0 && lowPower.GetValueOrDefault(attacker.Owner)) continue;
                 SimEntity? target = ChooseTarget(attacker, rule, present) ?? ChooseTargetInRange(attacker, rule, alive, VisibleTo(attacker.Owner));
                 if (target is null) continue;
                 double amount = rule.Damage * rules.Effectiveness(attacker.TypeId, target.TypeId);
@@ -905,6 +1066,27 @@ public sealed class SkirmishSimulation
             }
         }
     }
+
+    /// <summary>
+    /// Clears an explicit target that has died or left its owner's sight: the order ends there, as in RA2, and the
+    /// unit keeps whatever path it had toward where the target was last seen instead of tracking it through fog.
+    /// </summary>
+    private void DropTargetsInFog()
+    {
+        Dictionary<PlayerId, HashSet<RegionId>> visibleTo = [];
+        foreach (SimEntity e in entities)
+        {
+            if (!e.Alive || e.ExplicitTarget is not { } targetId) continue;
+            SimEntity? target = entities.Find(t => t.Id == targetId);
+            if (target is null || !target.Alive) { e.ExplicitTarget = null; continue; }
+            if (target.Owner == e.Owner) continue;
+            HashSet<RegionId> visible = visibleTo.TryGetValue(e.Owner, out HashSet<RegionId>? set) ? set : visibleTo[e.Owner] = VisibleRegionsFor(e.Owner);
+            if (!IsVisibleTo(target, visible)) e.ExplicitTarget = null;
+        }
+    }
+
+    /// <summary>Whether an object stands in a region the given visible set covers, judged by its cell, as Observe does.</summary>
+    private bool IsVisibleTo(SimEntity e, HashSet<RegionId> visible) => map.Map.RegionOf(e.Position) is { } at && visible.Contains(at.Id);
 
     private SimEntity? ChooseTarget(SimEntity attacker, UnitRule attackerRule, List<SimEntity> present)
     {

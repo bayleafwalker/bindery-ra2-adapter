@@ -18,6 +18,9 @@ public sealed class Xorshift
         if (state == 0) state = 0x9E3779B97F4A7C15UL;
     }
 
+    /// <summary>The generator's position, for the simulation's state hash (two streams at different points diverge later).</summary>
+    internal ulong State => state;
+
     public ulong NextUInt64()
     {
         ulong x = state;

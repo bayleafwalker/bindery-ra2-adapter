@@ -32,4 +32,22 @@ public sealed class TradeTallyTests
         Assert.Equal(plant, killed[Arm]);
         Assert.Equal(0, killed.GetValueOrDefault(Opponent));
     }
+
+    // A construction yard is a deployed MCV: destroying it removes 3000 of value, not the yard's nominal 0.
+    [Fact]
+    public void Destroying_a_construction_yard_is_worth_its_mcv()
+    {
+        IRulesDatabase rules = RulesDatabase.LoadEmbeddedFixture();
+        Dictionary<PlayerId, int> lost = [], killed = [];
+        GameTime t = GameTime.FromSeconds(10);
+
+        MatchRunner.TallyTrades(
+        [
+            new GameEvent(GameEventKind.EntityDestroyed, t, new EntityId(1), Opponent, "NACNST", new Cell(1, 1), "combat"),
+            new GameEvent(GameEventKind.EntityKilledByUs, t, new EntityId(1), Arm, "NACNST", new Cell(1, 1), "combat"),
+        ], rules, lost, killed);
+
+        Assert.Equal(rules.Get("SMCV").Cost, lost[Opponent]);
+        Assert.Equal(rules.Get("SMCV").Cost, killed[Arm]);
+    }
 }

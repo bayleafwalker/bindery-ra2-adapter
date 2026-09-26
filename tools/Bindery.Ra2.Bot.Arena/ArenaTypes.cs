@@ -23,12 +23,31 @@ public sealed record ArmSpec(string Name, bool Oracle, bool LlmFake)
 /// <summary>Per-agent counters the arena turns into the report's metrics; filled from the bot's metrics and decision log.</summary>
 public sealed record ArenaAgentStats
 {
+    /// <summary>Proposals of the arm's primary strategist (fallback and emergency proposals are in <see cref="FallbackProposals"/>).</summary>
     public int Proposals { get; set; }
+
+    /// <summary>Primary proposals the validator rejected as invalid (stale ones count as late instead).</summary>
     public int Rejected { get; set; }
+
+    /// <summary>Primary proposals discarded as late.</summary>
     public int LateDiscarded { get; set; }
 
-    /// <summary>Seconds from each proposal's snapshot to its validation (spec "decision lateness").</summary>
+    /// <summary>Seconds from each primary proposal's snapshot to its validation (spec "decision lateness").</summary>
     public List<double> LateSeconds { get; } = [];
+
+    /// <summary>Proposals of the selector fallback and the emergency path, which answer at once and are kept out of the arm's figures.</summary>
+    public int FallbackProposals { get; set; }
+
+    /// <summary>Seconds from each shadow proposal's snapshot to its arrival.</summary>
+    public List<double> ShadowLateSeconds { get; } = [];
+
+    /// <summary>Shadow proposals the validator would have rejected, and their <c>fog.*</c> rejections.</summary>
+    public int ShadowRejected { get; set; }
+
+    public int ShadowFogRejections { get; set; }
+
+    /// <summary>Part of <see cref="Usd"/> billed by requests that failed (refusal, truncation, unparseable or unmappable reply).</summary>
+    public double FailedRequestUsd { get; set; }
 
     public int Activations { get; set; }
     public int PostureFlips { get; set; }

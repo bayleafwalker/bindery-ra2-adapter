@@ -11,7 +11,9 @@ namespace Bindery.Ra2.Bot.Sim;
 /// Two of the perturbations only show through combat: hidden enemies are
 /// wounded, and an enemy unit is placed just across a border inside the reach
 /// of the observer's longest-range weapon. A leak through fire or kill events
-/// takes seconds to appear, so a probe compares over a long window.
+/// takes seconds to appear, so a probe compares over a long window. One hidden
+/// unit is announced through the event path (a completed build and a new object),
+/// so broken event gating changes the observer's frame at once.
 /// </summary>
 public static class SimLeakageProbe
 {
@@ -33,10 +35,48 @@ public static class SimLeakageProbe
             if (!visible.Contains(hiddenRegion))
             {
                 string? anyType = FirstKnownUnitType(sim);
-                if (anyType is not null) sim.DebugSpawnSilently(other, anyType, hiddenRegion);
+                if (anyType is not null)
+                {
+                    sim.DebugSpawnSilently(other, anyType, hiddenRegion);
+                    // The same kind of object again, announced through the event path: event gating must hold it back too.
+                    sim.DebugSpawnAnnounced(other, anyType, hiddenRegion);
+                }
             }
         }
         sim.DebugWoundHidden(observer);
+    }
+
+    /// <summary>
+    /// Fog violations in one belief-mode frame: every object or event of another player (and every kill this player
+    /// is told about) must stand in a cell whose region is in <see cref="ObservationFrame.VisibleRegions"/>. A
+    /// differential probe only finds a leak that its perturbation happens to exercise; this per-frame check finds any
+    /// hidden position that reached the frame, whatever put it there (a unit between two region centres, an event in
+    /// fog). A superweapon launch is announced to every player by design, so its target cell is exempt.
+    /// </summary>
+    public static IReadOnlyList<string> FogViolations(ObservationFrame frame)
+    {
+        ArgumentNullException.ThrowIfNull(frame);
+        List<string> violations = [];
+        if (frame.Mode != ObservationMode.Belief) return violations;
+        bool Visible(Cell cell) => frame.Map.RegionOf(cell) is { } region && frame.VisibleRegions.Contains(region.Id);
+        foreach (ObservedEntity e in frame.Entities)
+        {
+            if (e.Owner != frame.Self && !Visible(e.Position))
+            {
+                violations.Add(FormattableString.Invariant($"t={frame.Time.Seconds:0.0} entity {e.Id.Value} {e.TypeId} at ({e.Position.X},{e.Position.Y}) is in a hidden region"));
+            }
+        }
+        foreach (GameEvent ev in frame.Events)
+        {
+            if (ev.Kind == GameEventKind.SuperweaponLaunched) continue;
+            bool aboutOther = ev.Owner != frame.Self || ev.Kind == GameEventKind.EntityKilledByUs;
+            if (!aboutOther) continue;
+            if (ev.Position is not { } cell || !Visible(cell))
+            {
+                violations.Add(FormattableString.Invariant($"t={frame.Time.Seconds:0.0} event {ev.Kind} {ev.TypeId} of player {ev.Owner?.Value} at {ev.Position} is not in a visible region"));
+            }
+        }
+        return violations;
     }
 
     private static string? FirstKnownUnitType(SkirmishSimulation sim) =>

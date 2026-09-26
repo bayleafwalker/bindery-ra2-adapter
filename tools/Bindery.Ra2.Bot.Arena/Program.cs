@@ -209,7 +209,7 @@ public static class Program
             LeakageProbeResult[] armProbes = [.. LeakageProbeTimes.Select(t => LeakageProbe.Run(arm, maps[0].Map, 1, rules, factory, perturbAtSeconds: t))];
             if (arm.Name == "bandit") context.BanditFor(arm).AbandonEpisode();
             probes.AddRange(armProbes);
-            Console.WriteLine($"{arm}: {armResults.Length} matches, {armResults.Count(static r => r.Winner == 0)} wins; leakage probe {armProbes.Sum(static p => p.Differences)}/{armProbes.Sum(static p => p.FramesCompared)} differing frames.");
+            Console.WriteLine($"{arm}: {armResults.Length} matches, {armResults.Count(static r => r.Winner == 0)} wins; leakage probe {armProbes.Sum(static p => p.Differences)}/{armProbes.Sum(static p => p.FramesCompared)} differing frames, {armProbes.Sum(static p => p.FogViolations)} fog-violation frames.");
         }
 
         List<MatchRecord> ordered = [.. results.OrderBy(r => r.Arm, StringComparer.Ordinal)

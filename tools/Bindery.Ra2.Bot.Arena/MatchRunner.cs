@@ -35,6 +35,19 @@ public sealed record PlayerMatchMetrics(
     IReadOnlyList<string> Labels,
     double? FirstAttackSeconds = null)
 {
+    /// <summary>Fallback and emergency proposals, kept out of <see cref="Proposals"/> and the lateness figures.</summary>
+    public int FallbackProposals { get; init; }
+
+    /// <summary>The shadow strategist's lateness per proposal, invalid proposals and <c>fog.*</c> rejections.</summary>
+    public IReadOnlyList<double> ShadowLateSeconds { get; init; } = [];
+
+    public int ShadowRejected { get; init; }
+
+    public int ShadowFogRejections { get; init; }
+
+    /// <summary>Part of <see cref="Usd"/> billed by failed requests.</summary>
+    public double FailedRequestUsd { get; init; }
+
     /// <summary>Seconds each playbook was active (the arm's intent timeline).</summary>
     public IReadOnlyDictionary<string, double> PlaybookSeconds { get; init; } = new Dictionary<string, double>();
 
@@ -103,7 +116,6 @@ public static class MatchRunner
         Dictionary<PlayerId, int> buildingsBuilt = new() { [ArmPlayer] = 0, [OpponentPlayer] = 0 };
         Dictionary<PlayerId, int> peakArmy = new() { [ArmPlayer] = 0, [OpponentPlayer] = 0 };
         Dictionary<PlayerId, double?> firstAttack = new() { [ArmPlayer] = null, [OpponentPlayer] = null };
-        int cheapest = rules.All.Where(static r => r.Cost > 0).Select(static r => r.Cost).DefaultIfEmpty(0).Min();
         int samples = 0;
 
         int maxFrames = (int)(maxSeconds * GameTime.FramesPerSecond) + GameTime.FramesPerSecond;
@@ -144,7 +156,7 @@ public static class MatchRunner
                 {
                     ObservationFrame view = p == ArmPlayer ? oracle : sim.Observe(p, ObservationMode.Oracle);
                     creditsSampleSum[p] += view.Credits;
-                    if (IsProductionIdle(view, p, rules, cheapest)) idleSamples[p]++;
+                    if (IsProductionIdle(view, p, rules)) idleSamples[p]++;
                     int army = view.Entities
                         .Where(e => e.Owner == p && rules.TryGet(e.TypeId, out UnitRule r) && r.Kind != EntityKind.Building && r.Damage > 0)
                         .Sum(e => rules.Get(e.TypeId).Cost);
@@ -204,18 +216,27 @@ public static class MatchRunner
         return present ? oracle.Time.Seconds : null;
     }
 
-    /// <summary>Spec: at least one factory, nothing queued, and credits for the cheapest buildable item.</summary>
-    private static bool IsProductionIdle(ObservationFrame frame, PlayerId player, IRulesDatabase rules, int cheapest)
+    /// <summary>
+    /// Spec: at least one factory, nothing queued, and credits for the cheapest item this player can build now (its
+    /// faction and the buildings it owns decide that, not the cheapest item anywhere in the rules).
+    /// </summary>
+    public static bool IsProductionIdle(ObservationFrame frame, PlayerId player, IRulesDatabase rules)
     {
-        bool hasFactory = frame.Entities.Any(e => e.Owner == player && rules.TryGet(e.TypeId, out UnitRule r) && r.Kind == EntityKind.Building && r.Role == UnitRole.Production);
-        if (!hasFactory || frame.Credits < cheapest) return false;
-        return frame.Queues.All(static q => q.Items.Count == 0);
+        ArgumentNullException.ThrowIfNull(frame);
+        ArgumentNullException.ThrowIfNull(rules);
+        List<ObservedEntity> own = [.. frame.Entities.Where(e => e.Owner == player)];
+        bool hasFactory = own.Any(e => rules.TryGet(e.TypeId, out UnitRule r) && r.Kind == EntityKind.Building && r.Role == UnitRole.Production);
+        if (!hasFactory || frame.Queues.Any(static q => q.Items.Count > 0)) return false;
+        HashSet<string> owned = own.Where(e => rules.TryGet(e.TypeId, out UnitRule r) && r.Kind == EntityKind.Building).Select(static e => e.TypeId).ToHashSet(StringComparer.Ordinal);
+        int? cheapest = rules.All.Where(r => r.Cost > 0 && rules.CanBuild(frame.Faction, owned, r.TypeId)).Select(static r => (int?)r.Cost).Min();
+        return cheapest is { } c && frame.Credits >= c;
     }
 
     /// <summary>
     /// Adds one step's losses and kills: every object destroyed in combat or by a superweapon is a loss to its owner,
     /// but only a kill the simulator attributes to the other player (<see cref="GameEventKind.EntityKilledByUs"/>)
     /// counts as value that player destroyed, so a strike on one's own units is a loss, not the opponent's kill.
+    /// Values come from <see cref="SimValuation.ValueOf"/> (a construction yard is worth its MCV).
     /// </summary>
     public static void TallyTrades(IEnumerable<GameEvent> events, IRulesDatabase rules, Dictionary<PlayerId, int> lostValueOf, Dictionary<PlayerId, int> killedValueBy)
     {
@@ -226,8 +247,9 @@ public static class MatchRunner
         foreach (GameEvent e in events)
         {
             if (e.Owner is not { } owner || e.Detail is not ("combat" or "superweapon") || !rules.TryGet(e.TypeId ?? string.Empty, out UnitRule rule)) continue;
-            if (e.Kind == GameEventKind.EntityDestroyed) lostValueOf[owner] = lostValueOf.GetValueOrDefault(owner) + rule.Cost;
-            else if (e.Kind == GameEventKind.EntityKilledByUs) killedValueBy[owner] = killedValueBy.GetValueOrDefault(owner) + rule.Cost;
+            int value = SimValuation.ValueOf(rules, rule.TypeId);
+            if (e.Kind == GameEventKind.EntityDestroyed) lostValueOf[owner] = lostValueOf.GetValueOrDefault(owner) + value;
+            else if (e.Kind == GameEventKind.EntityKilledByUs) killedValueBy[owner] = killedValueBy.GetValueOrDefault(owner) + value;
         }
     }
 
@@ -266,6 +288,11 @@ public static class MatchRunner
             DecisionLogHash: stats.DecisionLogHash,
             Labels: [.. stats.Labels])
         {
+            FallbackProposals = stats.FallbackProposals,
+            ShadowLateSeconds = [.. stats.ShadowLateSeconds],
+            ShadowRejected = stats.ShadowRejected,
+            ShadowFogRejections = stats.ShadowFogRejections,
+            FailedRequestUsd = stats.FailedRequestUsd,
             DistilledDecisions = stats.DistilledDecisions,
             DistilledEscalations = stats.DistilledEscalations,
             ShadowCompared = stats.ShadowCompared,

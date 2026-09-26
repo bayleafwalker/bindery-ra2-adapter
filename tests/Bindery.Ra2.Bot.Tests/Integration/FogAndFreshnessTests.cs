@@ -86,7 +86,9 @@ public sealed class FogAndFreshnessTests
         using MatchHarness match = MatchHarness.Create(timely, "balanced", seed: 1);
         match.RunUntil(180);
 
-        Assert.Empty(match.ArmLog.OfKind(DecisionRecordKinds.LateDiscarded));
+        // Nothing discarded for its age. A proposal overtaken by a strategic event is discarded by the other freshness
+        // rule, which depends on how the match plays out, not on the latency under test.
+        Assert.DoesNotContain(match.ArmLog.OfKind(DecisionRecordKinds.LateDiscarded), static r => r.Data.GetProperty("reason").GetString() != "event");
         DecisionRecord activation = match.ArmLog.OfKind(DecisionRecordKinds.IntentActivated)
             .First(static r => r.Data.GetProperty("source").GetString() == nameof(IntentSource.Llm));
         JsonElement data = activation.Data;

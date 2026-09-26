@@ -9,7 +9,8 @@ namespace Bindery.Ra2.Bot.Arena;
 /// <param name="FramesCompared">Frames after the perturbation on which the arm's strategist context was compared.</param>
 /// <param name="Differences">Frames on which the context hash differed while everything the arm could see was still identical (must be 0).</param>
 /// <param name="ComparedSeconds">How long the comparison ran before the window closed or the arm legitimately saw a difference.</param>
-public sealed record LeakageProbeResult(string Arm, string Map, int Seed, double PerturbedAtSeconds, bool StatesMatchedBeforePerturbation, int FramesCompared, int Differences, string? Note = null, double ComparedSeconds = 0);
+/// <param name="FogViolations">Arm frames, over the whole run of both simulations, that carried an enemy object or event from a region the arm did not see (<see cref="SimLeakageProbe.FogViolations"/>; must be 0). The differential comparison only finds leaks its perturbation exercises; this per-frame check finds any.</param>
+public sealed record LeakageProbeResult(string Arm, string Map, int Seed, double PerturbedAtSeconds, bool StatesMatchedBeforePerturbation, int FramesCompared, int Differences, string? Note = null, double ComparedSeconds = 0, int FogViolations = 0);
 
 /// <summary>
 /// The spec's hidden-information probe, run per arm on the real bot: two simulations run in
@@ -67,7 +68,7 @@ public static class LeakageProbe
                 if (StrategistContextHash.Compute(ca) != StrategistContextHash.Compute(cb)) differences++;
             }
             double seconds = (a.Sim.Time.Frame - perturbFrame) / (double)GameTime.FramesPerSecond;
-            return new LeakageProbeResult(arm.ToString(), map.Map.MapId, seed, perturbAtSeconds, matched, compared, differences, note, seconds);
+            return new LeakageProbeResult(arm.ToString(), map.Map.MapId, seed, perturbAtSeconds, matched, compared, differences, note, seconds, a.FogViolations + b.FogViolations);
         }
         finally
         {
@@ -95,10 +96,14 @@ public static class LeakageProbe
 
         public IArenaAgent Opponent { get; }
 
+        /// <summary>Arm frames so far that carried a hidden enemy object or event.</summary>
+        public int FogViolations { get; private set; }
+
         public void Frame()
         {
             ObservationFrame armFrame = Sim.Observe(MatchRunner.ArmPlayer, ObservationMode.Belief);
             ObservationFrame opponentFrame = Sim.Observe(MatchRunner.OpponentPlayer, ObservationMode.Belief);
+            if (SimLeakageProbe.FogViolations(armFrame).Count > 0) FogViolations++;
             foreach (GameCommand c in Arm.Tick(armFrame)) Sim.Submit(MatchRunner.ArmPlayer, c);
             foreach (GameCommand c in Opponent.Tick(opponentFrame)) Sim.Submit(MatchRunner.OpponentPlayer, c);
             Sim.Step();
