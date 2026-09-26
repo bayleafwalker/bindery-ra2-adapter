@@ -242,16 +242,23 @@ public sealed class Ra2ObservationAssembler
         if (payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty(field, out JsonElement element) && element.ValueKind == JsonValueKind.Number)
         {
             if (element.TryGetInt64(out value)) return true;
-            if (element.TryGetDouble(out double d)) { value = (long)Math.Round(d); return true; }
+            if (element.TryGetDouble(out double d) && Math.Abs(d) < 9.2e18) { value = (long)Math.Round(d); return true; }
         }
         value = 0;
         RecordMissing(observation, field, effect);
         return false;
     }
 
+    // Narrowing casts are unchecked in C#, so an out-of-range payload value would wrap into a valid-looking one (an
+    // id aliasing another tracked entity, a health turning negative). It is a contract violation: recorded with an
+    // "_out_of_range" effect and the entity or event excluded, like a missing field.
     private bool TryGetInt(JsonElement payload, string field, NormalizedObservation observation, string effect, out int value)
     {
-        if (TryGetLong(payload, field, observation, effect, out long raw)) { value = (int)raw; return true; }
+        if (TryGetLong(payload, field, observation, effect, out long raw))
+        {
+            if (raw is >= int.MinValue and <= int.MaxValue) { value = (int)raw; return true; }
+            RecordMissing(observation, field, effect + " (out_of_range)");
+        }
         value = 0;
         return false;
     }
@@ -292,14 +299,18 @@ public sealed class Ra2ObservationAssembler
 
     private bool TryGetEntityId(JsonElement payload, string field, NormalizedObservation observation, string effect, out EntityId id)
     {
-        if (TryGetLong(payload, field, observation, effect, out long raw) && raw >= 0) { id = new EntityId((uint)raw); return true; }
+        if (TryGetLong(payload, field, observation, effect, out long raw))
+        {
+            if (raw is >= 0 and <= uint.MaxValue) { id = new EntityId((uint)raw); return true; }
+            RecordMissing(observation, field, effect + " (out_of_range)");
+        }
         id = default;
         return false;
     }
 
     private bool TryGetPlayerId(JsonElement payload, string field, NormalizedObservation observation, string effect, out PlayerId playerId)
     {
-        if (TryGetLong(payload, field, observation, effect, out long raw)) { playerId = new PlayerId((int)raw); return true; }
+        if (TryGetInt(payload, field, observation, effect, out int raw)) { playerId = new PlayerId(raw); return true; }
         playerId = default;
         return false;
     }
@@ -309,6 +320,12 @@ public sealed class Ra2ObservationAssembler
         bool hasX = TryGetDouble(payload, Ra2BotTelemetryContract.FieldX, observation, effect, out double x);
         bool hasY = TryGetDouble(payload, Ra2BotTelemetryContract.FieldY, observation, effect, out double y);
         if (!hasX || !hasY) { cell = default; return false; }
+        if (Math.Abs(x) > int.MaxValue || Math.Abs(y) > int.MaxValue)
+        {
+            RecordMissing(observation, Math.Abs(x) > int.MaxValue ? Ra2BotTelemetryContract.FieldX : Ra2BotTelemetryContract.FieldY, effect + " (out_of_range)");
+            cell = default;
+            return false;
+        }
         cell = new Cell((int)Math.Round(x), (int)Math.Round(y));
         return true;
     }
