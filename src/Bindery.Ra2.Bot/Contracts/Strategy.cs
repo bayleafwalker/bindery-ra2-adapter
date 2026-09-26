@@ -28,6 +28,11 @@ public sealed record IntentHistoryEntry(string IntentId, IntentSource Source, St
 /// When the arbiter's commitment clock for the active intent started (renewals do not restart it); null when there
 /// is no active intent or the context does not say.
 /// </param>
+/// <param name="BaseThreatOverrideSpent">
+/// Whether the arbiter has already spent its base-threat override on the current threat episode
+/// (<see cref="Arbitration.IntentArbiter.BaseThreatOverrideSpent"/>); null when there is no active intent or the
+/// context does not say.
+/// </param>
 public sealed record StrategistContext(
     StrategicFeatures Features,
     IRulesDatabase Rules,
@@ -38,7 +43,8 @@ public sealed record StrategistContext(
     IReadOnlySet<string>? OwnedBuildingTypes = null,
     string? Trigger = null,
     Arbitration.ProposalRole? ActiveRole = null,
-    GameTime? ActiveSince = null);
+    GameTime? ActiveSince = null,
+    bool? BaseThreatOverrideSpent = null);
 
 /// <summary>Cost and latency accounting for one proposal.</summary>
 /// <param name="Model">The model that served the reply (a server-side fallback may differ from the one requested).</param>

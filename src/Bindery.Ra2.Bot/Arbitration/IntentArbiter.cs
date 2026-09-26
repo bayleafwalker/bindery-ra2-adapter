@@ -108,6 +108,12 @@ public sealed class IntentArbiter
     /// <summary>Slot that installed <see cref="Active"/>.</summary>
     public ProposalRole ActiveRole { get; private set; }
 
+    /// <summary>
+    /// True while the base-threat override has been spent on the current threat episode: a plan was accepted while
+    /// the threat held, so the override stays unavailable until the threat clears.
+    /// </summary>
+    public bool BaseThreatOverrideSpent => baseThreatAnswered;
+
     /// <summary>Posture of the most recently ended or active intent, for flip counting.</summary>
     public StrategicPosture? LastPosture { get; private set; }
 

@@ -293,6 +293,11 @@ public sealed class IntentArbiterTests
             Assert.Equal("commitment", Offer(wavering, threat).Reason);
         }
         Assert.Equal("p1", arbiter.Active?.IntentId);
+        Assert.True(arbiter.BaseThreatOverrideSpent);
+
+        // The threat clears: the override is available again for the next episode.
+        arbiter.Update(Fx.Features(40));
+        Assert.False(arbiter.BaseThreatOverrideSpent);
     }
 
     [Fact]

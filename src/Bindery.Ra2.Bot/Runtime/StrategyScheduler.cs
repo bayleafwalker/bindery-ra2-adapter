@@ -233,7 +233,8 @@ public sealed class StrategyScheduler : IDisposable
             belief is null ? null : new SortedSet<string>(belief.OwnBuildingTypes, StringComparer.Ordinal),
             trigger,
             arbiter.Active is null ? null : arbiter.ActiveRole,
-            arbiter.Active is null ? null : arbiter.ActiveSince);
+            arbiter.Active is null ? null : arbiter.ActiveSince,
+            arbiter.Active is null ? null : arbiter.BaseThreatOverrideSpent);
 
     /// <summary>The context a strategist would receive for these features (and this belief's own buildings) right now, for probes and diagnostics.</summary>
     public StrategistContext ContextFor(StrategicFeatures features, BeliefSnapshot? belief = null)

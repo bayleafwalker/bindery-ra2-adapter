@@ -126,6 +126,32 @@ public sealed class PromptArbitrationTests
         Assert.Contains("arbitration.baseThreatOverrideRatio", prompt.SystemPrompt, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The base-threat override is conditional: it never replaces a Defend or Turtle plan and answers one threat
+    /// episode once. A prompt stating it unconditionally made the model propose switch after switch during a
+    /// sustained threat, each refused as "commitment"; the prompt states the conditions and whether it is available.
+    /// </summary>
+    [Theory]
+    [InlineData(StrategicPosture.Boom, false, true)]
+    [InlineData(StrategicPosture.Boom, true, false)]
+    [InlineData(StrategicPosture.Defend, false, false)]
+    [InlineData(StrategicPosture.Turtle, false, false)]
+    public void Prompt_says_when_the_base_threat_override_is_available(StrategicPosture posture, bool spent, bool available)
+    {
+        IntentArbiter arbiter = new(new FakePlaybooks());
+        Offer(arbiter, Intent("a", "allied-boom", posture, 0), 0);
+        StrategistContext context = Context(arbiter, 10) with
+        {
+            ActiveRole = arbiter.ActiveRole, ActiveSince = arbiter.ActiveSince, BaseThreatOverrideSpent = spent,
+        };
+
+        IntentPrompt prompt = new IntentPromptBuilder().Build(context, StrategistMode.Strategic);
+        using JsonDocument situation = JsonDocument.Parse(prompt.Situation);
+        Assert.Equal(available, situation.RootElement.GetProperty("activeIntent").GetProperty("baseThreatOverrideAvailable").GetBoolean());
+        Assert.Contains("neither Defend nor Turtle", prompt.SystemPrompt, StringComparison.Ordinal);
+        Assert.Contains("activeIntent.baseThreatOverrideAvailable", prompt.SystemPrompt, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Arbitration_numbers_come_from_the_options_the_runtime_uses()
     {

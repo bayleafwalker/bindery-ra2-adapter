@@ -52,7 +52,7 @@ public sealed class IntentPromptBuilder
         - Arbitration: the runtime accepts or refuses your proposal by these rules, with the numbers in the match context's arbitration block:
           - When activeIntent.placeholder is true, the active intent is a stand-in the runtime installed while it had no plan of yours (the deterministic fallback or the emergency default): any valid proposal replaces it at once, with no commitment window, so choose freely.
           - A proposal with the same playbookId and the same posture as the active intent is a renewal: always accepted; it updates parameters and expiry and does not restart the commitment clock. Changing only the posture is not a renewal.
-          - Any other proposal is refused while activeIntent.minCommitRemainingSeconds is above 0, unless one of the active intent's abort triggers holds or BaseThreatRatio is above arbitration.baseThreatOverrideRatio. Inside the window, keep both playbookId and posture and adjust parameters. secondsActive and minCommitRemainingSeconds count from when the current plan was first accepted, across renewals.
+          - Any other proposal is refused while activeIntent.minCommitRemainingSeconds is above 0, unless one of the active intent's abort triggers holds or the base-threat override applies. The override applies when BaseThreatRatio is above arbitration.baseThreatOverrideRatio, the active intent's posture is neither Defend nor Turtle, and the override has not already answered this threat: it is spent by the first plan accepted while the ratio is above the threshold and is available again only after the ratio falls back to it or below. activeIntent.baseThreatOverrideAvailable says whether the posture and episode allow it now. Inside the window, keep both playbookId and posture and adjust parameters. secondsActive and minCommitRemainingSeconds count from when the current plan was first accepted, across renewals.
           - After the window, a posture change needs your confidence to be at least arbitration.postureConfidenceMargin above the active intent's confidence; a different playbook with the same posture needs no margin. A playbook without its own commitment uses arbitration.defaultMinCommitSeconds.
           - A proposal whose own abort triggers already hold is refused.
           - Frequent switching loses games.
@@ -181,6 +181,7 @@ public sealed class IntentPromptBuilder
         ["defaultMinCommitSeconds"] = CanonicalJson.Number(arbiterOptions.DefaultMinCommitSeconds),
         ["postureConfidenceMargin"] = CanonicalJson.Number(arbiterOptions.PostureConfidenceMargin),
         ["baseThreatOverrideRatio"] = CanonicalJson.Number(arbiterOptions.BaseThreatOverrideRatio),
+        ["baseThreatOverride"] = "once per threat episode, never over a Defend or Turtle plan",
     };
 
     private static IReadOnlyList<Playbook> FactionPlaybooks(StrategistContext context) =>
@@ -467,6 +468,10 @@ public sealed class IntentPromptBuilder
             ["assumptions"] = Strings(intent.Assumptions),
             ["secondsActive"] = CanonicalJson.Number(active),
             ["minCommitRemainingSeconds"] = minCommit is { } m ? CanonicalJson.Number(Math.Max(0, m - active)) : null,
+            // Whether posture and threat episode allow the base-threat override (IntentArbiter.Decide); the ratio
+            // itself is in conditionMetrics.
+            ["baseThreatOverrideAvailable"] = intent.Posture is not (StrategicPosture.Defend or StrategicPosture.Turtle)
+                && context.BaseThreatOverrideSpent != true,
             ["expiresInSeconds"] = CanonicalJson.Number(Math.Max(0, intent.ExpiresAt.SecondsSince(now))),
         };
     }
