@@ -111,7 +111,7 @@ public sealed partial class FeatureCompiler : IFeatureCompiler
             snapshot.Time, snapshot.Credits, incomePerMinuteCurrent, spendingPerMinuteCurrent,
             armyValueCurrent, cumulativeLossesValue, cumulativeKillsValue, enemyArmyValueCurrent));
 
-        DetectStateTransitionEvents(snapshot, enemyWithTrend, armyValueTrend, events);
+        DetectStateTransitionEvents(snapshot, enemyWithTrend, armyValueCurrent, events);
         events.Sort(static (a, b) =>
         {
             int byTime = a.Time.CompareTo(b.Time);
@@ -236,11 +236,17 @@ public sealed partial class FeatureCompiler : IFeatureCompiler
     private static void AddEvent(List<StrategicEvent> events, StrategicEventKind kind, GameTime time, double severity, string detail, RegionId? region = null) =>
         events.Add(new StrategicEvent(kind, time, Math.Clamp(severity, 0, 1), detail, region));
 
-    /// <summary>Adds an event, suppressed if the same (kind, region) fired within <see cref="FeatureOptions.EventDedupWindowSeconds"/>.</summary>
-    private void EmitGated(List<StrategicEvent> events, StrategicEventKind kind, GameTime time, double severity, string detail, RegionId? region = null)
+    /// <summary>
+    /// Adds an event, suppressed if the same (kind, region) fired within <paramref name="gapSeconds"/>, which
+    /// defaults to <see cref="FeatureOptions.EventDedupWindowSeconds"/>.
+    /// </summary>
+    private void EmitGated(
+        List<StrategicEvent> events, StrategicEventKind kind, GameTime time, double severity, string detail,
+        RegionId? region = null, double? gapSeconds = null)
     {
         (StrategicEventKind, RegionId?) key = (kind, region);
-        if (lastEmitted.TryGetValue(key, out GameTime last) && time.SecondsSince(last) < options.EventDedupWindowSeconds) return;
+        double gap = gapSeconds ?? options.EventDedupWindowSeconds;
+        if (lastEmitted.TryGetValue(key, out GameTime last) && time.SecondsSince(last) < gap) return;
         lastEmitted[key] = time;
         AddEvent(events, kind, time, severity, detail, region);
     }

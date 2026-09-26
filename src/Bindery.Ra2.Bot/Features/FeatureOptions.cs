@@ -24,6 +24,11 @@ namespace Bindery.Ra2.Bot.Features;
 /// </param>
 /// <param name="ArmyValueSwingThreshold">Fractional own-army-value change over <see cref="ArmyValueSwingWindowSeconds"/> that raises <see cref="StrategicEventKind.ArmyValueSwing"/>.</param>
 /// <param name="ArmyValueSwingWindowSeconds">Window for the army-value-swing check. Spec default: 15 s.</param>
+/// <param name="ArmyValueSwingMinValue">
+/// Smallest army value a swing is measured against. The fraction is the change over
+/// <c>max(|baseline|, this)</c>, so a first unit or a rebuild from nothing is not a 100% swing unless it adds at
+/// least <see cref="ArmyValueSwingThreshold"/> of this value; 1000 credits is roughly one tank and escort.
+/// </param>
 /// <param name="ScoutingWindowSeconds">A region counts as "covered" for <see cref="ScoutingFeatures.CoverageFraction"/> if seen within this many seconds. Spec default: 60 s.</param>
 /// <param name="EnemyStartUnscoutedGraceSeconds">How long into the match to withhold the "enemy start unscouted" unknown, so it does not fire in the opening seconds.</param>
 /// <param name="EnemyTechUnknownThresholdSeconds">Age, in seconds, of the newest sighting of any enemy building before "enemy tech unknown" fires. Spec example: 120 s.</param>
@@ -47,4 +52,5 @@ public sealed record FeatureOptions(
     double EnemyArmyUnseenThresholdSeconds = 60.0,
     double EventDedupWindowSeconds = 20.0,
     double LowPowerGraceSeconds = 30.0,
-    double IncomeWindowSeconds = 15.0);
+    double IncomeWindowSeconds = 15.0,
+    double ArmyValueSwingMinValue = 1000.0);

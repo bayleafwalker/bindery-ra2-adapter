@@ -83,7 +83,7 @@ public sealed partial class FeatureCompiler
     /// Each is guarded by comparing to the previous compile's remembered
     /// state, so it fires once per genuine change, not once per frame.
     /// </summary>
-    private void DetectStateTransitionEvents(BeliefSnapshot snapshot, EnemyFeatures enemy, Trend armyValueTrend, List<StrategicEvent> events)
+    private void DetectStateTransitionEvents(BeliefSnapshot snapshot, EnemyFeatures enemy, double armyValueCurrent, List<StrategicEvent> events)
     {
         // Expansions change hands with buildings, not with whoever walks through: a harvester or a passing scout
         // flickers region control every few seconds and would re-announce the same field each time.
@@ -111,12 +111,15 @@ public sealed partial class FeatureCompiler
                     AddEvent(events, StrategicEventKind.ProductionTransition, snapshot.Time, 0.3, produced);
             }
 
-            double baseline15 = armyValueTrend.Current - armyValueTrend.Delta15s;
-            double fraction = baseline15 != 0
-                ? Math.Abs(armyValueTrend.Delta15s) / Math.Abs(baseline15)
-                : armyValueTrend.Delta15s != 0 ? 1.0 : 0.0;
+            // Measured over the configured window against a value floor: from an empty army, the first cheap unit
+            // is +100% of nothing, which is not the sudden swing this event exists to flag.
+            double window = options.ArmyValueSwingWindowSeconds;
+            double baseline = Baseline(snapshot.Time, window, static s => s.ArmyValue);
+            double change = armyValueCurrent - baseline;
+            double fraction = Math.Abs(change) / Math.Max(Math.Abs(baseline), Math.Max(1.0, options.ArmyValueSwingMinValue));
             if (fraction > options.ArmyValueSwingThreshold)
-                EmitGated(events, StrategicEventKind.ArmyValueSwing, snapshot.Time, Math.Min(1.0, fraction), $"{fraction:P0} in 15s");
+                EmitGated(events, StrategicEventKind.ArmyValueSwing, snapshot.Time, Math.Min(1.0, fraction),
+                    string.Create(CultureInfo.InvariantCulture, $"{(change < 0 ? "-" : "+")}{fraction * 100:0}% in {window:0}s"));
 
             foreach (RegionId region in ownExpansions.Where(r => !previousOwnExpansions.Contains(r)).OrderBy(static r => r.Value))
                 AddEvent(events, StrategicEventKind.ExpansionTaken, snapshot.Time, 0.3, "ore region taken", region);
@@ -127,7 +130,8 @@ public sealed partial class FeatureCompiler
             {
                 double deficit = snapshot.Power.Drained - snapshot.Power.Produced;
                 double severity = Math.Min(1.0, deficit / Math.Max(1.0, snapshot.Power.Produced));
-                EmitGated(events, StrategicEventKind.LowPower, snapshot.Time, severity, string.Create(CultureInfo.InvariantCulture, $"deficit {deficit:0}"));
+                EmitGated(events, StrategicEventKind.LowPower, snapshot.Time, severity, string.Create(CultureInfo.InvariantCulture, $"deficit {deficit:0}"),
+                    gapSeconds: options.LowPowerGraceSeconds);
             }
         }
         else

@@ -226,4 +226,49 @@ public sealed class FeatureCompilerReviewTests
         Assert.Contains(f.Scouting.ImportantUnknowns, static u => u.Contains("army not seen", StringComparison.Ordinal));
         Assert.Contains(f.Scouting.ImportantUnknowns, static u => u.Contains("tech unknown", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void ArmyValueSwing_DoesNotFireForTheFirstCheapUnit()
+    {
+        (BeliefModel belief, FeatureCompiler compiler) = New();
+        List<StrategicEvent> events = [];
+        for (int t = 0; t <= 25; t++)
+        {
+            List<ObservedEntity> entities = [ConYardAtHome()];
+            if (t >= 20) entities.Add(Own(3, "rifleman", HomeCell));
+            events.AddRange(compiler.Compile(belief.Apply(Frame(t, 5000, entities))).Events);
+        }
+        Assert.DoesNotContain(events, static e => e.Kind == StrategicEventKind.ArmyValueSwing);
+    }
+
+    private static List<StrategicEvent> SlowDecline(FeatureOptions options)
+    {
+        (BeliefModel belief, FeatureCompiler compiler) = New(options);
+        List<StrategicEvent> events = [];
+        for (int t = 0; t <= 30; t++)
+        {
+            int alive = t < 10 ? 40 : Math.Max(20, 40 - (t - 10));
+            List<ObservedEntity> entities = [ConYardAtHome(), .. Enumerable.Range(0, alive).Select(i => Own((uint)(100 + i), "rifleman", HomeCell))];
+            events.AddRange(compiler.Compile(belief.Apply(Frame(t, 5000, entities))).Events);
+        }
+        return events;
+    }
+
+    [Fact]
+    public void ArmyValueSwingWindowSeconds_ChangesTheWindowTheSwingIsMeasuredOver()
+    {
+        // Losing 100 of 4000 per second: 25% goes by within 15 s, never within 5 s.
+        Assert.Contains(SlowDecline(new FeatureOptions()), static e => e.Kind == StrategicEventKind.ArmyValueSwing);
+        Assert.DoesNotContain(SlowDecline(new FeatureOptions(ArmyValueSwingWindowSeconds: 5)), static e => e.Kind == StrategicEventKind.ArmyValueSwing);
+    }
+
+    [Fact]
+    public void LowPower_IsGatedByLowPowerGraceSeconds()
+    {
+        (BeliefModel belief, FeatureCompiler compiler) = New(new FeatureOptions(EventDedupWindowSeconds: 20, LowPowerGraceSeconds: 60));
+        List<StrategicEvent> events = [];
+        for (int t = 0; t <= 50; t++)
+            events.AddRange(compiler.Compile(belief.Apply(Frame(t, 5000, [ConYardAtHome()], power: new PowerState(50, 100)))).Events);
+        Assert.Single(events, static e => e.Kind == StrategicEventKind.LowPower);
+    }
 }
