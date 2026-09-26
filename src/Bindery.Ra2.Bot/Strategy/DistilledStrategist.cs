@@ -14,13 +14,20 @@ namespace Bindery.Ra2.Bot.Strategy;
 /// </param>
 /// <param name="MinProbability">Escalate when the most likely playbook's probability is below this.</param>
 /// <param name="MinExamples">Escalate always while the dataset has fewer examples than this.</param>
+/// <param name="Mode">
+/// The observation mode the strategist plays in. A <see cref="ObservationMode.Belief"/> strategist (the default)
+/// ignores examples decided on <see cref="ObservationMode.Oracle"/> frames: they were chosen with the whole map in
+/// view, and a fog-respecting arm fitted to them would be an oracle arm in disguise. Only an oracle (diagnostic)
+/// arm trains on them.
+/// </param>
 public sealed record DistilledOptions(
     int Epochs = 400,
     double LearningRate = 0.5,
     double L2 = 1e-3,
     double MaxDistance = 3.0,
     double MinProbability = 0.0,
-    int MinExamples = 10);
+    int MinExamples = 10,
+    ObservationMode Mode = ObservationMode.Belief);
 
 /// <summary>
 /// A multinomial logistic regression over playbooks, trained deterministically from a
@@ -58,9 +65,14 @@ public sealed class DistilledStrategist : IStrategist, Runtime.IFrameAwareStrate
         Id = id;
 
         int d = FeatureVector.Dimension;
-        List<DecisionExample> examples = dataset.Examples
+        ObservationMode mode = this.options.Mode;
+        List<DecisionExample> usable = dataset.Examples
             .Where(static e => e.FeatureVersion == FeatureVector.Version && e.Features.Count == FeatureVector.Dimension)
             .ToList();
+        List<DecisionExample> examples = mode == ObservationMode.Oracle
+            ? usable
+            : usable.Where(static e => e.Mode != ObservationMode.Oracle).ToList();
+        OracleExamplesIgnored = usable.Count - examples.Count;
         trainedOn = examples.Count;
         classes = [.. examples.Select(static e => e.PlaybookId).Distinct(StringComparer.Ordinal).OrderBy(static c => c, StringComparer.Ordinal)];
         mean = new double[d];
@@ -93,6 +105,9 @@ public sealed class DistilledStrategist : IStrategist, Runtime.IFrameAwareStrate
     public IReadOnlyList<string> Classes => classes;
 
     public int TrainedOn => trainedOn;
+
+    /// <summary>Oracle-frame examples left out of training because this strategist plays on belief frames.</summary>
+    public int OracleExamplesIgnored { get; }
 
     public int Decisions { get; private set; }
 
