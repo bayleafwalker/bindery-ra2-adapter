@@ -39,6 +39,16 @@ namespace Bindery.Ra2.Bot.Operations;
 /// <param name="DefaultHarassIntervalSeconds">Seconds between harass sorties when the playbook has no <c>harassIntervalSeconds</c>.</param>
 /// <param name="HarassDwellSeconds">Seconds a harass sortie spends in its target region before it heads home to regroup.</param>
 /// <param name="SuperweaponTargetRadiusCells">Radius used to score superweapon targets: the known enemy building value within it minus the own object value within it (the strike hits both sides)</param>
+/// <param name="DefendReleaseFraction">
+/// Hysteresis of the defend switch: the army, once pulled home by a base threat at the defend ratio, stays until
+/// the threat drops below this fraction of that ratio (and <paramref name="DefendMinSeconds"/> have passed).
+/// </param>
+/// <param name="DefendMinSeconds">Minimum seconds the army defends before it may leave for an attack again.</param>
+/// <param name="PlacementRetrySeconds">
+/// A finished building still unplaced this long after it was ordered onto a cell means the game refused the cell
+/// (footprint overlap, cliff, ore, a unit in the way); the next placement searches elsewhere.
+/// </param>
+/// <param name="RejectedPlacementMemorySeconds">How long a refused cell stays excluded (a blocking unit moves on).</param>
 /// <param name="ConditionEvaluator">
 /// Evaluates one <see cref="Condition"/> against <see cref="StrategicFeatures"/>. Left null,
 /// the planner uses the canonical <see cref="Arbitration.ConditionEvaluator.Holds"/>, the single
@@ -68,7 +78,11 @@ public sealed record OperationalOptions(
     double DefaultDefendThreatRatio = 1.0,
     double DefaultHarassIntervalSeconds = 60,
     double HarassDwellSeconds = 10,
-    double SuperweaponTargetRadiusCells = 6)
+    double SuperweaponTargetRadiusCells = 6,
+    double DefendReleaseFraction = 0.7,
+    double DefendMinSeconds = 10,
+    double PlacementRetrySeconds = 3,
+    double RejectedPlacementMemorySeconds = 120)
 {
     /// <summary>The evaluator actually used: <see cref="ConditionEvaluator"/> when set, else the default.</summary>
     public Func<Condition, StrategicFeatures, bool> Evaluator => ConditionEvaluator ?? Arbitration.ConditionEvaluator.Holds;
