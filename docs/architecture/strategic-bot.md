@@ -167,8 +167,9 @@ Recorded when the eight work packages were merged into `feat/strategic-bot`.
   regions only, optional) and `BeliefSnapshot.OreLastSeen` make
   `EconomyFeatures.OreRemainingFraction` measurable; doc comments state the
   `OperationalPlan.BudgetReservations` key convention, who leases units for
-  tactical controllers, and the 9999-second "unknown" convention. Not applied:
-  owned building types in `StrategistContext`, an `IStrategistDiagnostics`
+  tactical controllers, and the 9999-second "unknown" convention. Not applied
+  then: owned building types in `StrategistContext` (applied in completeness
+  round 1, below), an `IStrategistDiagnostics`
   interface, and moving `IFrameAwareStrategist` into the contracts (the arena
   subscribes to `ClaudeStrategist.ProposalFailed` instead).
 - **Single definitions.** The planner's private condition evaluator was deleted;
@@ -237,4 +238,14 @@ Gaps an operator review found after integration, and how each was closed.
   `LaunchSuperweaponCommand` (sink kind `launch_superweapon`). The RA2
   telemetry contract (observation/v1) does not carry superweapon timers yet,
   so a retail frame's `Superweapons` is null.
+- **Rule facts for the LLM.** `StrategistContext.OwnedBuildingTypes` (the
+  player's own buildings, so fog-safe; the scheduler fills it from belief) lets
+  the prompt's situation carry `techProgress`: each playbook tech goal's
+  remaining prerequisite path, cost and serial build seconds from the base
+  actually owned, and whether it can be started now. `counters` lists, for each
+  enemy unit type the player has seen, the faction's three most effective armed
+  unit types by the rules' effectiveness multiplier (only types that can hit it:
+  anti-air weapons hit aircraft only), with effective damage, cost and whether
+  each is buildable now. The empty-base rule facts stay in the cacheable match
+  context. Contract change: `StrategistContext.OwnedBuildingTypes` (optional).
 

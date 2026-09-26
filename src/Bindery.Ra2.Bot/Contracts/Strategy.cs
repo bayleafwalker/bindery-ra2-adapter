@@ -9,13 +9,18 @@ public sealed record IntentHistoryEntry(string IntentId, IntentSource Source, St
 /// no engine state: strategists see compiled features, rule facts and the
 /// playbook catalogue only.
 /// </summary>
+/// <param name="OwnedBuildingTypes">
+/// Building types the player owns now (its own state, so fog-safe), so prerequisite paths and time-to-tech are
+/// measured from the actual base; null in hand-built contexts that do not say.
+/// </param>
 public sealed record StrategistContext(
     StrategicFeatures Features,
     IRulesDatabase Rules,
     IPlaybookLibrary Playbooks,
     StrategicIntent? ActiveIntent,
     IReadOnlyList<IntentHistoryEntry> History,
-    string? Personality);
+    string? Personality,
+    IReadOnlySet<string>? OwnedBuildingTypes = null);
 
 /// <summary>Cost and latency accounting for one proposal.</summary>
 public sealed record ProposalCost(double LatencySeconds, long InputTokens, long OutputTokens, long CacheReadTokens, string? Model);

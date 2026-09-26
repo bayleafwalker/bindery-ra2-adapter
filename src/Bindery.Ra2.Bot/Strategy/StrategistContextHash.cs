@@ -8,7 +8,8 @@ namespace Bindery.Ra2.Bot.Strategy;
 
 /// <summary>
 /// A stable digest of everything a strategist is given that varies during a match:
-/// the compiled features, the active intent, the intent history and the personality.
+/// the compiled features, the active intent, the intent history, the personality and the
+/// owned building types.
 /// (The rules database and playbook catalogue are fixed per match and identified by
 /// <see cref="IRulesDatabase.RulesetId"/> and the playbook ids.) The fog invariant is
 /// tested by perturbing hidden simulator state and requiring this digest to stay the same.
@@ -27,6 +28,7 @@ public static class StrategistContextHash
             activeIntent = context.ActiveIntent is null ? (JsonElement?)null : IntentJson.ToElement(context.ActiveIntent),
             history = context.History,
             personality = context.Personality,
+            ownedBuildingTypes = context.OwnedBuildingTypes?.OrderBy(static t => t, StringComparer.Ordinal).ToList(),
         };
         return JsonSerializer.Serialize(view, BotJson.Options);
     }

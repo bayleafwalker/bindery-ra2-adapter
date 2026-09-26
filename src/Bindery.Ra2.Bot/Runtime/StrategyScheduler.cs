@@ -158,7 +158,7 @@ public sealed class StrategyScheduler : IDisposable
             pendingTrigger = null;
             lastPrimaryStart = now;
             arbiter.AcknowledgeReplan();
-            StrategistContext context = Context(features);
+            StrategistContext context = Context(features, belief);
             primaryRequest = Start(ProposalRole.Primary, primary, context, reason);
             started++;
             if (shadow is not null && shadowRequest is null)
@@ -179,7 +179,7 @@ public sealed class StrategyScheduler : IDisposable
             string reason = arbiter.FallbackRequested ? $"requested:{replanReason ?? "arbiter"}" : arbiter.Active is null ? "no_intent" : "placeholder";
             arbiter.AcknowledgeFallback();
             lastFallbackStart = now;
-            fallbackRequest = Start(ProposalRole.Fallback, fallback, Context(features), reason);
+            fallbackRequest = Start(ProposalRole.Fallback, fallback, Context(features, belief), reason);
             started++;
             collected += Poll(ref fallbackRequest, belief, features);
         }
@@ -209,14 +209,15 @@ public sealed class StrategyScheduler : IDisposable
         root.Dispose();
     }
 
-    private StrategistContext Context(StrategicFeatures features) =>
-        new(features, rules, playbooks, arbiter.Active, arbiter.History.ToArray(), Options.Personality);
+    private StrategistContext Context(StrategicFeatures features, BeliefSnapshot? belief) =>
+        new(features, rules, playbooks, arbiter.Active, arbiter.History.ToArray(), Options.Personality,
+            belief is null ? null : new SortedSet<string>(belief.OwnBuildingTypes, StringComparer.Ordinal));
 
-    /// <summary>The context a strategist would receive for these features right now (for probes and diagnostics).</summary>
-    public StrategistContext ContextFor(StrategicFeatures features)
+    /// <summary>The context a strategist would receive for these features (and this belief's own buildings) right now, for probes and diagnostics.</summary>
+    public StrategistContext ContextFor(StrategicFeatures features, BeliefSnapshot? belief = null)
     {
         ArgumentNullException.ThrowIfNull(features);
-        return Context(features);
+        return Context(features, belief);
     }
 
     private string? PrimaryTrigger(StrategicFeatures features)

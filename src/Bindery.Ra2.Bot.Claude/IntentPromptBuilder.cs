@@ -30,7 +30,7 @@ public sealed class IntentPromptBuilder
     public static readonly IReadOnlyList<string> MatchContextKeys = ["catalogue", "faction", "personality", "ruleFacts"];
 
     /// <summary>Top-level keys of <see cref="IntentPrompt.Situation"/>.</summary>
-    public static readonly IReadOnlyList<string> SituationKeys = ["activeIntent", "features", "history"];
+    public static readonly IReadOnlyList<string> SituationKeys = ["activeIntent", "counters", "features", "history", "techProgress"];
 
     private const string CommonSystemPrompt =
         """
@@ -42,7 +42,7 @@ public sealed class IntentPromptBuilder
 
         How to reason:
         - Base every claim on the features given. Do not assume enemy units, tech or positions that the features do not show. Enemy estimates carry evidence ages (seconds) and confidence in [0, 1]; old or low-confidence evidence is uncertainty, not fact. When scouting is stale or coverage is low, prefer plans that stay safe under that uncertainty, or add a Scout objective, and say so in assumptions.
-        - Rule facts (costs, build seconds, prerequisite paths from an empty base) are authoritative; use them for timing and affordability rather than memory of the game.
+        - Rule facts (costs, build seconds, prerequisite paths from an empty base) are authoritative; use them for timing and affordability rather than memory of the game. The situation's techProgress says what each tech goal still needs from the buildings you own now, and counters lists your most effective unit types against each enemy unit type you have seen (effectiveness is a damage multiplier, 1 = neutral); use them instead of remembering counters.
         - Respect commitment: the active intent has a minimum commitment window (minCommitRemainingSeconds). Replacing it inside that window is only accepted when one of its abort triggers has fired or the base is under serious threat, so otherwise propose the same playbook with adjusted parameters.
         - Changing posture needs clearly higher confidence than the incumbent's. Frequent switching loses games.
 
@@ -55,7 +55,7 @@ public sealed class IntentPromptBuilder
         - expiresInSeconds is how long the intent stays valid (typically 60–240). confidence is in [0, 1].
         - Trends are {now, d5s, d15s, d60s}: the current value and its change over the last 5, 15 and 60 game seconds. Times and ages are game seconds. null means unknown or unbounded.
 
-        Input: the first user block is the match context (constant for the match: faction, playbook catalogue, rule facts, personality). The second is the current situation (features, active intent, recent history). Personality is style guidance only; it never overrides these rules.
+        Input: the first user block is the match context (constant for the match: faction, playbook catalogue, rule facts, personality). The second is the current situation (features, active intent, recent history, counters, tech progress). Personality is style guidance only; it never overrides these rules.
         """;
 
     private const string RefineSystemPrompt =
@@ -67,18 +67,22 @@ public sealed class IntentPromptBuilder
     private readonly int historyLimit;
     private readonly int eventLimit;
     private readonly int unitsPerRole;
+    private readonly int countersPerType;
 
     /// <param name="historyLimit">Most recent intent history entries included.</param>
     /// <param name="eventLimit">Most recent strategic events included.</param>
     /// <param name="unitsPerRole">Cheapest buildable units per role listed in rule facts; bounds prompt size with large imported rulesets.</param>
-    public IntentPromptBuilder(int historyLimit = 8, int eventLimit = 12, int unitsPerRole = 4)
+    /// <param name="countersPerType">Own unit types listed as counters per seen enemy type.</param>
+    public IntentPromptBuilder(int historyLimit = 8, int eventLimit = 12, int unitsPerRole = 4, int countersPerType = 3)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(historyLimit);
         ArgumentOutOfRangeException.ThrowIfNegative(eventLimit);
         ArgumentOutOfRangeException.ThrowIfNegative(unitsPerRole);
+        ArgumentOutOfRangeException.ThrowIfNegative(countersPerType);
         this.historyLimit = historyLimit;
         this.eventLimit = eventLimit;
         this.unitsPerRole = unitsPerRole;
+        this.countersPerType = countersPerType;
     }
 
     /// <summary>The byte-stable system prompt for a mode. It never contains per-call data.</summary>
@@ -98,8 +102,10 @@ public sealed class IntentPromptBuilder
         JsonObject situation = new()
         {
             ["activeIntent"] = ActiveIntent(context),
+            ["counters"] = Counters(context),
             ["features"] = Features(context.Features),
             ["history"] = History(context.History),
+            ["techProgress"] = TechProgress(context),
         };
         return new IntentPrompt(SystemPrompt(mode), CanonicalJson.Serialize(match), CanonicalJson.Serialize(situation));
     }
@@ -144,9 +150,9 @@ public sealed class IntentPromptBuilder
     /// <summary>
     /// Rule facts the model needs for timing: every tech goal of the faction's
     /// playbooks with its prerequisite path, and the cheapest units per role.
-    /// Paths are computed from an empty base because <see cref="StrategistContext"/>
-    /// does not carry the player's owned buildings; that makes this block
-    /// constant for the match and therefore cacheable.
+    /// Paths here are from an empty base so this block stays constant for the
+    /// match and therefore cacheable; the situation's <c>techProgress</c> gives the
+    /// same figures from the buildings actually owned.
     /// </summary>
     private JsonObject RuleFacts(StrategistContext context)
     {
@@ -215,6 +221,97 @@ public sealed class IntentPromptBuilder
             ["techGoals"] = techGoals,
             ["units"] = units,
         };
+    }
+
+    /// <summary>
+    /// For each enemy unit type the player has seen (from <see cref="EnemyFeatures.KnownTech"/>, so fog-safe), the
+    /// faction's own armed unit types that can hit it, ranked by the rules' effectiveness multiplier, then by
+    /// effective damage per credit. Whether each is buildable now uses the owned buildings when the context has them.
+    /// </summary>
+    private JsonArray Counters(StrategistContext context)
+    {
+        IRulesDatabase rules = context.Rules;
+        Faction faction = context.Features.Faction;
+        IReadOnlySet<string>? owned = context.OwnedBuildingTypes;
+        List<UnitRule> candidates = rules.All
+            .Where(r => r.Kind != EntityKind.Building && r.Factions.Contains(faction) && r.Damage > 0 && r.Cost > 0)
+            .OrderBy(static r => r.TypeId, StringComparer.Ordinal)
+            .ToList();
+        JsonArray result = new();
+        foreach (string enemyType in context.Features.Enemy.KnownTech.OrderBy(static t => t, StringComparer.Ordinal))
+        {
+            if (!rules.TryGet(enemyType, out UnitRule enemy) || enemy.Kind == EntityKind.Building || enemy.Damage <= 0) continue;
+            JsonArray best = new();
+            IEnumerable<(UnitRule Rule, double Effectiveness)> ranked = candidates
+                .Where(c => CanHit(c, enemy))
+                .Select(c => (Rule: c, Effectiveness: rules.Effectiveness(c.TypeId, enemy.TypeId)))
+                .Where(static c => c.Effectiveness > 0)
+                .OrderByDescending(static c => c.Effectiveness)
+                .ThenByDescending(static c => c.Rule.Damage * c.Effectiveness / Math.Max(1, c.Rule.Cost))
+                .ThenBy(static c => c.Rule.TypeId, StringComparer.Ordinal)
+                .Take(countersPerType);
+            foreach ((UnitRule rule, double effectiveness) in ranked)
+            {
+                best.Add(new JsonObject
+                {
+                    ["typeId"] = rule.TypeId,
+                    ["name"] = rule.Name,
+                    ["effectiveness"] = CanonicalJson.Number(effectiveness),
+                    ["damagePerSecond"] = CanonicalJson.Number(rule.Damage * effectiveness),
+                    ["cost"] = rule.Cost,
+                    ["buildableNow"] = owned is null ? null : rules.CanBuild(faction, owned, rule.TypeId),
+                    ["pathLength"] = owned is null ? null : rules.PathTo(faction, owned, rule.TypeId)?.Count,
+                });
+            }
+            result.Add(new JsonObject
+            {
+                ["enemyTypeId"] = enemy.TypeId,
+                ["enemyRole"] = enemy.Role.ToString(),
+                ["enemyKind"] = enemy.Kind.ToString(),
+                ["best"] = best,
+            });
+        }
+        return result;
+    }
+
+    /// <summary>What can hit what, as the rules define it: anti-air weapons only hit aircraft; aircraft need an anti-air-capable or general weapon.</summary>
+    private static bool CanHit(UnitRule attacker, UnitRule target)
+    {
+        if (attacker.Weapon == WeaponClass.AntiAir) return target.Kind == EntityKind.Aircraft;
+        if (target.Kind == EntityKind.Aircraft) return attacker.AntiAir || attacker.Weapon == WeaponClass.General;
+        return true;
+    }
+
+    /// <summary>
+    /// Every tech goal of the faction's playbooks measured from the buildings owned now: the missing prerequisite
+    /// path, its cost and serial build seconds, and whether the goal can be started now. Null when the context does
+    /// not carry owned buildings (the match-context rule facts still give the empty-base figures).
+    /// </summary>
+    private static JsonArray? TechProgress(StrategistContext context)
+    {
+        if (context.OwnedBuildingTypes is not { } owned) return null;
+        Faction faction = context.Features.Faction;
+        IRulesDatabase rules = context.Rules;
+        JsonArray result = new();
+        foreach (string goal in FactionPlaybooks(context).SelectMany(p => p.TechGoals).Distinct(StringComparer.Ordinal).OrderBy(g => g, StringComparer.Ordinal))
+        {
+            if (!rules.TryGet(goal, out UnitRule rule)) continue;
+            bool have = owned.Contains(goal);
+            IReadOnlyList<string>? path = have ? [] : rules.PathTo(faction, owned, goal);
+            double? cost = path is null ? null : have ? 0 : path.Sum(t => rules.TryGet(t, out UnitRule r) ? r.Cost : 0) + rule.Cost;
+            double? seconds = path is null ? null : have ? 0 : path.Sum(t => rules.TryGet(t, out UnitRule r) ? r.BuildSeconds : 0) + rule.BuildSeconds;
+            result.Add(new JsonObject
+            {
+                ["typeId"] = goal,
+                ["owned"] = have,
+                ["reachable"] = path is not null,
+                ["buildableNow"] = !have && rules.CanBuild(faction, owned, goal),
+                ["remainingPath"] = path is null ? null : Strings(path),
+                ["remainingCost"] = cost is { } c ? CanonicalJson.Number(c) : null,
+                ["serialBuildSecondsRemaining"] = seconds is { } s ? CanonicalJson.Number(s) : null,
+            });
+        }
+        return result;
     }
 
     private static JsonObject? ActiveIntent(StrategistContext context)

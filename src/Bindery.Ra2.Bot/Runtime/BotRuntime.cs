@@ -94,7 +94,7 @@ public sealed class BotRuntime : IDisposable
     public OperationalPlan? LastPlan { get; private set; }
 
     /// <summary>What a strategist asked now would receive, built from <see cref="CurrentFeatures"/>; null before the first frame.</summary>
-    public StrategistContext? CurrentStrategistContext => CurrentFeatures is null ? null : Scheduler.ContextFor(CurrentFeatures);
+    public StrategistContext? CurrentStrategistContext => CurrentFeatures is null ? null : Scheduler.ContextFor(CurrentFeatures, CurrentBelief);
 
     /// <summary>Squad orders currently handed to tactics.</summary>
     public IReadOnlyList<SquadOrder> Squads => squads;
