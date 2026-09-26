@@ -84,7 +84,7 @@ public sealed class IntentPromptBuilder
     private const string RefineSystemPrompt =
         """
 
-        Mode: REFINE. You may not change the plan, only tune it. Return the active intent's playbookId unchanged and choose new values for its parameters; any other playbookId is rejected. Posture, objectives, budget, composition and conditions are taken from the active intent regardless of what you return, so copy them unchanged.
+        Mode: REFINE. You may not change the plan, only tune it. Return the active intent's playbookId unchanged and choose new values for its parameters; any other playbookId is rejected. Posture, objectives, budget, composition, conditions and confidence are taken from the active intent regardless of what you return, so copy them unchanged, and the refined intent never expires later than the active one.
         """;
 
     private readonly int historyLimit;
