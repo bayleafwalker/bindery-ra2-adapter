@@ -15,8 +15,9 @@ namespace Bindery.Ra2.Bot.Tactics;
 /// cell outside that defense's region, at least its range plus the buffer away and within the artillery's range.
 /// Artillery in position bombards the defense; units not in position move there (a plain move, so they do not
 /// stop to fight on the way into the defense's reach); the rest of the squad screens against mobile enemies.
-/// When no such cell exists (the artillery cannot out-range the defense by the buffer) the squad assaults as
-/// usual.</para>
+/// When no such cell exists (the artillery cannot out-range the defense by the buffer, or every candidate cell is
+/// water or out of ground reach) the squad assaults as usual. Siege happens only while the squad is Engaged: the
+/// retreat hysteresis is evaluated first, so an outnumbered sieging squad retreats.</para>
 /// This controller only ever commands units held under the lease owner
 /// <c>squad:&lt;SquadId&gt;</c> for that order's <see cref="SquadOrder.SquadId"/>;
 /// it never assumes it holds a unit's lease. The operational planner is the
@@ -73,21 +74,22 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
                 .Where(e => e.LastSeenPosition.DistanceTo(centroid) <= options.EngagementRangeCells)
                 .ToList();
 
-            if (order.Engage && order.StandoffBufferCells > 0
-                && Siege(order, owner, members, centroid, nearby, belief, rules) is { } siege)
+            if (!order.Engage)
             {
-                commands.AddRange(siege);
+                if (RouteCommand(order, owner, held, members, centroid, graph, belief) is { } route) commands.Add(route);
                 continue;
             }
 
-            if (!order.Engage || nearby.Count == 0)
+            bool siegeable = order.StandoffBufferCells > 0;
+            if (nearby.Count == 0 && !siegeable)
             {
                 if (RouteCommand(order, owner, held, members, centroid, graph, belief) is { } route) commands.Add(route);
                 continue;
             }
 
             // Only armed enemies oppose the squad: buildings and unarmed units are targets, not force, so a
-            // squad reaching an enemy base does not read the base's worth as a reason to retreat.
+            // squad reaching an enemy base does not read the base's worth as a reason to retreat. The hysteresis
+            // runs before the siege branch, so a sieging squad retreats when outnumbered like any other.
             double ownValue = members.Sum(static m => m.Value);
             double enemyValue = nearby.Where(e => IsArmed(e, rules)).Sum(static e => e.Value);
             double localRatio = enemyValue <= 0 ? double.PositiveInfinity : ownValue / enemyValue;
@@ -103,6 +105,19 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
             {
                 state.State = CombatState.Engaged;
                 state.Since = belief.Time;
+            }
+
+            if (state.State == CombatState.Engaged && siegeable
+                && Siege(order, owner, members, centroid, nearby, belief, rules, graph) is { } siege)
+            {
+                commands.AddRange(siege);
+                continue;
+            }
+
+            if (state.State == CombatState.Engaged && nearby.Count == 0)
+            {
+                if (RouteCommand(order, owner, held, members, centroid, graph, belief) is { } route) commands.Add(route);
+                continue;
             }
 
             if (state.State == CombatState.Retreating)
@@ -177,7 +192,7 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
 
     /// <summary>Stand-off siege commands, or null when the order cannot siege (see the type remarks).</summary>
     private static List<GameCommand>? Siege(
-        SquadOrder order, string owner, List<OwnEntity> members, Cell centroid, List<EnemyContact> nearby, BeliefSnapshot belief, IRulesDatabase rules)
+        SquadOrder order, string owner, List<OwnEntity> members, Cell centroid, List<EnemyContact> nearby, BeliefSnapshot belief, IRulesDatabase rules, RegionGraph graph)
     {
         List<(OwnEntity Unit, double Range)> artillery = [];
         foreach (OwnEntity member in members)
@@ -201,7 +216,7 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
         double reach = artillery.Min(static a => a.Range);
         double need = defenseRange + order.StandoffBufferCells;
         if (need > reach) return null;
-        if (StandoffCell(defense, centroid, need, reach, belief.Map) is not { } standoff) return null;
+        if (StandoffCell(defense, centroid, need, reach, belief.Map, graph, ModeRegion(members)) is not { } standoff) return null;
 
         List<EntityId> bombard = [];
         List<EntityId> reposition = [];
@@ -231,9 +246,11 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
 
     /// <summary>
     /// The first cell on the line from the defense toward the squad, at a distance in [need, reach], that lies in a
-    /// region other than the defense's (same-region units always trade fire) and on the map; null when none does.
+    /// region other than the defense's (same-region units always trade fire), on the map, on land, and in a region
+    /// the squad can reach by ground (a move with no ground path is dropped, and the squad would stand idle for as
+    /// long as the order lasts); null when none does.
     /// </summary>
-    private static Cell? StandoffCell(EnemyContact defense, Cell centroid, double need, double reach, MapInfo map)
+    private static Cell? StandoffCell(EnemyContact defense, Cell centroid, double need, double reach, MapInfo map, RegionGraph graph, RegionId from)
     {
         double dx = centroid.X - defense.LastSeenPosition.X, dy = centroid.Y - defense.LastSeenPosition.Y;
         double length = Math.Sqrt(dx * dx + dy * dy);
@@ -246,7 +263,11 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
             double actual = cell.DistanceTo(defense.LastSeenPosition);
             if (actual < need || actual > reach) continue;
             if (cell.X < 0 || cell.Y < 0 || cell.X >= map.Width || cell.Y >= map.Height) continue;
-            if (map.RegionOf(cell) is { } region && region.Id != defense.LastSeenRegion) return cell;
+            if (map.RegionOf(cell) is { } region && region.Id != defense.LastSeenRegion && !region.Water
+                && (region.Id == from || graph.Path(from, region.Id).Count > 0))
+            {
+                return cell;
+            }
         }
         return null;
     }
@@ -254,7 +275,11 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
     private static bool IsArmed(EnemyContact contact, IRulesDatabase rules) =>
         rules.TryGet(contact.TypeId, out UnitRule rule) && rule.Weapon != WeaponClass.None && rule.Damage > 0;
 
-    /// <summary>Attack-move toward the next waypoint; null when the target has no ground route from the squad.</summary>
+    /// <summary>
+    /// Toward the next waypoint: an attack-move for an engaging order, a plain move for one that does not engage
+    /// (an attack-move stops to fight in any region with an enemy in it, so a squad heading home, a scout or a
+    /// retreat could never leave one); null when the target has no ground route from the squad.
+    /// </summary>
     private GameCommand? RouteCommand(
         SquadOrder order,
         string owner,
@@ -267,7 +292,7 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
         RegionId currentRegion = ModeRegion(members);
         if (currentRegion != order.TargetRegion && graph.Path(currentRegion, order.TargetRegion).Count == 0) return null;
         Cell destination = NextWaypoint(currentRegion, order.TargetRegion, graph, belief.Map);
-        return new AttackMoveCommand(owner, held, destination);
+        return order.Engage ? new AttackMoveCommand(owner, held, destination) : new MoveCommand(owner, held, destination);
     }
 
     private GameCommand RetreatCommand(SquadOrder order, string owner, List<EntityId> held, BeliefSnapshot belief, RegionGraph graph)

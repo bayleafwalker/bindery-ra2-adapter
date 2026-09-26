@@ -232,7 +232,11 @@ Gaps an operator review found after integration, and how each was closed.
   last). `siegeRangeBufferCells` reaches tactics as
   `SquadOrder.StandoffBufferCells`: a squad with artillery holds outside a known
   defense's region, at least its range plus the buffer away and within artillery
-  range, and bombards it; with no such cell it assaults as before.
+  range, and bombards it; with no such cell (or only water or unreachable
+  ones) it assaults as before. The retreat hysteresis runs first, so an
+  outnumbered sieging squad retreats. An order that does not engage (harass
+  return, retreat squad, scout) moves plainly: an attack-move holds in any
+  region with an enemy in it.
   `RegionsOfInterest` are scouted first and are the staging area (first one that
   is reachable, not the attack target and not enemy-held). Each has a test that
   fails if it is ignored. For stand-off to mean anything the simulator now lets a
