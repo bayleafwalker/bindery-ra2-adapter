@@ -139,8 +139,21 @@ the `llm` arm's training-map decisions from the same run, running that arm first
 unreported, if it was not requested); the distilled arm escalates
 out-of-distribution states to the Claude strategist (fake or live), and the
 report's Distillation table shows its escalation rate next to cost per match. The output directory holds `results.json`,
-`probes.json` (per-arm leakage probes and skipped arms), `report.md` and one
-`dataset-<arm>.ndjson` of training-map decisions per arm.
+`probes.json` (per-arm leakage probes and skipped arms), `report.md`, one
+`dataset-<arm>.ndjson` of training-map decisions per arm, and
+`decisions/<match>.ndjson` (the arm's full decision log, about 0.2–0.5 MB per
+match; `--no-decisions` turns it off) with `decisions/<match>.match.json` (arm,
+opponent, map, seed, match length, benchmark and LLM latency). To re-run a
+recorded match from its log, LLM answers included, without a model:
+
+```bash
+nix shell nixpkgs#dotnet-sdk_8 -c dotnet run --project tools/Bindery.Ra2.Bot.Arena -c Release -- replay artifacts/arena/decisions/llm_live-rush_twin-valley_1.ndjson [--out replayed.ndjson]
+```
+
+It replaces the arm's primary and shadow strategists with `ReplayStrategist`s,
+prints whether the replayed decision log hash equals the recorded one (exit 0,
+else 2 with the first differing record), how many requests had no recording,
+and how many recorded answers were never asked for.
 
 ### Tuning parameters
 

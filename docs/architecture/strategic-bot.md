@@ -292,4 +292,21 @@ Gaps an operator review found after integration, and how each was closed.
   `llm` 32/100 at $1.13 per match (list price on estimated tokens), `distilled`
   39/100 at $0.0028 per match, 10 escalations in 3,246 decisions (0.3%),
   trained on 1,848 examples.
+- **Replaying a recorded match.** `ReplayStrategist` existed but the arena never
+  kept per-match logs in a form it could read. The arena now writes each arm
+  match's decision log through `NdjsonDecisionLogWriter` to
+  `decisions/<match>.ndjson` with a `<match>.match.json` manifest
+  (`bindery.arena.match/v1`: arm, opponent, map, split, seed, match length,
+  benchmark, LLM latency, recorded hash, result), and `arena replay <log>`
+  rebuilds the arm exactly as the run did with its primary and shadow
+  strategists replaced by `ReplayStrategist`s, re-plays the match and compares
+  hashes (exit 0 equal, 2 different, with the first differing record, requests
+  without a recording, recorded answers never asked for; `--out` writes the
+  replayed log). Fixes this needed in `ReplayStrategist`: shadow answers are
+  read from `strategy.shadow` records; a request the recording made but never
+  saw answered (in flight at match end) stays unanswered instead of failing;
+  and records a live strategist writes itself while being asked (the arena's
+  role-less Claude failure records) are written back at the same point
+  (`echoLog`). Tests replay `llm`, `llm-shadow`, `llm+fast`, `bandit` and
+  `distilled` matches to identical hashes and catch an edited log.
 

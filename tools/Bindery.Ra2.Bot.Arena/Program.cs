@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using Bindery.Ra2.Bot.Playbooks;
 using Bindery.Ra2.Bot.Rules;
+using Bindery.Ra2.Bot.Runtime;
 using Bindery.Ra2.Bot.Sim;
 using Bindery.Ra2.Bot.Strategy;
 
@@ -31,8 +32,23 @@ public static class Program
 {
     public static int Main(string[] args)
     {
+        ArgumentNullException.ThrowIfNull(args);
         try
         {
+            if (args.Length > 0 && args[0] == "replay")
+            {
+                if (args.Length is not (2 or 4) || (args.Length == 4 && args[2] != "--out")) throw new ArgumentException("Usage: arena replay <out>/decisions/<match>.ndjson [--out <replayed.ndjson>]");
+                ReplayResult result = ReplayMatch(args[1], args.Length == 4 ? args[3] : null);
+                Console.WriteLine(result.Equal
+                    ? $"replay: hash EQUAL ({result.ReplayedHash}), {result.ReplayedRecords} records"
+                    : $"replay: hash DIFFERENT (recorded {result.RecordedHash}, replayed {result.ReplayedHash}); first differing record {result.FirstDifference}; {result.RecordedRecords} recorded, {result.ReplayedRecords} replayed records");
+                Console.WriteLine($"requests without a recording: {result.Misses}; recorded answers never asked for: {result.Unused}");
+                if (result.ManifestHash is not null && result.ManifestHash != result.RecordedHash)
+                {
+                    Console.WriteLine($"warning: the log file's hash {result.RecordedHash} differs from the hash recorded when the match was played ({result.ManifestHash}): the file was edited");
+                }
+                return result.Equal ? 0 : 2;
+            }
             CliOptions options = CliOptions.Parse(args);
             Run(options);
             return 0;
@@ -214,6 +230,25 @@ public static class Program
 
     private static MatchRecord RunJob((ArmSpec Arm, string Opponent, SimMap Map, string Split, int Seed) job, CliOptions options, IRulesDatabase rules, IArenaAgentFactory factory, Action<IReadOnlyList<DecisionRecord>> armLog)
     {
+        IReadOnlyList<DecisionRecord>? captured = null;
+        MatchRecord played = RunTraced(job, options, rules, factory, log =>
+        {
+            captured = log;
+            armLog(log);
+        });
+        if (options.WriteDecisions && captured is not null && factory is BotAgentFactory { Context: var context })
+        {
+            MatchManifest manifest = new(
+                MatchManifest.CurrentSchema, job.Arm, job.Opponent, job.Map.Map.MapId, job.Split, job.Seed, options.MaxSeconds,
+                options.Benchmark, options.LlmLatencySeconds, job.Arm.Name == "distilled" ? context.DistillSource : null,
+                played.Players["arm"].DecisionLogHash, played.Winner, played.Reason, played.DurationSeconds);
+            MatchManifest.Write(Path.Combine(options.OutDir, "decisions"), manifest, captured);
+        }
+        return played;
+    }
+
+    private static MatchRecord RunTraced((ArmSpec Arm, string Opponent, SimMap Map, string Split, int Seed) job, CliOptions options, IRulesDatabase rules, IArenaAgentFactory factory, Action<IReadOnlyList<DecisionRecord>> armLog)
+    {
         if (options.TraceDir is null) return MatchRunner.Run(job.Arm, job.Opponent, job.Map, job.Split, job.Seed, options.MaxSeconds, rules, factory, armLog, benchmark: options.Benchmark);
         Directory.CreateDirectory(options.TraceDir);
         using StreamWriter trace = new(Path.Combine(options.TraceDir, $"{Slug(job.Arm.ToString())}_{job.Opponent.Replace(':', '-')}_{job.Map.Map.MapId}_{job.Seed}.txt"));
@@ -224,6 +259,71 @@ public static class Program
         }, trace, options.Benchmark);
         trace.WriteLine($"result winner={record.Winner} reason={record.Reason} at {record.DurationSeconds:0}");
         return record;
+    }
+
+    /// <summary>
+    /// Re-runs one recorded match: the same arm, opponent, map, seed and benchmark, with the arm's primary and shadow
+    /// strategists replaced by <see cref="ReplayStrategist"/>s over the recorded log (LLM answers come from the log,
+    /// never from a model), and compares the new decision log with the recorded one.
+    /// </summary>
+    /// <param name="writeReplayed">Optional path for the replayed decision log, to diff against the recording.</param>
+    public static ReplayResult ReplayMatch(string ndjsonPath, string? writeReplayed = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(ndjsonPath);
+        string manifestPath = MatchManifest.PathFor(ndjsonPath);
+        if (!File.Exists(ndjsonPath)) throw new ArgumentException($"No decision log at {ndjsonPath}.");
+        if (!File.Exists(manifestPath)) throw new ArgumentException($"No match manifest at {manifestPath}; replay needs the settings the arena writes next to each log.");
+        MatchManifest manifest = MatchManifest.Load(manifestPath);
+        IReadOnlyList<DecisionRecord> recorded;
+        using (StreamReader reader = new(ndjsonPath)) recorded = DecisionLogCodec.ReadAll(reader);
+
+        IRulesDatabase rules = RulesDatabase.LoadEmbeddedFixture();
+        // No model is ever asked: a fake context keeps credential resolution out of a replay entirely.
+        ArenaRunContext context = new(llmFake: true, manifest.LlmLatencySeconds);
+        BotAgentFactory factory = new(rules, PlaybookLibrary.LoadDefault(), context);
+        ReplayAgentFactory replayFactory = new(factory, manifest.Arm, recorded);
+        SimMap map = SimMaps.All.SingleOrDefault(m => m.Map.MapId == manifest.Map) ?? throw new ArgumentException($"Unknown map '{manifest.Map}'.");
+        IReadOnlyList<DecisionRecord> replayed = [];
+        MatchRunner.Run(manifest.Arm, manifest.Opponent, map, manifest.Split, manifest.Seed, manifest.MaxSeconds, rules, replayFactory,
+            log => replayed = log, benchmark: manifest.Benchmark);
+
+        if (writeReplayed is not null)
+        {
+            using NdjsonDecisionLogWriter writer = new(File.Create(writeReplayed));
+            foreach (DecisionRecord record in replayed) writer.Write(record);
+        }
+        string recordedHash = DecisionLogCodec.Hash(recorded);
+        string replayedHash = DecisionLogCodec.Hash(replayed);
+        int? first = null;
+        if (recordedHash != replayedHash)
+        {
+            int n = Math.Min(recorded.Count, replayed.Count);
+            for (int i = 0; i < n && first is null; i++)
+            {
+                if (DecisionLogCodec.ToLine(recorded[i]) != DecisionLogCodec.ToLine(replayed[i])) first = i;
+            }
+            first ??= n;
+        }
+        int misses = replayFactory.Primary!.Misses + (replayFactory.Shadow?.Misses ?? 0);
+        int unused = replayFactory.Primary.Unused + (replayFactory.Shadow?.Unused ?? 0);
+        return new ReplayResult(ndjsonPath, recordedHash == replayedHash, recordedHash, replayedHash, manifest.RecordedHash, misses, unused, recorded.Count, replayed.Count, first);
+    }
+
+    /// <summary>Builds the recorded arm as a replay and every other side as usual.</summary>
+    private sealed class ReplayAgentFactory(BotAgentFactory inner, ArmSpec arm, IReadOnlyList<DecisionRecord> recorded) : IArenaAgentFactory
+    {
+        public ReplayStrategist? Primary { get; private set; }
+
+        public ReplayStrategist? Shadow { get; private set; }
+
+        public IArenaAgent Create(ArmSpec spec, PlayerId player, Faction faction, MapInfo map, int seed)
+        {
+            if (spec != arm) return inner.Create(spec, player, faction, map, seed);
+            BotArenaAgent agent = inner.CreateReplay(spec, player, faction, map, seed, recorded, out ReplayStrategist primary, out ReplayStrategist? shadow);
+            Primary = primary;
+            Shadow = shadow;
+            return agent;
+        }
     }
 
     private static string MatchId((ArmSpec Arm, string Opponent, SimMap Map, string Split, int Seed) job) =>

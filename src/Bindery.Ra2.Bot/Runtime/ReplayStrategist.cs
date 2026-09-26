@@ -11,24 +11,33 @@ namespace Bindery.Ra2.Bot.Runtime;
 /// originally arrived, so a replayed match produces the same decision log.
 /// </summary>
 /// <remarks>
-/// Requests are matched to recorded <c>strategy.proposal</c> and
+/// Requests are matched to recorded <c>strategy.proposal</c> (for the shadow role, <c>strategy.shadow</c>) and
 /// <c>strategy.proposal_failed</c> records of one <see cref="ProposalRole"/> (and
 /// optionally one strategist id) by the request's snapshot version, falling back to
 /// its frame. A recorded answer is delivered when the scheduler's
 /// <see cref="OnFrame"/> reaches the frame it was logged on, which reproduces the
 /// original latency; recorded failures are replayed as the same outcome (null,
 /// exception with the recorded message, cancellation) and recorded timeouts never
-/// complete, so the scheduler times them out on the same frame. A request with no
-/// recording answers null immediately and counts in <see cref="Misses"/>.
+/// complete, so the scheduler times them out on the same frame. A request the recording also made but never saw
+/// answered (in flight when the log ended) stays unanswered (<see cref="Unanswered"/>); a request the recording
+/// never made answers null immediately and counts in <see cref="Misses"/>.
 /// Unless overridden, <see cref="Id"/> and <see cref="Source"/> impersonate the recorded
 /// strategist (from its <c>strategy.request</c> records), so a faithful replay writes a
 /// byte-identical decision log.
+/// <para>A live strategist may also write records of its own while it is asked (the arena logs the Claude
+/// strategist's failure details as a <c>strategy.proposal_failed</c> record without a <c>role</c>, right after the
+/// request). Given an <c>echoLog</c>, the replay writes each such record back when it is asked for the request it
+/// followed (the nearest earlier <c>strategy.request</c> of this role), so those logs replay byte-identically too.</para>
 /// </remarks>
 public sealed class ReplayStrategist : IStrategist, IFrameAwareStrategist
 {
     private readonly Dictionary<long, Queue<Entry>> byVersion = [];
     private readonly Dictionary<long, Queue<Entry>> byFrame = [];
     private readonly List<(Entry Entry, TaskCompletionSource<StrategistProposal?> Completion)> pending = [];
+    private readonly List<Entry> entries = [];
+    private readonly Dictionary<long, List<DecisionRecord>> echoes = [];
+    private readonly HashSet<long> recordedRequests = [];
+    private readonly IDecisionLog? echoLog;
     private long currentFrame = long.MinValue;
 
     public ReplayStrategist(
@@ -36,14 +45,35 @@ public sealed class ReplayStrategist : IStrategist, IFrameAwareStrategist
         ProposalRole role = ProposalRole.Primary,
         string? recordedStrategistId = null,
         string? id = null,
-        IntentSource? source = null)
+        IntentSource? source = null,
+        IDecisionLog? echoLog = null)
     {
         ArgumentNullException.ThrowIfNull(records);
+        this.echoLog = echoLog;
         string roleName = role.ToString();
         string? recordedId = null;
         IntentSource? recordedSource = null;
+        long? lastRequestVersion = null;
+        bool lastRequestIsMine = false;
         foreach (DecisionRecord record in records)
         {
+            if (string.Equals(record.Kind, RuntimeRecordKinds.Request, StringComparison.Ordinal) && record.Data.ValueKind == JsonValueKind.Object)
+            {
+                lastRequestIsMine = string.Equals(ReadString(record.Data, "role"), roleName, StringComparison.Ordinal)
+                    && (recordedStrategistId is null || string.Equals(ReadString(record.Data, "strategistId"), recordedStrategistId, StringComparison.Ordinal));
+                lastRequestVersion = record.SnapshotVersion;
+                if (lastRequestIsMine) recordedRequests.Add(record.SnapshotVersion);
+            }
+            if (string.Equals(record.Kind, DecisionRecordKinds.ProposalFailed, StringComparison.Ordinal)
+                && record.Data.ValueKind == JsonValueKind.Object && !record.Data.TryGetProperty("role", out _))
+            {
+                if (lastRequestIsMine && lastRequestVersion is { } version)
+                {
+                    if (!echoes.TryGetValue(version, out List<DecisionRecord>? list)) echoes[version] = list = [];
+                    list.Add(record);
+                }
+                continue;
+            }
             if (recordedId is null
                 && string.Equals(record.Kind, RuntimeRecordKinds.Request, StringComparison.Ordinal)
                 && record.Data.ValueKind == JsonValueKind.Object
@@ -54,7 +84,9 @@ public sealed class ReplayStrategist : IStrategist, IFrameAwareStrategist
                 recordedSource = Enum.TryParse(ReadString(record.Data, "source"), out IntentSource parsed) ? parsed : null;
             }
 
-            bool proposal = string.Equals(record.Kind, DecisionRecordKinds.Proposal, StringComparison.Ordinal);
+            // Shadow answers are logged as strategy.shadow records with the same payload fields as a proposal.
+            bool proposal = string.Equals(record.Kind, DecisionRecordKinds.Proposal, StringComparison.Ordinal)
+                || (role == ProposalRole.Shadow && string.Equals(record.Kind, DecisionRecordKinds.ShadowProposal, StringComparison.Ordinal));
             bool failed = string.Equals(record.Kind, DecisionRecordKinds.ProposalFailed, StringComparison.Ordinal);
             if (!proposal && !failed) continue;
             JsonElement data = record.Data;
@@ -69,6 +101,7 @@ public sealed class ReplayStrategist : IStrategist, IFrameAwareStrategist
                 proposal ? ReadProposal(data) : null,
                 failed ? ReadString(data, "reason") ?? "no_opinion" : null,
                 failed ? ReadString(data, "message") : null);
+            entries.Add(entry);
             Enqueue(byVersion, entry.RequestVersion, entry);
             Enqueue(byFrame, entry.RequestFrame, entry);
             Recorded++;
@@ -86,6 +119,12 @@ public sealed class ReplayStrategist : IStrategist, IFrameAwareStrategist
 
     /// <summary>Requests that had no recorded answer.</summary>
     public int Misses { get; private set; }
+
+    /// <summary>Requests the recording also made but never saw answered (still in flight when the log ended); they stay unanswered.</summary>
+    public int Unanswered { get; private set; }
+
+    /// <summary>Recorded answers no request asked for (a replay that diverged, or a log cut short).</summary>
+    public int Unused => entries.Count(static e => !e.Used);
 
     public static ReplayStrategist FromNdjson(TextReader reader, ProposalRole role = ProposalRole.Primary, string? recordedStrategistId = null) =>
         new(DecisionLogCodec.ReadAll(reader), role, recordedStrategistId);
@@ -115,9 +154,22 @@ public sealed class ReplayStrategist : IStrategist, IFrameAwareStrategist
         ArgumentNullException.ThrowIfNull(context);
         long frame = context.Features.Time.Frame;
         if (frame > currentFrame) currentFrame = frame;
+        if (echoLog is not null && echoes.Remove(context.Features.SnapshotVersion, out List<DecisionRecord>? echoed))
+        {
+            foreach (DecisionRecord record in echoed) echoLog.Write(record);
+        }
         Entry? entry = Take(byVersion, context.Features.SnapshotVersion) ?? Take(byFrame, frame);
         if (entry is null)
         {
+            if (recordedRequests.Contains(context.Features.SnapshotVersion))
+            {
+                // Asked in the recording too, but never answered before the log ended (the match ended first):
+                // stay unanswered, as it did.
+                Unanswered++;
+                TaskCompletionSource<StrategistProposal?> never = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                cancellationToken.Register(static state => ((TaskCompletionSource<StrategistProposal?>)state!).TrySetCanceled(), never);
+                return never.Task;
+            }
             Misses++;
             return Task.FromResult<StrategistProposal?>(null);
         }

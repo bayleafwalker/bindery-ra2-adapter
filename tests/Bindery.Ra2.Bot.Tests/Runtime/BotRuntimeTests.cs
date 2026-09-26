@@ -173,4 +173,32 @@ public sealed class BotRuntimeTests
         (DecisionLog other, BotRuntime otherRuntime) = Run(new DelayedStrategist(20));
         using (otherRuntime) Assert.NotEqual(recorded.ComputeHash(), other.ComputeHash());
     }
+
+    /// <summary>
+    /// The LLM strategist logs its own failure details (a role-less <c>strategy.proposal_failed</c> record) while it
+    /// is being asked. A replay must write those records back at the same point, or a recorded live run with a
+    /// failure could never replay byte-identically.
+    /// </summary>
+    [Fact]
+    public void Strategist_authored_failure_records_are_replayed_at_the_same_point()
+    {
+        static (DecisionLog Log, BotRuntime Runtime) Run(Func<DecisionLog, IStrategist> primary)
+        {
+            DecisionLog log = new();
+            BotRuntime runtime = Runtimes.Create(primary(log), log: log, options: new BotOptions(StrategicCadenceSeconds: 10, RunDeterministicStrategistsInline: true));
+            for (long f = 0; f < 60 * GameTime.FramesPerSecond; f++) runtime.Tick(Frames.At(f));
+            return (log, runtime);
+        }
+
+        (DecisionLog recorded, BotRuntime recordedRuntime) = Run(static log => new SelfLoggingFailingStrategist(log));
+        recordedRuntime.Dispose();
+        Assert.Contains(recorded.Records, static r => r.Kind == DecisionRecordKinds.ProposalFailed && !r.Data.TryGetProperty("role", out _));
+
+        ReplayStrategist? replay = null;
+        (DecisionLog replayed, BotRuntime replayRuntime) = Run(log => replay = new ReplayStrategist(recorded.Records, echoLog: log));
+        replayRuntime.Dispose();
+
+        Assert.Equal(0, replay!.Misses);
+        Assert.Equal(recorded.ComputeHash(), replayed.ComputeHash());
+    }
 }

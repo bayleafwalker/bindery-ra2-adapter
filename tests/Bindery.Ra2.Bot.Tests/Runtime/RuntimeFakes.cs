@@ -103,6 +103,31 @@ internal sealed class ThreadPoolStrategist : IStrategist
 /// LLM stand-in with deterministic latency: answers <see cref="DelayFrames"/> frames after the request,
 /// alternating playbooks by request count.
 /// </summary>
+/// <summary>Like the Claude strategist with the arena's failure subscription: logs its own failure detail, then answers null.</summary>
+internal sealed class SelfLoggingFailingStrategist(IDecisionLog log) : IStrategist
+{
+    private int calls;
+
+    public string Id => "self-logging";
+
+    public IntentSource Source => IntentSource.Llm;
+
+    public Task<StrategistProposal?> ProposeAsync(StrategistContext context, CancellationToken cancellationToken = default)
+    {
+        calls++;
+        if (calls % 2 == 1)
+        {
+            log.Write(new DecisionRecord(DecisionRecordKinds.ProposalFailed, context.Features.Time, context.Features.SnapshotVersion,
+                BotJson.ToElement(new { strategist = Id, code = "claude.parse_failed", detail = $"call {calls}" })));
+            return Task.FromResult<StrategistProposal?>(null);
+        }
+        return Task.FromResult<StrategistProposal?>(new StrategistProposal(
+            Fx.Intent($"self-{calls}", "allied-boom", StrategicPosture.Boom, issuedAt: context.Features.Time.Seconds, source: IntentSource.Llm, version: context.Features.SnapshotVersion),
+            new ProposalCost(0, 10, 10, 0, "fake-model"),
+            null));
+    }
+}
+
 internal sealed class DelayedStrategist(int delayFrames) : IStrategist, IFrameAwareStrategist
 {
     private readonly List<(long Due, TaskCompletionSource<StrategistProposal?> Completion, StrategistProposal? Proposal)> pending = [];

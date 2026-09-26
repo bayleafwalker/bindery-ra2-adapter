@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using Bindery.Ra2.Bot.Arbitration;
 using Bindery.Ra2.Bot.Claude;
 using Bindery.Ra2.Bot.Runtime;
 using Bindery.Ra2.Bot.Sim.Opponents;
@@ -78,6 +79,9 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
 {
     public const double FakeLatencySeconds = 4.0;
 
+    /// <summary>The run's shared state (datasets, learners, LLM availability).</summary>
+    public ArenaRunContext Context => context;
+
     /// <summary>Opponent style → playbook per faction.</summary>
     public static IReadOnlyDictionary<string, IReadOnlyDictionary<Faction, string>> OpponentStyles { get; } =
         new Dictionary<string, IReadOnlyDictionary<Faction, string>>(StringComparer.Ordinal)
@@ -111,7 +115,29 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
 
     private static readonly Baseline.Playbooks.PlaybookLibrary BaselinePlaybooks = Baseline.Playbooks.PlaybookLibrary.LoadDefault();
 
-    public IArenaAgent Create(ArmSpec arm, PlayerId player, Faction faction, MapInfo map, int seed)
+    public IArenaAgent Create(ArmSpec arm, PlayerId player, Faction faction, MapInfo map, int seed) => Build(arm, player, faction, map, seed, null);
+
+    /// <summary>
+    /// The arm exactly as <see cref="Create"/> builds it (options, fallback, controllers), with its primary and shadow
+    /// strategists replaced by <see cref="ReplayStrategist"/>s over a recorded decision log, which also echo the
+    /// strategist-authored records back into the new log. The replay strategists are returned for their counters.
+    /// </summary>
+    public BotArenaAgent CreateReplay(ArmSpec arm, PlayerId player, Faction faction, MapInfo map, int seed, IReadOnlyList<DecisionRecord> recorded, out ReplayStrategist primary, out ReplayStrategist? shadow)
+    {
+        ArgumentNullException.ThrowIfNull(recorded);
+        ReplayStrategist? p = null, s = null;
+        BotArenaAgent agent = (BotArenaAgent)Build(arm, player, faction, map, seed, (log, hasShadow) =>
+        {
+            p = new ReplayStrategist(recorded, ProposalRole.Primary, echoLog: log);
+            s = hasShadow ? new ReplayStrategist(recorded, ProposalRole.Shadow, echoLog: log) : null;
+            return (p, s);
+        });
+        primary = p!;
+        shadow = s;
+        return agent;
+    }
+
+    private IArenaAgent Build(ArmSpec arm, PlayerId player, Faction faction, MapInfo map, int seed, Func<DecisionLog, bool, (IStrategist Primary, IStrategist? Shadow)>? replay)
     {
         ArgumentNullException.ThrowIfNull(arm);
         if (OpponentProfiles.TryParse(arm.Name, out string aiStyle, out OpponentDifficulty difficulty))
@@ -181,6 +207,13 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
             }
         }
 
+        if (replay is not null)
+        {
+            (primary, shadow) = replay(log, shadow is not null);
+            claude.Clear();
+            onFinish = null;
+            labels.Add("replay");
+        }
         BotRuntime runtime = StandardBot.Create(rules, playbooks, primary, fallback, shadow, log, options);
         foreach (ClaudeStrategist strategist in claude)
         {

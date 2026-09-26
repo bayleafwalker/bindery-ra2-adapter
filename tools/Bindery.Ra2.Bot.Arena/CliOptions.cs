@@ -22,13 +22,18 @@ public sealed record CliOptions(
     public const string Usage =
         "Usage: arena run --arms a,b --maps training|heldout|all --opponents ai-rush,ai-balanced[:easy|:medium|:hard],rush,turtle,...|all --seeds N --out <dir> " +
         "[--oracle [both|all]] [--llm-fake] [--max-seconds N] [--dataset <decisions.ndjson>] [--llm-latency <game seconds>] [--trace <dir>] " +
-        "[--benchmark standard|contested] [--opponent-income X] [--opponent-credits N] [--combat-noise F] [--allied-income X] [--allied-credits N] [--baseline <arm>]";
+        "[--benchmark standard|contested] [--opponent-income X] [--opponent-credits N] [--combat-noise F] [--allied-income X] [--allied-credits N] [--baseline <arm>] [--no-decisions]\n" +
+        "       arena replay <out>/decisions/<match>.ndjson [--out <replayed.ndjson>]\n" +
+        "       arena analyze <out>/decisions/<match>.ndjson [--out <report.md>] [--narrate] [--llm-fake]";
 
     /// <summary>The benchmark the matches run under (<see cref="BenchmarkSettings.Standard"/> unless set).</summary>
     public BenchmarkSettings Benchmark { get; init; } = BenchmarkSettings.Standard;
 
     /// <summary>The arm every other arm is compared with, pair by pair, in the report.</summary>
     public string Baseline { get; init; } = "selector";
+
+    /// <summary>Write each arm match's decision log and manifest into <c>&lt;out&gt;/decisions/</c> (for <c>arena replay</c> and <c>arena analyze</c>).</summary>
+    public bool WriteDecisions { get; init; } = true;
 
     /// <summary><c>none</c> (belief frames unless an arm is named <c>*-oracle</c>), <c>all</c> (the legacy <c>--oracle</c>) or <c>both</c>.</summary>
     public string OracleMode { get; init; } = "none";
@@ -85,6 +90,7 @@ public sealed record CliOptions(
         double? alliedIncome = null;
         int? alliedCredits = null;
         string baseline = "selector";
+        bool writeDecisions = true;
 
         for (int i = 1; i < args.Count; i++)
         {
@@ -118,6 +124,7 @@ public sealed record CliOptions(
                 case "--allied-income": alliedIncome = double.Parse(Next(args, ref i), CultureInfo.InvariantCulture); break;
                 case "--allied-credits": alliedCredits = int.Parse(Next(args, ref i), CultureInfo.InvariantCulture); break;
                 case "--baseline": baseline = Next(args, ref i); break;
+                case "--no-decisions": writeDecisions = false; break;
                 default: throw new ArgumentException($"Unknown argument '{args[i]}'.");
             }
         }
@@ -142,6 +149,7 @@ public sealed record CliOptions(
             Benchmark = benchmark,
             Baseline = baseline,
             OracleMode = oracleMode,
+            WriteDecisions = writeDecisions,
         };
     }
 
