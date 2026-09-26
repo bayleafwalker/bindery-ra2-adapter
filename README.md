@@ -71,7 +71,13 @@ credentials or proprietary game files belong in this repository.
 A hierarchical, mostly-deterministic RTS bot for RA2/YR lives in
 `src/Bindery.Ra2.Bot` (engine-agnostic) and plugs into this adapter through
 `src/Bindery.Ra2.Adapter/Bot`. Full design, invariants and metrics are in
-[`docs/architecture/strategic-bot.md`](docs/architecture/strategic-bot.md).
+[`docs/architecture/strategic-bot.md`](docs/architecture/strategic-bot.md);
+the final tournament, known limitations, and how to run the live LLM arms and
+the retail RA2 path are in
+[`docs/architecture/strategic-bot-results.md`](docs/architecture/strategic-bot-results.md).
+All published results come from the approximate region simulator, with the LLM
+arms on a deterministic fake client; no live-model or retail-RA2 result exists
+yet.
 
 | Layer | Cadence | What it does |
 |---|---|---|
@@ -108,9 +114,11 @@ nix shell nixpkgs#dotnet-sdk_8 -c dotnet run --project tools/Bindery.Ra2.Bot.Are
 
 Arms: `selector`, `bandit`, `llm-shadow`, `llm`, `llm+fast`, `distilled`
 (`--arms all`); opponents (`--opponents all`): the independent scripted AI
-`ai-rush`, `ai-balanced`, `ai-turtle`, `ai-air` (optionally `:easy`, `:medium`,
-`:hard`; default hard; `src/Bindery.Ra2.Bot.Sim/Opponents`, no code shared with
-the bot's planner), and the pinned-playbook styles `rush`, `turtle`, `tech`,
+`ai-rush`, `ai-balanced`, `ai-turtle`, `ai-air` and the held-out
+`ai-horde`, `ai-armor` (optionally `:easy`, `:medium`, `:hard`; default hard;
+`src/Bindery.Ra2.Bot.Sim/Opponents`, no code shared with the bot's planner; the
+held-out two never feed learning, distillation or tuning, and
+`--opponents heldout` selects them), and the pinned-playbook styles `rush`, `turtle`, `tech`,
 `harass`, `balanced`, which run a frozen copy of the bot's stack as of commit
 7f3e2c7 (`tools/Bindery.Ra2.Bot.Baseline`) so they stay a stationary benchmark
 (`live-<style>` runs the style on the live stack); maps: `training`, `heldout`
@@ -119,13 +127,16 @@ Soviet on even ones. `--trace <dir>` writes a per-match diagnostic (state every
 10 s, destroyed entities, the arm's decision log).
 `--benchmark contested` is the setting that can rank arms: mirror opponents on
 the live stack (`live-balanced`, `live-rush`, `live-tech`, `live-turtle`,
-`live-harass` unless `--opponents` is given), the Allied side (whichever seat)
-starting with 20,000 credits against 10,000 to offset the fixture's Soviet edge,
-and ±25% seeded combat noise; the selector wins about half of it. The knobs are
+`live-harass`, plus the held-out `ai-horde` and `ai-armor`, unless
+`--opponents` is given), the Allied side (whichever seat) starting with 20,000
+credits against 10,000 to offset the fixture's Soviet edge, and ±25% seeded
+combat noise; the selector wins about half of its games against the live styles
+(84/150 in the final tournament). The knobs are
 also separate flags (`--opponent-income`, `--opponent-credits`,
 `--allied-income`, `--allied-credits`, `--combat-noise`). The default
-`standard` benchmark is saturated (every arm wins everything) and the report
-says so. `report.md` pairs every arm's matches with the `--baseline` arm
+`standard` benchmark is easier (the selector won 594/690 in the final
+tournament, and every game against the frozen pinned styles), and the report
+flags any baseline win rate outside 30–70% as saturated. `report.md` pairs every arm's matches with the `--baseline` arm
 (default `selector`) by opponent, map and seed and prints a per-metric table:
 mean difference with a 95% bootstrap interval, better/worse/tied pairs, exact
 sign-test p and Holm-adjusted p.

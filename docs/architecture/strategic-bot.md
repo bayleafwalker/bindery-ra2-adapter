@@ -5,6 +5,9 @@ Implements the operator directive in
 hierarchical RTS bot, layered by decision timescale, with at most one slow LLM
 that chooses intent. Everything real-time is deterministic.
 
+Final tournament results, limitations, and how to run the live LLM arms and the
+retail RA2 path: [`strategic-bot-results.md`](strategic-bot-results.md).
+
 ## Decisions
 
 | Question | Decision |
@@ -84,7 +87,7 @@ a contract change records it in its report instead of editing the file.
 | D. Operations & tactics | `src/Bindery.Ra2.Bot/Operations/`, `src/Bindery.Ra2.Bot/Tactics/` | `OperationalPlanner` (budget split by intent shares; production chosen to close composition gaps using rules cost/build time/effectiveness vs known enemy composition; tech path via `PathTo`; power upkeep; harvester/refinery targets; build placement at region level with candidate cells around own base; squad formation from unleased combat units; objective assignment by priority; reinforcement; attack only when attack conditions hold), tactical controllers (`SquadController`: target selection by effectiveness × low health, focus fire, retreat/re-engage hysteresis, path via region graph; `HarvesterSafetyController`; `RepairController`; `DeployController` for MCV/deployables). |
 | E. Deterministic strategists | `src/Bindery.Ra2.Bot/Strategy/` | `PlaybookSelector` (rule-based baseline over features), `ContextualBanditStrategist` (LinUCB over playbooks with a fixed feature vector, `IOutcomeLearner`), `FeatureVector` (shared numeric encoding, documented order), `DistilledStrategist` (multinomial logistic regression trained from a decision dataset; escalates to an inner strategist when the state is out of distribution by Mahalanobis-diagonal distance), `DecisionDataset` (export/import from decision logs). |
 | F. Claude strategist | `src/Bindery.Ra2.Bot.Claude/` | `ClaudeStrategist` (Anthropic C# SDK 12.50.0; `claude-opus-5`; structured output via `OutputConfig`/`JsonOutputFormat` with a JSON schema for an `IntentDraft` DTO; adaptive thinking; effort option; per-request timeout; refusal and max-token stop reasons return null with a logged reason; token usage into `ProposalCost`), `IntentPromptBuilder` (compact deterministic JSON of features, relevant rule facts and the faction's playbook catalogue; stable system prompt first for prompt caching), `IntentDraftMapper` (DTO → `StrategicIntent`), `ClaudeStrategistOptions` including `Mode = Strategic \| Refine` (Refine = the `llm+fast` arm: may only change parameters of the active playbook). Behind an `IMessageClient` seam so tests run on canned responses; one live smoke test runs only when `BINDERY_BOT_LIVE_LLM=1`. |
-| G. Simulator & arena | `src/Bindery.Ra2.Bot.Sim/`, `tools/Bindery.Ra2.Bot.Arena/` | Region-graph skirmish simulator: seeded RNG, 3–5 authored maps (2-player; held-out split), economy (a free harvester with each refinery, as RA2's FreeUnit; harvest trips, ore depletion), production queues with prerequisites and power penalty, building placement, movement along region links, combat resolution per region using rules damage × effectiveness, fog per player (sight by region presence + last-seen), per-player `IObservationSource`/`ICommandSink`, oracle mode, reset, replay log. Opponents: the independent scripted AI in `src/Bindery.Ra2.Bot.Sim/Opponents/` (training `ai-rush`, `ai-balanced`, `ai-turtle`, `ai-air`, held-out `ai-horde`, `ai-armor`; easy/medium/hard; retail-style build lists and task-force waves, own observation frame only, no code shared with the bot's planner), and styles (`rush`, `turtle`, `tech`, `harass`, `balanced`) pinned to playbooks on a frozen copy of the stack as of 7f3e2c7 (`tools/Bindery.Ra2.Bot.Baseline`; `live-<style>` on the live stack). Arena CLI: arms × maps × opponents × seeds → JSON + Markdown report with win rate (held-out maps and held-out opponents separate), invalid plans, decision lateness, strategic churn, production idle time, resource float, trade efficiency, inference cost, hidden-information leakage probe. |
+| G. Simulator & arena | `src/Bindery.Ra2.Bot.Sim/`, `tools/Bindery.Ra2.Bot.Arena/` | Region-graph skirmish simulator: seeded RNG, 5 authored 2-player maps (training `twin-valley`, `river-crossing`, `island-bridges`; held-out `open-steppe`, `fortress-choke`), economy (a free harvester with each refinery, as RA2's FreeUnit; harvest trips, ore depletion), production queues with prerequisites and power penalty, building placement, movement along region links, combat resolution per region using rules damage × effectiveness, fog per player (sight by region presence + last-seen), per-player `IObservationSource`/`ICommandSink`, oracle mode, reset, replay log. Opponents: the independent scripted AI in `src/Bindery.Ra2.Bot.Sim/Opponents/` (training `ai-rush`, `ai-balanced`, `ai-turtle`, `ai-air`, held-out `ai-horde`, `ai-armor`; easy/medium/hard; retail-style build lists and task-force waves, own observation frame only, no code shared with the bot's planner), and styles (`rush`, `turtle`, `tech`, `harass`, `balanced`) pinned to playbooks on a frozen copy of the stack as of 7f3e2c7 (`tools/Bindery.Ra2.Bot.Baseline`; `live-<style>` on the live stack). Arena CLI: arms × maps × opponents × seeds → JSON + Markdown report with win rate (held-out maps and held-out opponents separate), invalid plans, decision lateness, strategic churn, production idle time, resource float, trade efficiency, inference cost, hidden-information leakage probe. |
 | H. RA2 bridge & docs | `src/Bindery.Ra2.Adapter/Bot/`, adapter tests for it, `README.md`, CI | `Ra2ObservationAssembler` (folds normalized ra2yrcpp observations into `ObservationFrame`s; fields the telemetry does not carry are reported as missing, not invented), `IRa2CommandTransport` seam and `Ra2CommandSink`, `Ra2BotHost` (the host loop: telemetry source → normalizer → assembler → `BotRuntime.Tick` → sink, flushed per frame, until match end; tested against `RecordedRa2TelemetrySource` and a fake transport), CI steps building and testing the bot projects on Linux and Windows. |
 
 ## Arena arms
@@ -128,9 +131,10 @@ bot (best − default ≤ 0.0008 per generation; every candidate won 60/66, the
 six losses per generation being faction-decided self-play games). Held-out
 (2 maps × 9 opponents × 20 seeds): untuned 360/360, tuned 360/360; paired
 fitness difference 0.0001 [−0.0001, 0.0003]; head-to-head 40/80 against a
-40/80 control. Not adopted. The simulator benchmark is saturated and outcomes
-are fixed by faction and seat, so it cannot rank these knobs; tuning needs a
-harder or less deterministic benchmark first.
+40/80 control. Not adopted. The benchmark it ran on was saturated and its
+outcomes fixed by faction and seat, so it could not rank these knobs. The
+contested benchmark and the held-out opponents came later, and the tuner has
+not been re-run on them, so the bot still plays the authored parameters.
 
 ## Metrics definitions
 
@@ -471,3 +475,20 @@ All LLM results in this section come from `--llm-fake`; no live model was run.
   built runtime, so a caller that builds it on imported rules should pass
   `PlaybookRosterAdapter.Adapt(PlaybookLibrary.LoadDefault().All, rules,
   RulesDatabase.LoadEmbeddedFixture()).Library` as the playbooks.
+
+## Final tournament (2026-09-26)
+
+Every arm (`selector`, `bandit`, `llm-shadow`, `llm`, `llm+fast`, `distilled`,
+`selector-oracle`, `llm-oracle`; LLM arms on the fake client) × all five maps ×
+every `ai-*` style at every difficulty plus the five frozen pinned styles (and
+the five `live-*` styles on the contested benchmark) × 6 seeds: 5,520 standard
+and 6,720 contested matches. The distilled arm was trained on the `llm` arm's
+training-map decisions against training opponents only. Summary (contested, win
+rate with 95% Wilson interval): against the calibrated live styles selector
+84/150 (0.56 [0.48, 0.64]), bandit 87, `llm` (fake) 58, `llm+fast` 75, distilled
+64, selector-oracle 88. Paired against the selector, the fake `llm` arm scores
+−0.089 [−0.124, −0.056] per match. Perception (oracle − belief) is worth
++0.09 to +0.12 win rate on held-out maps and +0.16 to +0.19 against held-out
+opponents, but only +0.03 for the selector against the live styles. Full tables,
+the interpretation, what the strength and tuning work changed, and every known
+limitation are in [`strategic-bot-results.md`](strategic-bot-results.md).
