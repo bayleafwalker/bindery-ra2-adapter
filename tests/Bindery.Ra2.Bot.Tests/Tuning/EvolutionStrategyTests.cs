@@ -156,7 +156,8 @@ public sealed class TuningSpaceTests
     {
         TuningSpace space = Space();
         Assert.All(space.Dimensions.Where(static d => d.Scope == "playbook"), d => Assert.Contains(d.Name, TuningKnobs.ConsumedPlaybookParameters));
-        Assert.Contains("allied-harass.harassIntervalSeconds", space.InertPlaybookParameters);
+        Assert.Contains(space.Dimensions, static d => d.PlaybookId == "allied-harass" && d.Name == "harassIntervalSeconds");
+        Assert.Empty(space.InertPlaybookParameters);
         Assert.Equal(space.Dimensions.Count, space.Dimensions.Select(static d => d.Key).Distinct().Count());
     }
 

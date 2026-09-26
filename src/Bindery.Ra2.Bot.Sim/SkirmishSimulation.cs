@@ -237,6 +237,26 @@ public sealed class SkirmishSimulation
         entities.Add(entity);
     }
 
+    /// <summary>Spawns an entity at an exact cell (its region is the cell's), without a creation event; for focused tests.</summary>
+    internal EntityId DebugSpawnAt(PlayerId owner, string typeId, Cell cell)
+    {
+        UnitRule rule = rules.Get(typeId);
+        Region region = map.Map.RegionOf(cell) ?? throw new ArgumentException("Cell is outside every region.", nameof(cell));
+        SimEntity entity = new()
+        {
+            Id = new EntityId(nextEntityId++),
+            Owner = owner,
+            TypeId = typeId,
+            Position = cell,
+            Region = region.Id,
+            Health = rule.Strength,
+            MaxHealth = rule.Strength,
+        };
+        entity.SnapTo(cell);
+        entities.Add(entity);
+        return entity.Id;
+    }
+
     // ----- setup helpers -----
 
     private Region RegionById(RegionId id) => map.Map.Regions.First(r => r.Id == id);
@@ -391,7 +411,17 @@ public sealed class SkirmishSimulation
         {
             if (!OwnsAlive(player, id, out SimEntity entity)) continue;
             entity.ExplicitTarget = target.Id;
-            if (entity.Region != target.Region)
+            // A target already within weapon range across a region border is fired on from where the unit
+            // stands (RA2 units do not close in on what they can already hit); otherwise the unit walks over.
+            bool inRange = rules.TryGet(entity.TypeId, out UnitRule attackerRule) && attackerRule.Range > 0
+                && entity.Position.DistanceTo(target.Position) <= attackerRule.Range;
+            if (inRange && entity.Region != target.Region)
+            {
+                entity.RemainingPath.Clear();
+                entity.FinalDestination = null;
+                entity.HoldForCombat = false;
+            }
+            else if (entity.Region != target.Region)
             {
                 IReadOnlyList<RegionId> path = Graph.Path(entity.Region, target.Region);
                 if (path.Count > 0)
@@ -665,6 +695,13 @@ public sealed class SkirmishSimulation
 
     // ----- combat -----
 
+    /// <summary>
+    /// Resolves one second of fire. Every armed unit fires at one target: an enemy in its own region when there is
+    /// one it can hit (the region is the engagement zone, whatever the distance inside it), otherwise an enemy in
+    /// another region within its weapon range in cells. The second rule is what lets long-range artillery bombard
+    /// across a border, and a defense reach only as far as its range. Damage is applied per region of the target,
+    /// in region order, then target id order.
+    /// </summary>
     private void ResolveCombat()
     {
         Dictionary<RegionId, List<SimEntity>> byRegion = [];
@@ -674,29 +711,32 @@ public sealed class SkirmishSimulation
             (byRegion.TryGetValue(e.Region, out List<SimEntity>? list) ? list : byRegion[e.Region] = []).Add(e);
         }
 
+        Dictionary<RegionId, Dictionary<EntityId, double>> damageByRegion = [];
+        Dictionary<EntityId, (EntityId Attacker, double Amount)> topAttacker = [];
+        List<SimEntity> alive = [.. entities.Where(static e => e.Alive).OrderBy(static e => e.Id.Value)];
         foreach ((RegionId region, List<SimEntity> present) in byRegion.OrderBy(kv => kv.Key.Value))
         {
-            if (present.Select(e => e.Owner).Distinct().Count() < 2) continue;
-            Dictionary<EntityId, double> totalDamage = [];
-            Dictionary<EntityId, (EntityId Attacker, double Amount)> topAttacker = [];
-
             foreach (SimEntity attacker in present.OrderBy(e => e.Id.Value))
             {
                 if (!rules.TryGet(attacker.TypeId, out UnitRule rule) || rule.Weapon == WeaponClass.None || rule.Range <= 0 || rule.Damage <= 0) continue;
-                SimEntity? target = ChooseTarget(attacker, rule, present);
+                SimEntity? target = ChooseTarget(attacker, rule, present) ?? ChooseTargetInRange(attacker, rule, alive);
                 if (target is null) continue;
                 double amount = rule.Damage * rules.Effectiveness(attacker.TypeId, target.TypeId);
                 if (amount <= 0) continue;
+                Dictionary<EntityId, double> totalDamage = damageByRegion.TryGetValue(target.Region, out Dictionary<EntityId, double>? d) ? d : damageByRegion[target.Region] = [];
                 totalDamage[target.Id] = totalDamage.GetValueOrDefault(target.Id) + amount;
                 if (!topAttacker.TryGetValue(target.Id, out (EntityId Attacker, double Amount) best) || amount > best.Amount)
                 {
                     topAttacker[target.Id] = (attacker.Id, amount);
                 }
             }
+        }
 
+        foreach ((RegionId region, Dictionary<EntityId, double> totalDamage) in damageByRegion.OrderBy(kv => kv.Key.Value))
+        {
             foreach ((EntityId targetId, double damage) in totalDamage.OrderBy(kv => kv.Key.Value))
             {
-                SimEntity target = present.First(e => e.Id == targetId);
+                SimEntity target = byRegion[region].First(e => e.Id == targetId);
                 target.Health = Math.Max(0, target.Health - (int)Math.Round(damage));
                 frameEvents.Add(new GameEvent(GameEventKind.UnderAttack, Time, target.Id, target.Owner, target.TypeId, target.Position));
                 if (target.Health <= 0)
@@ -720,6 +760,18 @@ public sealed class SkirmishSimulation
         return present.Where(e => e.Alive && e.Owner != attacker.Owner && CanTarget(attackerRule, e))
                        .OrderBy(e => e.Health).ThenBy(e => e.Id.Value)
                        .FirstOrDefault();
+    }
+
+    /// <summary>An enemy outside the attacker's region but within its range in cells: the explicit target first, else the weakest.</summary>
+    private SimEntity? ChooseTargetInRange(SimEntity attacker, UnitRule attackerRule, List<SimEntity> alive)
+    {
+        bool InRange(SimEntity e) => e.Alive && e.Owner != attacker.Owner && e.Region != attacker.Region
+            && attacker.Position.DistanceTo(e.Position) <= attackerRule.Range && CanTarget(attackerRule, e);
+        if (attacker.ExplicitTarget is { } explicitId && alive.Find(e => e.Id == explicitId) is { } explicitTarget && InRange(explicitTarget))
+        {
+            return explicitTarget;
+        }
+        return alive.Where(InRange).OrderBy(static e => e.Health).ThenBy(static e => e.Id.Value).FirstOrDefault();
     }
 
     /// <summary>

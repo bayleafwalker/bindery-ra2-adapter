@@ -35,6 +35,9 @@ namespace Bindery.Ra2.Bot.Operations;
 /// <param name="MinAttackArmyValue">Army value an attack waits for when the playbook has no <c>attackArmyValue</c>.</param>
 /// <param name="AttackHoldFraction">An attack in progress continues while army value stays above this fraction of that threshold.</param>
 /// <param name="ScoutRevisitSeconds">A start location seen within this many seconds is not re-scouted first.</param>
+/// <param name="DefaultDefendThreatRatio">Base threat ratio that pulls the army home to defend when the playbook has no <c>defendThreatRatio</c>.</param>
+/// <param name="DefaultHarassIntervalSeconds">Seconds between harass sorties when the playbook has no <c>harassIntervalSeconds</c>.</param>
+/// <param name="HarassDwellSeconds">Seconds a harass sortie spends in its target region before it heads home to regroup.</param>
 /// <param name="ConditionEvaluator">
 /// Evaluates one <see cref="Condition"/> against <see cref="StrategicFeatures"/>. Left null,
 /// the planner uses the canonical <see cref="Arbitration.ConditionEvaluator.Holds"/>, the single
@@ -60,7 +63,10 @@ public sealed record OperationalOptions(
     int MaxDefenses = 8,
     double MinAttackArmyValue = 1500,
     double AttackHoldFraction = 0.5,
-    double ScoutRevisitSeconds = 60)
+    double ScoutRevisitSeconds = 60,
+    double DefaultDefendThreatRatio = 1.0,
+    double DefaultHarassIntervalSeconds = 60,
+    double HarassDwellSeconds = 10)
 {
     /// <summary>The evaluator actually used: <see cref="ConditionEvaluator"/> when set, else the default.</summary>
     public Func<Condition, StrategicFeatures, bool> Evaluator => ConditionEvaluator ?? Arbitration.ConditionEvaluator.Holds;

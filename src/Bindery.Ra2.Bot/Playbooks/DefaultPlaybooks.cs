@@ -203,7 +203,7 @@ internal static class DefaultPlaybooks
         TechGoals: [],
         AttackConditions: [new Condition(ConditionMetric.BaseThreatRatio, Comparison.Ge, 1.3)],
         AbortTriggers: [new Condition(ConditionMetric.BaseThreatRatio, Comparison.Lt, 0.8)],
-        Parameters: [new PlaybookParameter("defendThreatRatio", 1.0, 2.0, 1.3, "Base threat ratio that pulls the army home to defend.")],
+        Parameters: [new PlaybookParameter("defendThreatRatio", 0.5, 2.0, 1.0, "Base threat ratio at which the army leaves its staging area to engage the threatened base region.")],
         MinCommitSeconds: 30);
 
     private static Playbook GenericExpand { get; } = new(

@@ -10,6 +10,13 @@ namespace Bindery.Ra2.Bot.Tactics;
 /// threshold does not flicker between fighting and fleeing every tick.
 /// </summary>
 /// <remarks>
+/// <para>Siege stand-off: when an engaged order carries <see cref="SquadOrder.StandoffBufferCells"/> &gt; 0, has
+/// artillery, and its target region holds a known enemy defense that can hit ground units, the squad holds at a
+/// cell outside that defense's region, at least its range plus the buffer away and within the artillery's range.
+/// Artillery in position bombards the defense; units not in position move there (a plain move, so they do not
+/// stop to fight on the way into the defense's reach); the rest of the squad screens against mobile enemies.
+/// When no such cell exists (the artillery cannot out-range the defense by the buffer) the squad assaults as
+/// usual.</para>
 /// This controller only ever commands units held under the lease owner
 /// <c>squad:&lt;SquadId&gt;</c> for that order's <see cref="SquadOrder.SquadId"/>;
 /// it never assumes it holds a unit's lease. The operational planner is the
@@ -65,6 +72,13 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
             List<EnemyContact> nearby = freshEnemies
                 .Where(e => e.LastSeenPosition.DistanceTo(centroid) <= options.EngagementRangeCells)
                 .ToList();
+
+            if (order.Engage && order.StandoffBufferCells > 0
+                && Siege(order, owner, members, centroid, nearby, belief, rules) is { } siege)
+            {
+                commands.AddRange(siege);
+                continue;
+            }
 
             if (!order.Engage || nearby.Count == 0)
             {
@@ -159,6 +173,82 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
             }
         }
         return best;
+    }
+
+    /// <summary>Stand-off siege commands, or null when the order cannot siege (see the type remarks).</summary>
+    private static List<GameCommand>? Siege(
+        SquadOrder order, string owner, List<OwnEntity> members, Cell centroid, List<EnemyContact> nearby, BeliefSnapshot belief, IRulesDatabase rules)
+    {
+        List<(OwnEntity Unit, double Range)> artillery = [];
+        foreach (OwnEntity member in members)
+        {
+            if (rules.TryGet(member.TypeId, out UnitRule rule) && rule.Range > 0 && rule.Damage > 0
+                && (rule.Role == UnitRole.Artillery || rule.Weapon == WeaponClass.Artillery))
+            {
+                artillery.Add((member, rule.Range));
+            }
+        }
+        if (artillery.Count == 0) return null;
+
+        EnemyContact? defense = belief.Enemies
+            .Where(e => !e.ConfirmedDestroyed && e.Kind == EntityKind.Building && e.LastSeenRegion == order.TargetRegion
+                && rules.TryGet(e.TypeId, out UnitRule r) && r.Damage > 0 && r.Range > 0 && r.Weapon is not (WeaponClass.None or WeaponClass.AntiAir))
+            .OrderBy(e => e.LastSeenPosition.DistanceTo(centroid)).ThenBy(static e => e.Id.Value)
+            .FirstOrDefault();
+        if (defense is null) return null;
+
+        double defenseRange = rules.Get(defense.TypeId).Range;
+        double reach = artillery.Min(static a => a.Range);
+        double need = defenseRange + order.StandoffBufferCells;
+        if (need > reach) return null;
+        if (StandoffCell(defense, centroid, need, reach, belief.Map) is not { } standoff) return null;
+
+        List<EntityId> bombard = [];
+        List<EntityId> reposition = [];
+        HashSet<EntityId> artilleryIds = [.. artillery.Select(static a => a.Unit.Id)];
+        foreach ((OwnEntity unit, double range) in artillery)
+        {
+            double distance = unit.Position.DistanceTo(defense.LastSeenPosition);
+            if (distance <= range && distance > defenseRange) bombard.Add(unit.Id);
+            else reposition.Add(unit.Id);
+        }
+
+        List<OwnEntity> screen = members.Where(m => !artilleryIds.Contains(m.Id)).ToList();
+        List<EnemyContact> mobileThreats = nearby.Where(e => e.Kind != EntityKind.Building && IsArmed(e, rules)).ToList();
+        List<GameCommand> commands = [];
+        if (screen.Count > 0 && mobileThreats.Count > 0 && ChooseFocusTarget(screen, mobileThreats, rules) is { } threat)
+        {
+            commands.Add(new AttackCommand(owner, [.. screen.Select(static m => m.Id)], threat));
+        }
+        else
+        {
+            reposition.AddRange(screen.Where(m => m.Position.DistanceTo(standoff) > 2).Select(static m => m.Id));
+        }
+        if (reposition.Count > 0) commands.Add(new MoveCommand(owner, [.. reposition.OrderBy(static u => u.Value)], standoff));
+        if (bombard.Count > 0) commands.Add(new AttackCommand(owner, bombard, defense.Id));
+        return commands;
+    }
+
+    /// <summary>
+    /// The first cell on the line from the defense toward the squad, at a distance in [need, reach], that lies in a
+    /// region other than the defense's (same-region units always trade fire) and on the map; null when none does.
+    /// </summary>
+    private static Cell? StandoffCell(EnemyContact defense, Cell centroid, double need, double reach, MapInfo map)
+    {
+        double dx = centroid.X - defense.LastSeenPosition.X, dy = centroid.Y - defense.LastSeenPosition.Y;
+        double length = Math.Sqrt(dx * dx + dy * dy);
+        if (length < 1e-9) return null;
+        dx /= length;
+        dy /= length;
+        for (double d = need; d <= reach + 1e-9; d += 0.5)
+        {
+            Cell cell = new((int)Math.Round(defense.LastSeenPosition.X + dx * d), (int)Math.Round(defense.LastSeenPosition.Y + dy * d));
+            double actual = cell.DistanceTo(defense.LastSeenPosition);
+            if (actual < need || actual > reach) continue;
+            if (cell.X < 0 || cell.Y < 0 || cell.X >= map.Width || cell.Y >= map.Height) continue;
+            if (map.RegionOf(cell) is { } region && region.Id != defense.LastSeenRegion) return cell;
+        }
+        return null;
     }
 
     private static bool IsArmed(EnemyContact contact, IRulesDatabase rules) =>

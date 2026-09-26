@@ -26,12 +26,13 @@ public sealed record OptionKnob(string Name, double Min, double Max, bool Intege
 public static class TuningKnobs
 {
     /// <summary>
-    /// Playbook parameters the <see cref="OperationalPlanner"/> reads from an intent. A playbook parameter not in
-    /// this list (<c>harassIntervalSeconds</c>, <c>siegeRangeBufferCells</c>, <c>defendThreatRatio</c> today) is
-    /// declared for strategists but changes no behaviour, so the tuner leaves it at its authored default.
+    /// Playbook parameters the <see cref="OperationalPlanner"/> reads from an intent (the squad controller reads
+    /// <c>siegeRangeBufferCells</c> through <see cref="SquadOrder.StandoffBufferCells"/>). A playbook parameter not
+    /// in this list would change no behaviour, so the tuner would leave it at its authored default; a test requires
+    /// every declared parameter to be listed here.
     /// </summary>
     public static IReadOnlyList<string> ConsumedPlaybookParameters { get; } =
-        ["attackArmyValue", "expandAtSeconds", "harvesterTarget", "retreatBelowForceRatio"];
+        ["attackArmyValue", "defendThreatRatio", "expandAtSeconds", "harassIntervalSeconds", "harvesterTarget", "retreatBelowForceRatio", "siegeRangeBufferCells"];
 
     public static IReadOnlyList<OptionKnob> Operational { get; } =
     [

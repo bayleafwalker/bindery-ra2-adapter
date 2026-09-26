@@ -80,7 +80,12 @@ public interface ICommandSink
 }
 
 /// <summary>A squad as the operational layer defines it and tactics executes it.</summary>
-public sealed record SquadOrder(string SquadId, ObjectiveKind Objective, RegionId TargetRegion, IReadOnlyList<EntityId> Units, bool Engage, double RetreatBelowForceRatio);
+/// <param name="StandoffBufferCells">
+/// Siege stand-off (the playbook's <c>siegeRangeBufferCells</c>): when positive and the squad has artillery that
+/// out-ranges a known enemy defense by at least this much, the squad holds this many cells beyond the defense's
+/// range, outside the defense's region, and the artillery bombards it from there. Zero assaults as usual.
+/// </param>
+public sealed record SquadOrder(string SquadId, ObjectiveKind Objective, RegionId TargetRegion, IReadOnlyList<EntityId> Units, bool Engage, double RetreatBelowForceRatio, double StandoffBufferCells = 0);
 
 /// <summary>Output of one operational planning pass.</summary>
 /// <param name="BudgetReservations">

@@ -109,8 +109,10 @@ itself is exercised.
 `tools/Bindery.Ra2.Bot.Tune` runs a seeded separable CMA-ES
 (`src/Bindery.Ra2.Bot/Tuning/EvolutionStrategy.cs`, no external packages)
 over the unit cube of `TuningSpace`: every playbook parameter the planner reads
-(`attackArmyValue`, `expandAtSeconds`, `harvesterTarget`,
-`retreatBelowForceRatio`; declared-but-unread parameters are left alone) and
+(`attackArmyValue`, `defendThreatRatio`, `expandAtSeconds`,
+`harassIntervalSeconds`, `harvesterTarget`, `retreatBelowForceRatio`,
+`siegeRangeBufferCells`; a test requires every declared parameter to have a
+consumer; the first tuning run below predates the last three) and
 the option knobs in `TuningKnobs` (12 `OperationalOptions`, 3
 `FeatureOptions`, each with its range and reason). Search uses training maps
 only, with common random numbers per generation; validation uses held-out maps
@@ -192,3 +194,25 @@ Recorded when the eight work packages were merged into `feat/strategic-bot`.
   them (training maps only), so they too are held out by map, not by opponent.
 - **Arena datasets** (`dataset-<arm>.ndjson`) contain training-map decisions
   only, so a distilled arm is never trained on the maps it is evaluated on.
+
+## Completeness round 1 (2026-09-26)
+
+Gaps an operator review found after integration, and how each was closed.
+
+- **Every playbook parameter and intent field acts.** `defendThreatRatio` is the
+  base threat ratio at which the planner pulls the army to the threatened base
+  (default 1.0, the previous fixed value; `generic-defend`'s default is now 1.0
+  too). `harassIntervalSeconds` times harass sorties (out, dwell
+  `HarassDwellSeconds`, home to regroup, next sortie one interval after the
+  last). `siegeRangeBufferCells` reaches tactics as
+  `SquadOrder.StandoffBufferCells`: a squad with artillery holds outside a known
+  defense's region, at least its range plus the buffer away and within artillery
+  range, and bombards it; with no such cell it assaults as before.
+  `RegionsOfInterest` are scouted first and are the staging area (first one that
+  is reachable, not the attack target and not enemy-held). Each has a test that
+  fails if it is ignored. For stand-off to mean anything the simulator now lets a
+  unit with no target in its own region fire at an enemy in another region
+  within its weapon range in cells (same-region fire is unchanged and takes
+  precedence); an attack order on a target already in range no longer walks into
+  its region. Contract change: `SquadOrder.StandoffBufferCells` (optional,
+  default 0).

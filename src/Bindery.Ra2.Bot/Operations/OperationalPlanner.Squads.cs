@@ -9,21 +9,31 @@ namespace Bindery.Ra2.Bot.Operations;
 /// squads, and every squad has a stable id so tactical hysteresis state survives:
 /// <list type="bullet">
 /// <item><c>scout</c>: one cheap, fast unit while the intent has a
-/// <see cref="ObjectiveKind.Scout"/> objective, visiting non-own start locations
-/// first (oldest sighting first), then the region seen longest ago.</item>
+/// <see cref="ObjectiveKind.Scout"/> objective, visiting the intent's
+/// <see cref="StrategicIntent.RegionsOfInterest"/> first (in order, skipping any seen within
+/// <see cref="OperationalOptions.ScoutRevisitSeconds"/>), then non-own start locations
+/// (oldest sighting first), then the region seen longest ago.</item>
 /// <item><c>harass</c>: up to <see cref="OperationalOptions.HarassSquadSize"/> units
-/// while the intent has a <see cref="ObjectiveKind.Harass"/> objective.</item>
+/// while the intent has a <see cref="ObjectiveKind.Harass"/> objective, in sorties: a sortie
+/// starts every <c>harassIntervalSeconds</c> (playbook parameter, else
+/// <see cref="OperationalOptions.DefaultHarassIntervalSeconds"/>), goes to the target engaged, and after
+/// <see cref="OperationalOptions.HarassDwellSeconds"/> there heads home unengaged to regroup until the
+/// next sortie. A sortie still travelling when the next one is due simply carries on.</item>
 /// <item><c>retreat</c>: everything else, when the intent has a
 /// <see cref="ObjectiveKind.Retreat"/> objective.</item>
 /// <item><c>defend</c>: everything else while a base region is threatened (base threat
-/// ratio ≥ 1), and otherwise while no attack is on; it holds at the base region
-/// facing the attack target, engaged.</item>
+/// ratio at least the playbook's <c>defendThreatRatio</c>, else
+/// <see cref="OperationalOptions.DefaultDefendThreatRatio"/>), and otherwise while no attack is on;
+/// it stages, engaged, at the first of the intent's <see cref="StrategicIntent.RegionsOfInterest"/> that is
+/// reachable, not the attack target and not enemy-held, else at the own building region nearest the target.</item>
 /// <item><c>attack</c>: everything else once an attack is wanted (an
 /// <see cref="ObjectiveKind.AttackRegion"/> objective, or attack conditions on any
 /// non-defend posture) and ready (all attack conditions hold and own army value reaches
 /// the playbook's <c>attackArmyValue</c> or <see cref="OperationalOptions.MinAttackArmyValue"/>).
 /// An attack in progress continues until army value drops below
-/// <see cref="OperationalOptions.AttackHoldFraction"/> of that threshold (hysteresis).</item>
+/// <see cref="OperationalOptions.AttackHoldFraction"/> of that threshold (hysteresis). The attack order carries
+/// the playbook's <c>siegeRangeBufferCells</c> as <see cref="SquadOrder.StandoffBufferCells"/>, which the squad
+/// controller turns into artillery stand-off.</item>
 /// </list>
 /// The attack target is the objective's region while it still holds known enemy
 /// presence or is unseen; once it is seen empty, the planner moves on to the known enemy
@@ -44,6 +54,9 @@ public sealed partial class OperationalPlanner
     private RegionId? scoutTarget;
     private RegionId? attackTarget;
     private bool attacking;
+    private GameTime? harassCycleStart;
+    private GameTime? harassArrivedAt;
+    private bool harassReturning;
 
     private sealed class SquadState
     {
@@ -75,15 +88,24 @@ public sealed partial class OperationalPlanner
         double retreatRatio = intent.PlaybookParameters.TryGetValue("retreatBelowForceRatio", out double rr)
             ? rr
             : options.DefaultRetreatBelowForceRatio;
+        double defendAt = intent.PlaybookParameters.TryGetValue("defendThreatRatio", out double dt)
+            ? dt
+            : options.DefaultDefendThreatRatio;
+        double standoff = intent.PlaybookParameters.TryGetValue("siegeRangeBufferCells", out double sb) ? Math.Max(0, sb) : 0;
 
         // Persistent squads first: they keep their members while their objective lasts.
         Objective? scout = intent.Objectives.Where(static o => o.Kind == ObjectiveKind.Scout).OrderBy(static o => o.Priority).FirstOrDefault();
-        if (scout is not null && pool.Count > 1) AssignScout(belief, graph, home, pool, notes);
+        if (scout is not null && pool.Count > 1) AssignScout(belief, graph, home, pool, intent.RegionsOfInterest, notes);
         else Disband(ScoutSquad);
 
         Objective? harass = intent.Objectives.Where(static o => o.Kind == ObjectiveKind.Harass && o.Region is not null).OrderBy(static o => o.Priority).FirstOrDefault();
-        if (harass is not null) AssignHarass(harass.Region!.Value, pool);
-        else Disband(HarassSquad);
+        if (harass is not null) AssignHarass(belief, intent, home, harass.Region!.Value, pool, notes);
+        else
+        {
+            Disband(HarassSquad);
+            harassCycleStart = harassArrivedAt = null;
+            harassReturning = false;
+        }
 
         foreach (string id in new[] { AttackSquad, DefendSquad, RetreatSquad }) Disband(id);
 
@@ -94,7 +116,7 @@ public sealed partial class OperationalPlanner
             Fill(GetOrCreate(RetreatSquad, ObjectiveKind.Retreat, retreat.Region ?? home, engage: false), pool);
             attacking = false;
         }
-        else if (threat >= 1.0)
+        else if (threat >= defendAt)
         {
             RegionId threatened = features.Threats.Where(static t => t.IsBase)
                 .OrderBy(static t => t.LocalForceRatio).ThenBy(static t => t.Region.Value)
@@ -121,7 +143,7 @@ public sealed partial class OperationalPlanner
             else
             {
                 attacking = false;
-                RegionId staging = wanted ? StagingRegion(belief, graph, home, attack?.Region) : home;
+                RegionId staging = wanted ? StagingRegion(belief, features, intent, graph, home, attack?.Region) : home;
                 Fill(GetOrCreate(DefendSquad, ObjectiveKind.DefendRegion, staging, engage: true), pool);
                 if (wanted) notes.Add($"squads: staging at {staging} (army {army:0}/{minArmy:0}, conditions {(conditions ? "hold" : "not met")})");
             }
@@ -130,10 +152,10 @@ public sealed partial class OperationalPlanner
         List<string> empty = squads.Where(static kv => kv.Value.Units.Count == 0).Select(static kv => kv.Key).ToList();
         foreach (string id in empty) squads.Remove(id);
 
-        return LeaseAndOrder(belief, leases, previous, retreatRatio);
+        return LeaseAndOrder(belief, leases, previous, retreatRatio, standoff);
     }
 
-    private List<SquadOrder> LeaseAndOrder(BeliefSnapshot belief, ILeaseManager leases, Dictionary<string, List<EntityId>> previous, double retreatRatio)
+    private List<SquadOrder> LeaseAndOrder(BeliefSnapshot belief, ILeaseManager leases, Dictionary<string, List<EntityId>> previous, double retreatRatio, double standoff)
     {
         List<SquadOrder> orders = [];
         foreach (SquadState squad in squads.Values.OrderBy(static s => s.SquadId, StringComparer.Ordinal))
@@ -157,7 +179,8 @@ public sealed partial class OperationalPlanner
                 if (ok) held.Add(unit);
             }
             if (held.Count == 0) continue;
-            orders.Add(new SquadOrder(squad.SquadId, squad.Objective, squad.TargetRegion, held, squad.Engage, retreatRatio));
+            orders.Add(new SquadOrder(squad.SquadId, squad.Objective, squad.TargetRegion, held, squad.Engage, retreatRatio,
+                squad.SquadId == AttackSquad ? standoff : 0));
         }
 
         // Units that left every squad give their lease back, so another controller (or a later squad) can take them.
@@ -190,7 +213,7 @@ public sealed partial class OperationalPlanner
         pool.Clear();
     }
 
-    private void AssignScout(BeliefSnapshot belief, RegionGraph graph, RegionId home, List<OwnEntity> pool, List<string> notes)
+    private void AssignScout(BeliefSnapshot belief, RegionGraph graph, RegionId home, List<OwnEntity> pool, IReadOnlyList<RegionId> regionsOfInterest, List<string> notes)
     {
         SquadState squad = GetOrCreate(ScoutSquad, ObjectiveKind.Scout, scoutTarget ?? home, engage: false);
         squad.Units.RemoveAll(u => !pool.Any(p => p.Id == u));
@@ -210,15 +233,21 @@ public sealed partial class OperationalPlanner
         bool seenRecently = scoutTarget is { } s && belief.RegionLastSeen.TryGetValue(s, out GameTime seen) && belief.Time.SecondsSince(seen) < 5;
         if (scoutTarget is null || arrived || (seenRecently && scout.Region != scoutTarget))
         {
-            scoutTarget = NextScoutTarget(belief, graph, home, scout.Region);
+            scoutTarget = NextScoutTarget(belief, graph, home, scout.Region, regionsOfInterest);
             notes.Add($"scout: heading to {scoutTarget}");
         }
         squad.TargetRegion = scoutTarget ?? home;
     }
 
-    private RegionId? NextScoutTarget(BeliefSnapshot belief, RegionGraph graph, RegionId home, RegionId from)
+    private RegionId? NextScoutTarget(BeliefSnapshot belief, RegionGraph graph, RegionId home, RegionId from, IReadOnlyList<RegionId> regionsOfInterest)
     {
         double Age(Region r) => belief.RegionLastSeen.TryGetValue(r.Id, out GameTime t) ? belief.Time.SecondsSince(t) : double.MaxValue;
+        foreach (RegionId interest in regionsOfInterest)
+        {
+            Region? region = belief.Map.Regions.FirstOrDefault(r => r.Id == interest);
+            if (region is null || interest == from || double.IsInfinity(graph.Distance(from, interest))) continue;
+            if (Age(region) > options.ScoutRevisitSeconds) return interest;
+        }
         HashSet<RegionId> ownRegions = belief.Own.Where(static e => e.Kind == EntityKind.Building).Select(static e => e.Region).ToHashSet();
         Region? start = belief.Map.Regions
             .Where(r => r.IsStartLocation && !ownRegions.Contains(r.Id) && r.Id != from && Age(r) > options.ScoutRevisitSeconds)
@@ -232,7 +261,7 @@ public sealed partial class OperationalPlanner
             .FirstOrDefault() ?? home;
     }
 
-    private void AssignHarass(RegionId region, List<OwnEntity> pool)
+    private void AssignHarass(BeliefSnapshot belief, StrategicIntent intent, RegionId home, RegionId region, List<OwnEntity> pool, List<string> notes)
     {
         SquadState squad = GetOrCreate(HarassSquad, ObjectiveKind.Harass, region, engage: true);
         squad.Units.RemoveAll(u => !pool.Any(p => p.Id == u));
@@ -245,7 +274,33 @@ public sealed partial class OperationalPlanner
             if (squad.Units.Count >= options.HarassSquadSize) break;
             squad.Units.Add(unit.Id);
         }
+        List<OwnEntity> members = pool.Where(p => squad.Units.Contains(p.Id)).ToList();
         pool.RemoveAll(p => squad.Units.Contains(p.Id));
+
+        // Sortie timing: cycles of harassIntervalSeconds from the first sortie; each cycle goes out, dwells, returns.
+        double interval = Math.Max(1, intent.PlaybookParameters.TryGetValue("harassIntervalSeconds", out double hi) ? hi : options.DefaultHarassIntervalSeconds);
+        GameTime now = belief.Time;
+        if (harassCycleStart is not { } start || now.SecondsSince(start) >= interval)
+        {
+            harassCycleStart = harassCycleStart is { } previous
+                ? previous.Plus(Math.Floor(now.SecondsSince(previous) / interval) * interval)
+                : now;
+            harassArrivedAt = null;
+            harassReturning = false;
+            notes.Add($"harass: sortie to {region} (every {interval:0} s)");
+        }
+        if (!harassReturning)
+        {
+            bool arrived = members.Count > 0 && members.Count(m => m.Region == region) * 2 > members.Count;
+            if (arrived) harassArrivedAt ??= now;
+            if (harassArrivedAt is { } at && now.SecondsSince(at) >= options.HarassDwellSeconds)
+            {
+                harassReturning = true;
+                notes.Add($"harass: sortie done, regrouping at {home}");
+            }
+        }
+        squad.TargetRegion = harassReturning ? home : region;
+        squad.Engage = !harassReturning;
     }
 
     private static RegionId HomeRegion(BeliefSnapshot belief)
@@ -258,10 +313,19 @@ public sealed partial class OperationalPlanner
         return belief.Own.OrderBy(static e => e.Id.Value).Select(static e => e.Region).FirstOrDefault();
     }
 
-    /// <summary>The own building region closest to the attack target, where the army gathers before a push.</summary>
-    private RegionId StagingRegion(BeliefSnapshot belief, RegionGraph graph, RegionId home, RegionId? objective)
+    /// <summary>
+    /// Where the army gathers before a push: the first region of interest that is reachable, not the target and
+    /// not enemy-held; otherwise the own building region closest to the attack target.
+    /// </summary>
+    private RegionId StagingRegion(BeliefSnapshot belief, StrategicFeatures features, StrategicIntent intent, RegionGraph graph, RegionId home, RegionId? objective)
     {
         RegionId? target = objective ?? attackTarget ?? KnownEnemyBaseRegion(belief, graph, home);
+        foreach (RegionId interest in intent.RegionsOfInterest)
+        {
+            if (interest == target || !belief.Map.Regions.Any(r => r.Id == interest) || double.IsInfinity(graph.Distance(home, interest))) continue;
+            if (features.MapControl.Control.TryGetValue(interest, out RegionControl control) && control == RegionControl.Enemy) continue;
+            return interest;
+        }
         if (target is not { } t) return home;
         return belief.Own.Where(static e => e.Kind == EntityKind.Building)
             .Select(static e => e.Region).Distinct()
