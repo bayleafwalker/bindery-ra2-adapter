@@ -47,6 +47,7 @@ public sealed class Ra2ObservationAssembler
     private PowerState power = new(0, 0);
     private long latestFrame = -1;
     private long nextBoundary;
+    private bool matchEnded;
 
     /// <param name="self">The controlled player this assembler builds frames for.</param>
     /// <param name="faction">
@@ -84,11 +85,14 @@ public sealed class Ra2ObservationAssembler
     /// earlier than it happened, and event windows would see the future).
     /// The frames emitted for a gap therefore hold the state as of the last
     /// event before it and no new events; the event itself lands in the
-    /// first frame at or after its own time.
+    /// first frame at or after its own time. <c>game.lifecycle.ended</c> is
+    /// the exception that ends the stream: it emits a final frame at once, and
+    /// every later event is ignored.
     /// </remarks>
     public IReadOnlyList<ObservationFrame> Ingest(NormalizedObservation observation)
     {
         ArgumentNullException.ThrowIfNull(observation);
+        if (matchEnded) return []; // nothing after the end of the match is part of it
         if (!TryGetLong(observation.Payload, Ra2BotTelemetryContract.FieldFrame, observation, "event_skipped", out long frame)) return [];
 
         List<ObservationFrame> emitted = [];
@@ -96,6 +100,13 @@ public sealed class Ra2ObservationAssembler
         latestFrame = Math.Max(latestFrame, frame);
         Apply(observation, frame);
         EmitBoundaries(latestFrame, emitted);
+        if (matchEnded && pendingEvents.Count > 0)
+        {
+            // The match end is the last telemetry there will be, so waiting for the next boundary would hold it
+            // (and any defeat or destruction since the last boundary) back forever: flush a final frame now.
+            emitted.Add(BuildFrame(new GameTime(latestFrame)));
+            pendingEvents.Clear();
+        }
         return emitted;
     }
 
@@ -134,6 +145,7 @@ public sealed class Ra2ObservationAssembler
                 break;
             case "game.lifecycle.ended":
                 pendingEvents.Add(new GameEvent(GameEventKind.MatchEnded, new GameTime(frame), null, null, null, null));
+                matchEnded = true;
                 break;
             default:
                 // Not yet part of bindery.ra2.bot-observation/v1; ignored, not reported missing.
