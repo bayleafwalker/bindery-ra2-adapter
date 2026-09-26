@@ -107,13 +107,25 @@ public sealed class SkirmishSimulation
     public IReadOnlyList<GameCommand> RecentRejections(PlayerId player) =>
         players.TryGetValue(player, out SimPlayerState? s) ? [.. s.RecentRejections] : [];
 
+    /// <summary>
+    /// Credits, plus every live object at <see cref="SimValuation.ValueOf"/>, plus every queued item (paid for when it
+    /// was queued, including a finished building waiting for placement). The timeout winner is decided by it, so value
+    /// must not vanish into production that has not finished yet.
+    /// </summary>
     public int AssetValue(PlayerId player)
     {
         if (!players.TryGetValue(player, out SimPlayerState? state)) return 0;
         int total = state.Credits;
         foreach (SimEntity e in entities)
         {
-            if (e.Owner == player && e.Alive && rules.TryGet(e.TypeId, out UnitRule rule)) total += rule.Cost;
+            if (e.Owner == player && e.Alive) total += SimValuation.ValueOf(rules, e.TypeId);
+        }
+        foreach (QueueRuntime queue in state.Queues.Values)
+        {
+            foreach (QueueItemRuntime item in queue.Items)
+            {
+                if (rules.TryGet(item.TypeId, out UnitRule rule)) total += rule.Cost;
+            }
         }
         return total;
     }

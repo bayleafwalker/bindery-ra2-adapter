@@ -216,6 +216,7 @@ public static class MatchRunner
     /// Adds one step's losses and kills: every object destroyed in combat or by a superweapon is a loss to its owner,
     /// but only a kill the simulator attributes to the other player (<see cref="GameEventKind.EntityKilledByUs"/>)
     /// counts as value that player destroyed, so a strike on one's own units is a loss, not the opponent's kill.
+    /// Values come from <see cref="SimValuation.ValueOf"/> (a construction yard is worth its MCV).
     /// </summary>
     public static void TallyTrades(IEnumerable<GameEvent> events, IRulesDatabase rules, Dictionary<PlayerId, int> lostValueOf, Dictionary<PlayerId, int> killedValueBy)
     {
@@ -226,8 +227,9 @@ public static class MatchRunner
         foreach (GameEvent e in events)
         {
             if (e.Owner is not { } owner || e.Detail is not ("combat" or "superweapon") || !rules.TryGet(e.TypeId ?? string.Empty, out UnitRule rule)) continue;
-            if (e.Kind == GameEventKind.EntityDestroyed) lostValueOf[owner] = lostValueOf.GetValueOrDefault(owner) + rule.Cost;
-            else if (e.Kind == GameEventKind.EntityKilledByUs) killedValueBy[owner] = killedValueBy.GetValueOrDefault(owner) + rule.Cost;
+            int value = SimValuation.ValueOf(rules, rule.TypeId);
+            if (e.Kind == GameEventKind.EntityDestroyed) lostValueOf[owner] = lostValueOf.GetValueOrDefault(owner) + value;
+            else if (e.Kind == GameEventKind.EntityKilledByUs) killedValueBy[owner] = killedValueBy.GetValueOrDefault(owner) + value;
         }
     }
 
