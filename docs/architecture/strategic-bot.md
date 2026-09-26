@@ -258,7 +258,8 @@ Gaps an operator review found after integration, and how each was closed.
   `StrategicFeatures.Superweapons` (own and enemy charge fraction, seconds to
   ready, ready), `SuperweaponDetected` on a new enemy superweapon and on an
   enemy (not own) launch; the planner fires a ready superweapon at the known
-  enemy building area with the most known value. `ForceCluster.ValueByRole`
+  enemy building area with the most known value net of the own objects the
+  strike would also hit, and holds it when no target is worth more. `ForceCluster.ValueByRole`
   gives army value by role and location; `EnemyFeatures.TechLastSeenAgeSeconds`
   (from `EnemyPlayerBelief.TechLastSeen`) gives an age per known enemy tech and
   production item. All reach the LLM prompt. Contract changes (all optional,

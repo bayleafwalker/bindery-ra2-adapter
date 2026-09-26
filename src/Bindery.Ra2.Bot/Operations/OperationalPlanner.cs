@@ -473,6 +473,10 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
                 double value = buildings
                     .Where(b => b.LastSeenPosition.DistanceTo(candidate.LastSeenPosition) <= options.SuperweaponTargetRadiusCells)
                     .Sum(static b => Math.Max(1, b.Value) * b.Confidence); // a deploy product (construction yard) costs 0 but is still a target
+                // The strike hits both sides: what it would destroy of our own (an assault on that base) counts against it.
+                value -= belief.Own
+                    .Where(o => o.Position.DistanceTo(candidate.LastSeenPosition) <= options.SuperweaponTargetRadiusCells)
+                    .Sum(static o => Math.Max(1, o.Value));
                 if (value > bestValue)
                 {
                     best = candidate;
@@ -481,11 +485,11 @@ public sealed partial class OperationalPlanner : IOperationalPlanner
             }
             if (best is null)
             {
-                notes.Add($"superweapon: {timer.TypeId} ready, no known enemy building to target");
+                notes.Add($"superweapon: {timer.TypeId} ready, no known enemy building worth more than the own objects the strike would hit");
                 continue;
             }
             commands.Add(new LaunchSuperweaponCommand(options.ControllerId, timer.Building!.Value, best.LastSeenPosition));
-            notes.Add(string.Create(CultureInfo.InvariantCulture, $"superweapon: {timer.TypeId} at {best.LastSeenPosition} ({bestValue:0} known building value)"));
+            notes.Add(string.Create(CultureInfo.InvariantCulture, $"superweapon: {timer.TypeId} at {best.LastSeenPosition} ({bestValue:0} known building value net of own objects in the radius)"));
         }
     }
 

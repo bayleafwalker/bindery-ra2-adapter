@@ -38,7 +38,7 @@ namespace Bindery.Ra2.Bot.Operations;
 /// <param name="DefaultDefendThreatRatio">Base threat ratio that pulls the army home to defend when the playbook has no <c>defendThreatRatio</c>.</param>
 /// <param name="DefaultHarassIntervalSeconds">Seconds between harass sorties when the playbook has no <c>harassIntervalSeconds</c>.</param>
 /// <param name="HarassDwellSeconds">Seconds a harass sortie spends in its target region before it heads home to regroup.</param>
-/// <param name="SuperweaponTargetRadiusCells">Radius used to score superweapon targets: the known enemy building value within it.</param>
+/// <param name="SuperweaponTargetRadiusCells">Radius used to score superweapon targets: the known enemy building value within it minus the own object value within it (the strike hits both sides)</param>
 /// <param name="ConditionEvaluator">
 /// Evaluates one <see cref="Condition"/> against <see cref="StrategicFeatures"/>. Left null,
 /// the planner uses the canonical <see cref="Arbitration.ConditionEvaluator.Holds"/>, the single
