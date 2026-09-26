@@ -103,7 +103,6 @@ public static class MatchRunner
         Dictionary<PlayerId, int> buildingsBuilt = new() { [ArmPlayer] = 0, [OpponentPlayer] = 0 };
         Dictionary<PlayerId, int> peakArmy = new() { [ArmPlayer] = 0, [OpponentPlayer] = 0 };
         Dictionary<PlayerId, double?> firstAttack = new() { [ArmPlayer] = null, [OpponentPlayer] = null };
-        int cheapest = rules.All.Where(static r => r.Cost > 0).Select(static r => r.Cost).DefaultIfEmpty(0).Min();
         int samples = 0;
 
         int maxFrames = (int)(maxSeconds * GameTime.FramesPerSecond) + GameTime.FramesPerSecond;
@@ -144,7 +143,7 @@ public static class MatchRunner
                 {
                     ObservationFrame view = p == ArmPlayer ? oracle : sim.Observe(p, ObservationMode.Oracle);
                     creditsSampleSum[p] += view.Credits;
-                    if (IsProductionIdle(view, p, rules, cheapest)) idleSamples[p]++;
+                    if (IsProductionIdle(view, p, rules)) idleSamples[p]++;
                     int army = view.Entities
                         .Where(e => e.Owner == p && rules.TryGet(e.TypeId, out UnitRule r) && r.Kind != EntityKind.Building && r.Damage > 0)
                         .Sum(e => rules.Get(e.TypeId).Cost);
@@ -204,12 +203,20 @@ public static class MatchRunner
         return present ? oracle.Time.Seconds : null;
     }
 
-    /// <summary>Spec: at least one factory, nothing queued, and credits for the cheapest buildable item.</summary>
-    private static bool IsProductionIdle(ObservationFrame frame, PlayerId player, IRulesDatabase rules, int cheapest)
+    /// <summary>
+    /// Spec: at least one factory, nothing queued, and credits for the cheapest item this player can build now (its
+    /// faction and the buildings it owns decide that, not the cheapest item anywhere in the rules).
+    /// </summary>
+    public static bool IsProductionIdle(ObservationFrame frame, PlayerId player, IRulesDatabase rules)
     {
-        bool hasFactory = frame.Entities.Any(e => e.Owner == player && rules.TryGet(e.TypeId, out UnitRule r) && r.Kind == EntityKind.Building && r.Role == UnitRole.Production);
-        if (!hasFactory || frame.Credits < cheapest) return false;
-        return frame.Queues.All(static q => q.Items.Count == 0);
+        ArgumentNullException.ThrowIfNull(frame);
+        ArgumentNullException.ThrowIfNull(rules);
+        List<ObservedEntity> own = [.. frame.Entities.Where(e => e.Owner == player)];
+        bool hasFactory = own.Any(e => rules.TryGet(e.TypeId, out UnitRule r) && r.Kind == EntityKind.Building && r.Role == UnitRole.Production);
+        if (!hasFactory || frame.Queues.Any(static q => q.Items.Count > 0)) return false;
+        HashSet<string> owned = own.Where(e => rules.TryGet(e.TypeId, out UnitRule r) && r.Kind == EntityKind.Building).Select(static e => e.TypeId).ToHashSet(StringComparer.Ordinal);
+        int? cheapest = rules.All.Where(r => r.Cost > 0 && rules.CanBuild(frame.Faction, owned, r.TypeId)).Select(static r => (int?)r.Cost).Min();
+        return cheapest is { } c && frame.Credits >= c;
     }
 
     /// <summary>
