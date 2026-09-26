@@ -47,7 +47,7 @@ public sealed class SquadControllerTests
         IReadOnlyList<GameCommand> commands = controller.Tick(belief, [order], leases, rules);
 
         AttackCommand attack = Assert.IsType<AttackCommand>(Assert.Single(commands));
-        Assert.Equal(juicy.Id, attack.Target); // higher effectiveness * (1 - health) * value
+        Assert.Equal(juicy.Id, attack.Target); // dies soonest under the squad's fire (effectiveness 3, half health)
         Assert.Equal([tank.Id], attack.Units);
     }
 

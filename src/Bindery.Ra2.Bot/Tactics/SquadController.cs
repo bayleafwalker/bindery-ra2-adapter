@@ -120,8 +120,12 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
     }
 
     /// <summary>
-    /// Best target by average, over squad members, of
-    /// effectiveness × (1 - health fraction) × value; one target per squad per tick.
+    /// Focus fire: the target whose death removes the most enemy damage per second of the squad's fire. An armed
+    /// target scores its damage per second against the squad (its weapon × effectiveness on the members) divided
+    /// by the seconds the squad needs to kill it (its remaining strength over the squad's effective damage on it),
+    /// so a cheap, fragile shooter goes before a sturdy one and anything that shoots back goes before a building.
+    /// Unarmed targets (structures, harvesters) score only their value per kill-second, scaled far below any
+    /// shooter, so a squad razes a base only once its defenders are down.
     /// </summary>
     private static EntityId? ChooseFocusTarget(List<OwnEntity> members, List<EnemyContact> candidates, IRulesDatabase rules)
     {
@@ -129,18 +133,25 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
         double bestScore = double.NegativeInfinity;
         foreach (EnemyContact candidate in candidates.OrderBy(static c => c.Id.Value))
         {
-            double effectiveness = 0;
-            int count = 0;
+            // Unknown types (outside the rules) count as one damage point per member and the contact's value as
+            // strength, so the choice still orders by effectiveness, health and value.
+            bool knownTarget = rules.TryGet(candidate.TypeId, out UnitRule targetRule);
+            double squadDamage = 0;
+            double threat = 0;
             foreach (OwnEntity member in members)
             {
-                effectiveness += rules.Effectiveness(member.TypeId, candidate.TypeId);
-                count++;
+                double memberDamage = rules.TryGet(member.TypeId, out UnitRule memberRule) ? memberRule.Damage : 1.0;
+                squadDamage += memberDamage * rules.Effectiveness(member.TypeId, candidate.TypeId);
+                if (knownTarget) threat += targetRule.Damage * rules.Effectiveness(candidate.TypeId, member.TypeId);
             }
-            double avgEffectiveness = count > 0 ? effectiveness / count : 1.0;
-            // Low health first, but a full-health target still scores (the 1.25 floor), and armed targets
-            // outrank unarmed ones so the squad kills what shoots back before it razes buildings.
-            double threat = IsArmed(candidate, rules) ? 3.0 : 1.0;
-            double score = avgEffectiveness * (1.25 - candidate.HealthFractionWhenSeen) * Math.Max(1, candidate.Value) * threat;
+            if (squadDamage <= 0) continue;
+            double strength = knownTarget ? targetRule.Strength : Math.Max(1, candidate.Value);
+            double remaining = Math.Max(1.0, strength * Math.Clamp(candidate.HealthFractionWhenSeen, 0.05, 1.0));
+            double killSeconds = remaining / squadDamage;
+            threat /= Math.Max(1, members.Count);
+            double score = IsArmed(candidate, rules) && threat > 0
+                ? 1_000.0 + threat / killSeconds
+                : Math.Max(1, candidate.Value) / killSeconds * 1e-3;
             if (score > bestScore)
             {
                 bestScore = score;
