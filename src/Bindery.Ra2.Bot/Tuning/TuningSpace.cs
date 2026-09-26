@@ -25,7 +25,8 @@ public sealed record TuningDimension(string Scope, string? PlaybookId, string Na
 /// The search space: every consumed playbook parameter (<see cref="TuningKnobs.ConsumedPlaybookParameters"/>) of
 /// every playbook, then the operational and feature knobs, each normalised to [0, 1] so a single step size
 /// is meaningful across a 600–3000 army value and a 0.2–0.9 fraction alike. Order is fixed (playbook id,
-/// parameter name, then knob list order) so a seeded search visits the same points on every machine.
+/// parameter name, then knob list order) so a seeded search visits the same points on every machine of the same
+/// platform (see <see cref="SeededNormal"/> for why not across platforms).
 /// </summary>
 public sealed class TuningSpace
 {

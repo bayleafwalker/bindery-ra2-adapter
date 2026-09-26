@@ -8,8 +8,9 @@ namespace Bindery.Ra2.Bot.Tuning;
 
 /// <summary>
 /// Where a tuned set came from, so a reader can reproduce it: every input that decided the search is here.
-/// The date is passed on the tuner's command line, never read from the clock, so rerunning the same command
-/// reproduces the file byte for byte.
+/// The date is passed on the tuner's command line, never read from the clock, so rerunning the same command on
+/// the same platform reproduces the file byte for byte (normal draws and the search's transcendental functions
+/// come from the platform's math library; see <see cref="SeededNormal"/>).
 /// </summary>
 public sealed record TuningProvenance(
     string Tool,

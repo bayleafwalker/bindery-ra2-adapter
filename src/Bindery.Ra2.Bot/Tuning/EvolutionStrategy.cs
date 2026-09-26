@@ -2,8 +2,12 @@
 namespace Bindery.Ra2.Bot.Tuning;
 
 /// <summary>
-/// SplitMix64 with Box–Muller normals: a tiny, fully specified generator so a seeded search draws the same
-/// numbers on every runtime version (<see cref="System.Random"/>'s algorithm is an implementation detail).
+/// SplitMix64 with Box–Muller normals: a tiny, fully specified generator (<see cref="System.Random"/>'s algorithm
+/// is an implementation detail). The integer and uniform streams are bit-exact everywhere. The normals use
+/// <see cref="Math.Log"/>, <see cref="Math.Sin"/> and <see cref="Math.Cos"/>, which .NET takes from the platform's
+/// math library, so they are reproducible on one platform (OS, CPU architecture, C library) but may differ in the
+/// last bit across platforms; the search's own Log/Pow/Exp have the same limit. A seeded search therefore
+/// reproduces on the platform that ran it, and elsewhere only up to near-ties in ranking.
 /// </summary>
 public sealed class SeededNormal(ulong seed)
 {
