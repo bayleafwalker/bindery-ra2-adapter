@@ -156,6 +156,24 @@ public sealed class SquadRetreatAndRoutingTests
         Assert.IsNotType<AttackCommand>(command);
     }
 
+    [Fact]
+    public void Contact_out_of_sight_for_seconds_is_neither_a_focus_target_nor_a_reason_to_retreat()
+    {
+        SquadController controller = new(new SquadControllerOptions());
+        FakeRulesDatabase rules = new(armedTypes: ["enemy"]);
+        OwnEntity tank = Fixture.Unit(1, Fixture.Front, new Cell(50, 50));
+        FakeLeaseManager leases = Leased("attack", tank);
+        SquadOrder order = new("attack", ObjectiveKind.AttackRegion, Fixture.Front, [tank.Id], true, 0.6);
+        // Passed by 15 s ago and left vision; still "fresh" by the 20 s staleness limit.
+        EnemyContact ghost = Armed(20, new Cell(52, 50), Fixture.Front, GameTime.FromSeconds(85), 5000);
+
+        for (int t = 100; t <= 110; t++)
+        {
+            BeliefSnapshot belief = Fixture.Belief(own: [tank], enemies: [ghost], time: GameTime.FromSeconds(t));
+            Assert.IsType<AttackMoveCommand>(Assert.Single(controller.Tick(belief, [order], leases, rules)));
+        }
+    }
+
     /// <summary>Home(10,10) - Mid(30,10) - Front(50,10) - Target(70,10).</summary>
     private static MapInfo Chain() => new(
         "chain",

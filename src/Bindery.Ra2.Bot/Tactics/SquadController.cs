@@ -55,10 +55,15 @@ public sealed class SquadController(SquadControllerOptions options) : ITacticalC
 
         RegionGraph graph = GraphFor(belief.Map);
         Dictionary<EntityId, OwnEntity> ownById = belief.Own.ToDictionary(static e => e.Id);
+        // Engagement is decided on what the squad can see now: a mobile contact that left vision seconds ago is
+        // somewhere else by now (attacking it is ignored in RA2, and its value would make the squad flee a ghost).
+        // Buildings do not move, so a structure stays a target for as long as its contact is fresh.
         List<EnemyContact> freshEnemies = belief.Enemies
             .Where(e => !e.ConfirmedDestroyed &&
                         e.Confidence >= options.MinConfidence &&
-                        belief.Time.SecondsSince(e.LastSeenAt) <= options.MaxContactAgeSeconds)
+                        belief.Time.SecondsSince(e.LastSeenAt) <= (e.Kind == EntityKind.Building
+                            ? options.MaxContactAgeSeconds
+                            : Math.Min(options.MaxContactAgeSeconds, options.EngageContactAgeSeconds)))
             .ToList();
         RegionId? home = HomeRegion(belief);
 
