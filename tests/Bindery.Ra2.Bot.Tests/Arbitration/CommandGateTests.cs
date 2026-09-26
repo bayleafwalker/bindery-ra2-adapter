@@ -120,4 +120,12 @@ public sealed class CommandGateTests
         Assert.Single(Filter(new SetRallyPointCommand("ops", C, new Cell(1, 1))).Dropped);
         Assert.Single(Filter(new SetRallyPointCommand("harvest", C, new Cell(1, 1))).Passed);
     }
+    [Fact]
+    public void Cancelling_production_needs_a_budget_account()
+    {
+        ledger.BeginPeriod(Fx.T(0), 1000, 0, new BudgetShares(1, 0, 0, 0));
+        ledger.Reserve(BudgetPools.Economy, "ops", 0);
+        Assert.Single(Filter(new CancelProductionCommand("ops", "mtnk", QueueKind.Vehicle)).Passed);
+        Assert.Equal(CommandGate.BudgetNoAccount, Assert.Single(Filter(new CancelProductionCommand("squad", "mtnk", QueueKind.Vehicle)).Dropped).Reason);
+    }
 }

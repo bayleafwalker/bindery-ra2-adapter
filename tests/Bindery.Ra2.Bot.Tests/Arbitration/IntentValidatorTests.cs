@@ -259,4 +259,57 @@ public sealed class IntentValidatorTests
         Assert.Contains(result.Issues, i => i.Code == ValidationCodes.BudgetSum);
         Assert.Contains(result.Issues, i => i.Code == ValidationCodes.FogRegion);
     }
+    [Theory]
+    [InlineData("attack")]
+    [InlineData("abort")]
+    [InlineData("replan")]
+    public void Condition_naming_an_off_map_region_is_rejected(string list)
+    {
+        Condition offMap = new(ConditionMetric.ScoutingAgeSeconds, Comparison.Gt, 30, new RegionId(999));
+        ValidationResult result = Validate(With(list, offMap));
+        Assert.False(result.Accepted);
+        Assert.True(Has(result, ValidationCodes.RegionUnknown, ValidationSeverity.Reject));
+    }
+
+    [Theory]
+    [InlineData("attack")]
+    [InlineData("abort")]
+    [InlineData("replan")]
+    public void Condition_with_a_nan_threshold_is_rejected(string list)
+    {
+        ValidationResult result = Validate(With(list, new Condition(ConditionMetric.Credits, Comparison.Lt, double.NaN)));
+        Assert.False(result.Accepted);
+        Assert.True(Has(result, ValidationCodes.ConditionThreshold, ValidationSeverity.Reject));
+    }
+
+    [Fact]
+    public void Empty_abort_triggers_are_filled_from_the_playbook()
+    {
+        ValidationResult result = Validate(Fx.Intent("i", "allied-pressure", StrategicPosture.Pressure));
+        Assert.True(result.Accepted);
+        Assert.True(Fx.Playbooks.TryGet("allied-pressure", out Playbook playbook));
+        Assert.Equal(playbook.AbortTriggers, result.Intent!.AbortTriggers);
+        Assert.Contains(result.Issues, i => i.Code == ValidationCodes.DefaultFilled && i.Message.Contains("abort", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Nan_parameter_becomes_the_playbook_default_with_a_warning()
+    {
+        ValidationResult result = Validate(Fx.Intent("i", "allied-boom", StrategicPosture.Boom,
+            parameters: new Dictionary<string, double> { ["aggression"] = double.NaN }));
+        Assert.True(result.Accepted);
+        Assert.Equal(0.5, result.Intent!.PlaybookParameters["aggression"]);
+        Assert.True(Has(result, ValidationCodes.ParamClamped, ValidationSeverity.Warning));
+    }
+
+    private static StrategicIntent With(string list, Condition condition)
+    {
+        StrategicIntent intent = Fx.Intent("i", "allied-boom", StrategicPosture.Boom);
+        return list switch
+        {
+            "attack" => intent with { AttackConditions = [condition] },
+            "abort" => intent with { AbortTriggers = [condition] },
+            _ => intent with { ReplanTriggers = [condition] },
+        };
+    }
 }

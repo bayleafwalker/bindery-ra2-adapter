@@ -18,7 +18,7 @@ namespace Bindery.Ra2.Bot.Runtime;
 /// <see cref="OnFrame"/> reaches the frame it was logged on, which reproduces the
 /// original latency; recorded failures are replayed as the same outcome (null,
 /// exception with the recorded message, cancellation) and recorded timeouts never
-/// complete, so the scheduler times them out on the same frame. A request the recording also made but never saw
+/// complete, so the scheduler times them out (or supersedes them) on the same frame. A request the recording also made but never saw
 /// answered (in flight when the log ended) stays unanswered (<see cref="Unanswered"/>); a request the recording
 /// never made answers null immediately and counts in <see cref="Misses"/>.
 /// Unless overridden, <see cref="Id"/> and <see cref="Source"/> impersonate the recorded
@@ -181,7 +181,7 @@ public sealed class ReplayStrategist : IStrategist, IFrameAwareStrategist
         return completion.Task;
     }
 
-    /// <summary>Completes a replayed request; false for a recorded timeout, which must never complete.</summary>
+    /// <summary>Completes a replayed request; false for a recorded timeout or supersession, which must never complete.</summary>
     private static bool Deliver(Entry entry, TaskCompletionSource<StrategistProposal?> completion)
     {
         if (entry.Proposal is not null)
@@ -192,6 +192,8 @@ public sealed class ReplayStrategist : IStrategist, IFrameAwareStrategist
         switch (entry.FailureReason)
         {
             case "timeout":
+            case "superseded":
+                // The scheduler ended these itself on the recorded frame; the replay must not answer first.
                 return false;
             case "exception":
                 completion.TrySetException(new InvalidOperationException(entry.FailureMessage));

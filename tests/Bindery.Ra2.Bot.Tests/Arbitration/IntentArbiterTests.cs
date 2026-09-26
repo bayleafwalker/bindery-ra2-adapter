@@ -213,4 +213,150 @@ public sealed class IntentArbiterTests
         Assert.Null(arbiter.Active);
         Assert.Equal(ArbitrationOutcome.Activated, Offer(doomed, Fx.Features(0, ownArmy: 900, enemyArmy: 1000)).Outcome);
     }
+    private static ThreatAssessment BaseThreat(double enemy) => new(Fx.R0, enemy, 1000, 1000 / enemy, 10, 5, true, 1);
+
+    /// <summary>
+    /// A playbook's own <see cref="Playbook.MinCommitSeconds"/> decides the window, not the default: a 90 s plan
+    /// holds past the 45 s default and a 30 s plan yields before it.
+    /// </summary>
+    [Fact]
+    public void Playbook_min_commit_seconds_sets_the_window()
+    {
+        Assert.True(Fx.Playbooks.TryGet("allied-turtle", out Playbook turtle));
+        Assert.True(Fx.Playbooks.TryGet("allied-expand", out Playbook expand));
+        CommitPlaybooks library = new([turtle with { Id = "allied-siege", MinCommitSeconds = 90 }, expand with { Id = "allied-raid", MinCommitSeconds = 30 }]);
+        IntentArbiter custom = new(library);
+
+        custom.Offer(Fx.Accepted(Fx.Intent("a", "allied-siege", StrategicPosture.Turtle)), Fx.Features(0));
+        Assert.Equal(90, custom.MinCommitSecondsFor(custom.Active!));
+        Assert.Equal("commitment", custom.Offer(Fx.Accepted(Fx.Intent("b", "allied-turtle", StrategicPosture.Turtle, issuedAt: 60)), Fx.Features(60)).Reason);
+        Assert.Equal("switch", custom.Offer(Fx.Accepted(Fx.Intent("c", "allied-raid", StrategicPosture.Turtle, issuedAt: 91)), Fx.Features(91)).Reason);
+
+        Assert.Equal(30, custom.MinCommitSecondsFor(custom.Active!));
+        Assert.Equal("commitment", custom.Offer(Fx.Accepted(Fx.Intent("d", "allied-turtle", StrategicPosture.Turtle, issuedAt: 120)), Fx.Features(120)).Reason);
+        Assert.Equal("switch", custom.Offer(Fx.Accepted(Fx.Intent("e", "allied-turtle", StrategicPosture.Turtle, issuedAt: 122)), Fx.Features(122)).Reason);
+    }
+
+    /// <summary>
+    /// The base-threat override answers a threat once: the plan it installs gets its normal commitment, and a
+    /// defensive incumbent is never overridden, so a strategist wavering under attack cannot flip the posture every
+    /// cadence. A new threat episode (after the threat cleared) may override again.
+    /// </summary>
+    [Fact]
+    public void Base_threat_overrides_commitment_once_per_threat_episode()
+    {
+        Offer(Fx.Intent("a", "allied-boom", StrategicPosture.Boom), Fx.Features(0));
+        for (int s = 1; s < 5; s++) arbiter.Update(Fx.Features(s));
+
+        StrategicFeatures threat5 = Fx.Features(5, threats: [BaseThreat(2000)]);
+        arbiter.Update(threat5);
+        Assert.Equal("override:base_threat", Offer(Fx.Intent("d1", "generic-defend", StrategicPosture.Defend, issuedAt: 5, confidence: 0.1), threat5).Reason);
+        for (int s = 6; s <= 10; s++)
+        {
+            StrategicFeatures threat = Fx.Features(s, threats: [BaseThreat(2000)]);
+            arbiter.Update(threat);
+            StrategicIntent wavering = s % 2 == 0
+                ? Fx.Intent($"b{s}", "allied-boom", StrategicPosture.Boom, issuedAt: s, confidence: 0.1)
+                : Fx.Intent($"t{s}", "allied-turtle", StrategicPosture.Turtle, issuedAt: s, confidence: 0.1);
+            Assert.Equal("commitment", Offer(wavering, threat).Reason);
+        }
+        Assert.Equal("d1", arbiter.Active?.IntentId);
+        Assert.Equal(1, metrics.PostureFlips);
+
+        // The threat clears; after commitment a boom plan takes over, and a fresh threat may override it again.
+        arbiter.Update(Fx.Features(40));
+        Assert.Equal("switch", Offer(Fx.Intent("b2", "allied-boom", StrategicPosture.Boom, issuedAt: 50, confidence: 0.3), Fx.Features(50)).Reason);
+        StrategicFeatures threat51 = Fx.Features(51, threats: [BaseThreat(2000)]);
+        arbiter.Update(threat51);
+        Assert.Equal("override:base_threat", Offer(Fx.Intent("d2", "generic-defend", StrategicPosture.Defend, issuedAt: 51, confidence: 0.1), threat51).Reason);
+    }
+
+    [Fact]
+    public void Base_threat_override_does_not_replace_a_defensive_incumbent()
+    {
+        Offer(Fx.Intent("t", "allied-turtle", StrategicPosture.Turtle), Fx.Features(0));
+        StrategicFeatures threat = Fx.Features(5, threats: [BaseThreat(2000)]);
+        arbiter.Update(threat);
+        Assert.Equal("commitment", Offer(Fx.Intent("d", "generic-defend", StrategicPosture.Defend, issuedAt: 5, confidence: 0.1), threat).Reason);
+    }
+
+    /// <summary>
+    /// A firing abort trigger ends the plan (like expiry) instead of leaving it running until a different plan
+    /// happens to arrive: a re-proposal of the same plan is refused as abort_firing, and without the end the
+    /// aborted intent would keep driving the planner until it expired.
+    /// </summary>
+    [Fact]
+    public void Firing_abort_trigger_ends_the_intent()
+    {
+        StrategicIntent pressure = Fx.Intent("a", "allied-pressure", StrategicPosture.Pressure,
+            abort: [new Condition(ConditionMetric.ArmyValueRatio, Comparison.Lt, 0.5)]);
+        Offer(pressure, Fx.Features(0));
+        arbiter.Update(Fx.Features(40, ownArmy: 300, enemyArmy: 1000));
+
+        Assert.Null(arbiter.Active);
+        Assert.Equal("aborted", arbiter.History[0].EndReason);
+        Assert.True(arbiter.FallbackRequested);
+        Assert.Equal("abort", arbiter.ReplanReason);
+
+        StrategicIntent again = Fx.Intent("a2", "allied-pressure", StrategicPosture.Pressure, issuedAt: 41,
+            abort: [new Condition(ConditionMetric.ArmyValueRatio, Comparison.Lt, 0.5)]);
+        Assert.Equal("abort_firing", Offer(again, Fx.Features(41, ownArmy: 300, enemyArmy: 1000)).Reason);
+        Assert.Null(arbiter.Active);
+    }
+
+    [Fact]
+    public void Base_threat_requests_a_replan_once_per_rising_edge()
+    {
+        Offer(Fx.Intent("a", "allied-boom", StrategicPosture.Boom), Fx.Features(0));
+        arbiter.Update(Fx.Features(1, threats: [BaseThreat(1500)]));
+        Assert.False(arbiter.ReplanRequested);
+        arbiter.Update(Fx.Features(2, threats: [BaseThreat(1600)]));
+        Assert.True(arbiter.ReplanRequested);
+        Assert.Equal("base_threat", arbiter.ReplanReason);
+        arbiter.AcknowledgeReplan();
+        arbiter.Update(Fx.Features(3, threats: [BaseThreat(1600)]));
+        Assert.False(arbiter.ReplanRequested);
+        arbiter.Update(Fx.Features(4));
+        arbiter.Update(Fx.Features(5, threats: [BaseThreat(1600)]));
+        Assert.True(arbiter.ReplanRequested);
+    }
+
+    /// <summary>
+    /// A proposal made from a snapshot older than a replan request does not answer it: renewing (or activating) it
+    /// must leave the request standing, or a trigger that fired while the answer was in flight is lost for good
+    /// (triggers are edge-detected).
+    /// </summary>
+    [Fact]
+    public void Proposal_from_before_the_replan_request_does_not_acknowledge_it()
+    {
+        Condition lowCredits = new(ConditionMetric.Credits, Comparison.Lt, 1000);
+        Offer(Fx.Intent("a", "allied-boom", StrategicPosture.Boom, replan: [lowCredits]), Fx.Features(0));
+        arbiter.Update(Fx.Features(21, credits: 500));
+        Assert.True(arbiter.ReplanRequested);
+
+        Assert.Equal(ArbitrationOutcome.Renewed, Offer(Fx.Intent("a2", "allied-boom", StrategicPosture.Boom, issuedAt: 20, replan: [lowCredits]), Fx.Features(21, credits: 500)).Outcome);
+        Assert.True(arbiter.ReplanRequested);
+        Assert.Equal("trigger", arbiter.ReplanReason);
+
+        Assert.Equal(ArbitrationOutcome.Renewed, Offer(Fx.Intent("a3", "allied-boom", StrategicPosture.Boom, issuedAt: 21, replan: [lowCredits]), Fx.Features(21, credits: 500)).Outcome);
+        Assert.False(arbiter.ReplanRequested);
+    }
+
+    private sealed class CommitPlaybooks(IReadOnlyList<Playbook> extra) : IPlaybookLibrary
+    {
+        public IReadOnlyList<Playbook> All => [.. Fx.Playbooks.All, .. extra];
+
+        public bool TryGet(string id, out Playbook playbook)
+        {
+            Playbook? found = extra.FirstOrDefault(p => string.Equals(p.Id, id, StringComparison.Ordinal));
+            if (found is not null)
+            {
+                playbook = found;
+                return true;
+            }
+            return Fx.Playbooks.TryGet(id, out playbook);
+        }
+
+        public IReadOnlyList<Playbook> For(Faction faction) => All.Where(p => p.Factions.Contains(faction)).ToList();
+    }
 }

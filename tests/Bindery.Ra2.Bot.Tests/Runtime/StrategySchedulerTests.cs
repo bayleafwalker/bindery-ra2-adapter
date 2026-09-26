@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using Bindery.Ra2.Bot.Arbitration;
 using Bindery.Ra2.Bot.Runtime;
+using Bindery.Ra2.Bot.Strategy;
 using Bindery.Ra2.Bot.Tests.Arbitration;
 using Xunit;
 
@@ -65,9 +66,9 @@ public sealed class StrategySchedulerTests
         ControlledStrategist primary = new();
         using StrategyScheduler scheduler = Create(primary);
         Tick(scheduler, 0);
-        Tick(scheduler, 2, [new StrategicEvent(StrategicEventKind.BaseUnderAttack, Fx.T(2), 0.8, "base")]);
+        // The answer arrives on the event's frame (a later answer is never waited for: the event supersedes it).
         primary.CompleteLast("overtaken", "allied-boom", StrategicPosture.Boom);
-        Tick(scheduler, 3);
+        Tick(scheduler, 2, [new StrategicEvent(StrategicEventKind.BaseUnderAttack, Fx.T(2), 0.8, "base")]);
 
         DecisionRecord late = Assert.Single(log.OfKind(DecisionRecordKinds.LateDiscarded));
         Assert.Equal("event", late.Data.GetProperty("reason").GetString());
@@ -93,7 +94,8 @@ public sealed class StrategySchedulerTests
     public async Task Strategist_that_never_answers_does_not_stall_the_tick_and_times_out()
     {
         NeverStrategist primary = new();
-        using StrategyScheduler scheduler = Create(primary);
+        // An age limit beyond the timeout keeps the request usable, so only the timeout backstop can end it.
+        using StrategyScheduler scheduler = Create(primary, options: new SchedulerOptions(MaxProposalAgeSeconds: 100));
 
         Task work = Task.Run(() =>
         {
@@ -117,16 +119,18 @@ public sealed class StrategySchedulerTests
     {
         ControlledStrategist primary = new();
         using StrategyScheduler scheduler = Create(primary);
-        for (int s = 0; s <= 45; s++)
+        // A major event (0.65) that does not make the in-flight request stale waits for it.
+        for (int s = 0; s <= 15; s++)
         {
-            Tick(scheduler, s, s == 10 ? [new StrategicEvent(StrategicEventKind.NewEnemyTech, Fx.T(10), 0.9, "tech")] : null);
+            Tick(scheduler, s, s == 10 ? [new StrategicEvent(StrategicEventKind.NewEnemyTech, Fx.T(10), 0.65, "tech")] : null);
         }
         Assert.Single(primary.Calls);
         Assert.True(scheduler.PrimaryInFlight);
 
         primary.CompleteLast("p1", "allied-boom", StrategicPosture.Boom);
-        Tick(scheduler, 45.5);
+        Tick(scheduler, 15.5);
         Assert.Equal(2, primary.Calls.Count);
+        Assert.Equal("event:NewEnemyTech", log.OfKind(RuntimeRecordKinds.Request)[^1].Data.GetProperty("trigger").GetString());
     }
 
     [Fact]
@@ -289,5 +293,158 @@ public sealed class StrategySchedulerTests
         Tick(scheduler, 5, credits: 50);
         Assert.Equal("generic-defend", arbiter.Active?.PlaybookId);
         Assert.Equal(1, metrics.FallbackActivations);
+    }
+    [Fact]
+    public void Event_at_exactly_the_stale_severity_discards_the_result()
+    {
+        ControlledStrategist primary = new();
+        using StrategyScheduler scheduler = Create(primary);
+        Tick(scheduler, 0);
+        primary.CompleteLast("edge", "allied-boom", StrategicPosture.Boom);
+        Tick(scheduler, 2, [new StrategicEvent(StrategicEventKind.ArmyValueSwing, Fx.T(2), 0.7, "swing")]);
+
+        Assert.Equal("event", Assert.Single(log.OfKind(DecisionRecordKinds.LateDiscarded)).Data.GetProperty("reason").GetString());
+        Assert.DoesNotContain("edge", ActivatedIds());
+    }
+
+    [Fact]
+    public void Event_just_below_the_stale_severity_does_not_discard()
+    {
+        ControlledStrategist primary = new();
+        using StrategyScheduler scheduler = Create(primary);
+        Tick(scheduler, 0);
+        primary.CompleteLast("kept", "allied-boom", StrategicPosture.Boom);
+        Tick(scheduler, 2, [new StrategicEvent(StrategicEventKind.ArmyValueSwing, Fx.T(2), 0.6999, "swing")]);
+
+        Assert.Empty(log.OfKind(DecisionRecordKinds.LateDiscarded));
+        Assert.Equal("kept", arbiter.Active?.IntentId);
+    }
+
+    [Fact]
+    public void Proposal_exactly_at_the_age_limit_is_applied()
+    {
+        ControlledStrategist primary = new();
+        using StrategyScheduler scheduler = Create(primary);
+        for (int s = 0; s < 15; s++) Tick(scheduler, s);
+        primary.CompleteLast("on-time", "allied-boom", StrategicPosture.Boom);
+        Tick(scheduler, 15);
+
+        Assert.Empty(log.OfKind(DecisionRecordKinds.LateDiscarded));
+        Assert.Equal("on-time", arbiter.Active?.IntentId);
+    }
+
+    [Fact]
+    public void Proposal_one_frame_past_the_age_limit_is_discarded()
+    {
+        ControlledStrategist primary = new();
+        using StrategyScheduler scheduler = Create(primary);
+        for (int s = 0; s <= 15; s++) Tick(scheduler, s);
+        primary.CompleteLast("one-late", "allied-boom", StrategicPosture.Boom);
+        Tick(scheduler, 15 + 1.0 / GameTime.FramesPerSecond);
+
+        Assert.Equal("age", Assert.Single(log.OfKind(DecisionRecordKinds.LateDiscarded)).Data.GetProperty("reason").GetString());
+        Assert.DoesNotContain("one-late", ActivatedIds());
+    }
+
+    /// <summary>
+    /// Invariant 5: what the arbiter installs (and the planner and ledger read) is the validator's sanitised intent,
+    /// never the strategist's raw one.
+    /// </summary>
+    [Fact]
+    public void Arbiter_installs_the_validators_sanitised_intent()
+    {
+        ScriptedStrategist primary = new("p", IntentSource.Llm, c => new StrategistProposal(
+            Fx.Intent("raw", "allied-boom", StrategicPosture.Boom, issuedAt: c.Features.Time.Seconds, version: c.Features.SnapshotVersion,
+                lifetime: 10_000, budget: new BudgetShares(0.45, 0.3, 0.15, 0.15),
+                parameters: new Dictionary<string, double> { ["aggression"] = 5 }),
+            new ProposalCost(0, 0, 0, 0, null), null));
+        using StrategyScheduler scheduler = Create(primary, options: new SchedulerOptions(RunDeterministicStrategistsInline: true));
+        Tick(scheduler, 0);
+
+        StrategicIntent active = arbiter.Active!;
+        Assert.Equal("raw", active.IntentId);
+        Assert.Equal(1, active.PlaybookParameters["aggression"]);
+        Assert.Equal(2, active.PlaybookParameters["expandAt"]);
+        Assert.Equal(1.0, active.Budget.Economy + active.Budget.Army + active.Budget.Tech + active.Budget.Defense, 9);
+        Assert.True(active.ExpiresAt <= Fx.T(180), $"expiry {active.ExpiresAt} is not capped");
+        Assert.NotEmpty(active.AttackConditions);
+
+        DecisionRecord activated = log.OfKind(DecisionRecordKinds.IntentActivated).Single(r => r.Data.GetProperty("intentId").GetString() == "raw");
+        StrategicIntent logged = IntentJson.FromElement(activated.Data.GetProperty("intent"));
+        Assert.Equal(1, logged.PlaybookParameters["aggression"]);
+        Assert.Equal(active.ExpiresAt, logged.ExpiresAt);
+    }
+
+    /// <summary>
+    /// Invariant 2 applies to what the shadow's record says would have happened: a shadow answer overtaken by a
+    /// severe event is logged as late, not as an activation, and does not count in the live late-discard metric.
+    /// </summary>
+    [Fact]
+    public void Shadow_result_overtaken_by_a_severe_event_is_logged_as_late()
+    {
+        ScriptedStrategist primary = new("p", IntentSource.Selector, c => Proposals.For(c, $"p-{c.Features.SnapshotVersion}", "allied-boom", StrategicPosture.Boom, 0.2));
+        ControlledStrategist shadow = new();
+        using StrategyScheduler scheduler = Create(primary, shadow: shadow);
+        Tick(scheduler, 0);
+        Tick(scheduler, 2, [new StrategicEvent(StrategicEventKind.BaseUnderAttack, Fx.T(2), 0.9, "base")]);
+        shadow.CompleteLast("sh", "allied-expand", StrategicPosture.Boom);
+        Tick(scheduler, 3);
+
+        DecisionRecord record = Assert.Single(log.OfKind(DecisionRecordKinds.ShadowProposal));
+        Assert.Equal("Refused", record.Data.GetProperty("wouldBe").GetString());
+        Assert.Equal("late:event", record.Data.GetProperty("wouldBeReason").GetString());
+        Assert.Equal(0, metrics.LateDiscarded);
+    }
+
+    /// <summary>
+    /// A request whose answer can no longer be applied (overtaken by a severe event, or past the age limit) gives
+    /// up its slot as soon as another request wants it, instead of holding it until the 60 s timeout.
+    /// </summary>
+    [Fact]
+    public void Overtaken_in_flight_request_is_superseded_by_the_event_replan()
+    {
+        NeverStrategist primary = new();
+        using StrategyScheduler scheduler = Create(primary);
+        Tick(scheduler, 0);
+        Tick(scheduler, 1);
+        Tick(scheduler, 2, [new StrategicEvent(StrategicEventKind.BaseUnderAttack, Fx.T(2), 0.8, "base")]);
+
+        Assert.Equal(2, primary.Tokens.Count);
+        Assert.True(primary.Tokens[0].IsCancellationRequested);
+        DecisionRecord failed = Assert.Single(log.OfKind(DecisionRecordKinds.ProposalFailed));
+        Assert.Equal("superseded", failed.Data.GetProperty("reason").GetString());
+        Assert.Equal("event:BaseUnderAttack", log.OfKind(RuntimeRecordKinds.Request)
+            .Last(r => r.Data.GetProperty("role").GetString() == "Primary").Data.GetProperty("trigger").GetString());
+    }
+
+    [Fact]
+    public void Aged_in_flight_request_is_superseded_by_the_next_cadence()
+    {
+        NeverStrategist primary = new();
+        using StrategyScheduler scheduler = Create(primary);
+        for (int s = 0; s <= 20; s++) Tick(scheduler, s);
+
+        Assert.Equal(2, primary.Tokens.Count);
+        Assert.Equal("superseded", Assert.Single(log.OfKind(DecisionRecordKinds.ProposalFailed)).Data.GetProperty("reason").GetString());
+    }
+
+    /// <summary>
+    /// The distillation dataset reads the activation record's features as "what the strategist saw": they must be
+    /// the request's features, not the ones current when a slow answer arrived.
+    /// </summary>
+    [Fact]
+    public void Activation_records_the_features_the_strategist_saw()
+    {
+        ControlledStrategist primary = new();
+        using StrategyScheduler scheduler = Create(primary);
+        Tick(scheduler, 0);
+        for (int s = 1; s <= 3; s++) Tick(scheduler, s, credits: 5000);
+        primary.CompleteLast("slow", "allied-boom", StrategicPosture.Boom);
+        Tick(scheduler, 4, credits: 1234);
+
+        DecisionRecord activated = log.OfKind(DecisionRecordKinds.IntentActivated).Single(r => r.Data.GetProperty("intentId").GetString() == "slow");
+        double[] logged = activated.Data.GetProperty("features").EnumerateArray().Select(static e => e.GetDouble()).ToArray();
+        Assert.Equal(FeatureVector.Encode(Fx.Features(0)).ToArray(), logged);
+        Assert.Equal(Fx.Features(0).SnapshotVersion, activated.Data.GetProperty("featuresSnapshotVersion").GetInt64());
     }
 }

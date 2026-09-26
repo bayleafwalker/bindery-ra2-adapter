@@ -17,11 +17,15 @@ namespace Bindery.Ra2.Bot.Runtime;
 /// </summary>
 public static class StandardBot
 {
-    /// <summary>Options for a simulator: deterministic strategists answer inline and tactics run at 5 Hz.</summary>
+    /// <summary>
+    /// Options for a simulator: deterministic strategists answer inline, tactics run at 5 Hz, and production is paid
+    /// in full when ordered (the simulator debits the whole cost at once).
+    /// </summary>
     public static BotOptions SimulatorOptions { get; } = new(
         RunDeterministicStrategistsInline: true,
         TacticalHz: 5,
-        OperationsControllerId: "ops");
+        OperationsControllerId: "ops",
+        ProductionChargedWhileBuilding: false);
 
     /// <param name="primary">The configured strategist.</param>
     /// <param name="fallback">Deterministic fallback; a <see cref="PlaybookSelector"/> when null.</param>

@@ -26,6 +26,11 @@ namespace Bindery.Ra2.Bot.Runtime;
 /// <param name="Arbiter">Commitment and hysteresis settings; null for the spec defaults.</param>
 /// <param name="LogPlans">Write an <c>operations.plan</c> record for every operational pass.</param>
 /// <param name="AccrueBudgets">Run the budget ledger in accrual mode (<see cref="LedgerOptions.AccrueByShare"/>).</param>
+/// <param name="ProductionChargedWhileBuilding">
+/// True where the game debits a production item's cost gradually as it builds (retail RA2): the ledger's capacity
+/// then excludes what queued items still owe, since the credits on hand do not show it yet. False where the full
+/// cost is debited at order time (the simulator), where subtracting it again would count it twice.
+/// </param>
 public sealed record BotOptions(
     double StrategicCadenceSeconds = 20,
     double MajorEventSeverity = 0.6,
@@ -41,7 +46,8 @@ public sealed record BotOptions(
     string? EmergencyPlaybookId = "generic-defend",
     ArbiterOptions? Arbiter = null,
     bool LogPlans = true,
-    bool AccrueBudgets = true)
+    bool AccrueBudgets = true,
+    bool ProductionChargedWhileBuilding = true)
 {
     public static BotOptions Default { get; } = new();
 

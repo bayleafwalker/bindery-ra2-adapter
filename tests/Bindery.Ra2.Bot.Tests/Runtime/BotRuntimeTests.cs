@@ -201,4 +201,80 @@ public sealed class BotRuntimeTests
         Assert.Equal(0, replay!.Misses);
         Assert.Equal(recorded.ComputeHash(), replayed.ComputeHash());
     }
+    private static DecisionLog RunFor(long frames, IStrategist primary, IStrategist? shadow = null)
+    {
+        DecisionLog log = new();
+        using BotRuntime runtime = Runtimes.Create(primary, shadow: shadow, log: log,
+            options: new BotOptions(StrategicCadenceSeconds: 10, RunDeterministicStrategistsInline: true));
+        for (long f = 0; f < frames; f++) runtime.Tick(Frames.At(f));
+        return log;
+    }
+
+    /// <summary>Invariant 6 for the llm-shadow arm: the shadow's answers are logged as <c>strategy.shadow</c> and replay from there.</summary>
+    [Fact]
+    public void Recorded_shadow_run_replays_identically_from_its_decision_log()
+    {
+        long frames = 60 * GameTime.FramesPerSecond;
+        DecisionLog recorded = RunFor(frames, Selector(), new DelayedStrategist(40));
+        Assert.Contains(recorded.Records, static r => r.Kind == DecisionRecordKinds.ShadowProposal);
+
+        ReplayStrategist replay = new(recorded.Records, ProposalRole.Shadow);
+        DecisionLog replayed = RunFor(frames, Selector(), replay);
+        Assert.Equal(0, replay.Misses);
+        Assert.Equal(recorded.ComputeHash(), replayed.ComputeHash());
+    }
+
+    /// <summary>
+    /// A match normally ends with a request in flight; the replay must leave that request unanswered too, not
+    /// answer it null and log a failure the recording never had.
+    /// </summary>
+    [Fact]
+    public void Recorded_run_ending_mid_request_replays_identically()
+    {
+        long frames = 120 * GameTime.FramesPerSecond + 20;
+        DecisionLog recorded = RunFor(frames, new DelayedStrategist(40));
+        ReplayStrategist replay = ReplayStrategist.FromNdjson(new StringReader(recorded.ToNdjson()));
+        DecisionLog replayed = RunFor(frames, replay);
+        Assert.Equal(0, replay.Misses);
+        Assert.Equal(1, replay.Unanswered);
+        Assert.Equal(recorded.ComputeHash(), replayed.ComputeHash());
+    }
+
+    [Theory]
+    [InlineData("never")]
+    [InlineData("throwing")]
+    public void Recorded_failures_replay_identically(string kind)
+    {
+        static IStrategist Make(string kind) => kind == "never" ? new NeverStrategist() : new ThrowingStrategist(false);
+        long frames = 200 * GameTime.FramesPerSecond;
+        DecisionLog recorded = RunFor(frames, Make(kind));
+        Assert.Contains(recorded.Records, static r => r.Kind == DecisionRecordKinds.ProposalFailed);
+
+        ReplayStrategist replay = ReplayStrategist.FromNdjson(new StringReader(recorded.ToNdjson()));
+        DecisionLog replayed = RunFor(frames, replay);
+        Assert.Equal(0, replay.Misses);
+        Assert.Equal(recorded.ComputeHash(), replayed.ComputeHash());
+    }
+    /// <summary>
+    /// Retail RA2 charges while building, so credits on hand still include what queued items owe. The ledger must
+    /// size the period from credits less that remainder, or each pass funds the same money again on another queue.
+    /// The simulator debits at order time and must not subtract it twice.
+    /// </summary>
+    [Theory]
+    [InlineData(true, 1000 - 675 + 10)]
+    [InlineData(false, 1000 + 10)]
+    public void Ledger_capacity_excludes_what_queued_production_still_owes(bool chargedWhileBuilding, int expected)
+    {
+        using BotRuntime runtime = Runtimes.Create(Selector(),
+            options: new BotOptions(RunDeterministicStrategistsInline: true, ProductionChargedWhileBuilding: chargedWhileBuilding));
+        ProductionQueueState[] queues =
+        [
+            new(QueueKind.Vehicle, [new QueueItem("mtnk", 0.25, false, false)], 1),
+            new(QueueKind.Building, [new QueueItem("gapowr", 1.0, true, false)], 1),
+        ];
+        runtime.Tick(Frames.At(0, credits: 1000) with { Queues = queues });
+
+        // The tank being built still owes 900 × 0.75 = 675; the finished power plant owes nothing.
+        Assert.Equal(expected, runtime.Ledger.Capacity);
+    }
 }
