@@ -65,4 +65,32 @@ public sealed class SkirmishSimulationDeterminismTests
 
         Assert.Equal(a.ComputeStateHash(), b.ComputeStateHash());
     }
+
+    // The hash is determinism evidence, so it must cover every piece of state a later frame depends on: a unit
+    // nudged by less than a cell, or a queue that differs, is a diverged simulation even when nothing whole-cell moved.
+    [Fact]
+    public void The_state_hash_sees_sub_cell_movement_and_queue_contents()
+    {
+        TestRules rules = new();
+        SkirmishSimulation a = new(TestMaps.TwoPlayerCombat(), rules, SimTestHelpers.TwoPlayers(seed: 1, maxSeconds: 30));
+        SkirmishSimulation b = new(TestMaps.TwoPlayerCombat(), rules, SimTestHelpers.TwoPlayers(seed: 1, maxSeconds: 30));
+        PlayerId p0 = new(0);
+        ObservedEntity mcv = b.Observe(p0, ObservationMode.Oracle).Entities.Single(e => e.Owner == p0 && e.TypeId == TestRules.Mcv);
+
+        b.Submit(p0, new MoveCommand("test", [mcv.Id], new Cell(mcv.Position.X + 20, mcv.Position.Y)));
+        a.Step();
+        b.Step();
+        b.Submit(p0, new StopCommand("test", [mcv.Id]));
+        a.Step();
+        b.Step();
+        Assert.Equal(
+            a.Observe(p0, ObservationMode.Oracle).Entities.Select(static e => e.Position),
+            b.Observe(p0, ObservationMode.Oracle).Entities.Select(static e => e.Position));
+        Assert.NotEqual(a.ComputeStateHash(), b.ComputeStateHash());
+
+        SkirmishSimulation c = new(TestMaps.TwoPlayerCombat(), rules, SimTestHelpers.TwoPlayers(seed: 1, maxSeconds: 30));
+        SkirmishSimulation d = new(TestMaps.TwoPlayerCombat(), rules, SimTestHelpers.TwoPlayers(seed: 1, maxSeconds: 30));
+        d.DebugEnqueue(new PlayerId(1), QueueKind.Building, TestRules.Power);
+        Assert.NotEqual(c.ComputeStateHash(), d.ComputeStateHash());
+    }
 }

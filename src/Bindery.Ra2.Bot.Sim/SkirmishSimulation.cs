@@ -200,24 +200,51 @@ public sealed class SkirmishSimulation
         return new ObservationFrame(Time, mode, player, state.Faction, state.Credits, power, observed, queues, events, visible, map.Map, ore, SuperweaponTimers(player, mode));
     }
 
-    /// <summary>Deterministic digest of all visible-and-hidden state, for replay verification.</summary>
+    /// <summary>
+    /// Deterministic digest of all visible-and-hidden state, for replay verification. It covers everything a later
+    /// frame depends on (queues and their progress, pending placements, sub-cell positions, orders, harvester
+    /// cycles, both random streams), so two simulations with equal hashes cannot diverge afterwards on the same
+    /// commands. Power is derived from the objects and so is covered by them. Doubles are written in the invariant
+    /// round-trip form.
+    /// </summary>
     public string ComputeStateHash()
     {
+        static string D(double value) => value.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+        static string Id(RegionId? region) => region is { } r ? r.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) : "-";
         StringBuilder sb = new();
-        sb.Append(Time.Frame).Append('|');
+        sb.Append(Time.Frame).Append('|').Append(MatchEnded).Append(':').Append(Winner?.Value).Append(':').Append(EndReason).Append('|')
+          .Append(rng.State).Append(':').Append(combatRng.State).Append('|');
         foreach (SimPlayerState p in players.Values.OrderBy(p => p.Id.Value))
         {
-            sb.Append(p.Id.Value).Append(':').Append(p.Credits).Append(':').Append(p.RejectedCommands).Append(';');
+            sb.Append(p.Id.Value).Append(':').Append(p.Credits).Append(':').Append(p.RejectedCommands).Append(':').Append(p.Defeated).Append(':')
+              .Append(nextEntityIdByOwner.GetValueOrDefault(p.Id));
+            foreach (QueueRuntime q in p.Queues.Values.OrderBy(static q => q.Kind))
+            {
+                sb.Append("/q").Append(q.Kind);
+                foreach (QueueItemRuntime item in q.Items) sb.Append(',').Append(item.TypeId).Append('@').Append(D(item.Progress)).Append(item.AwaitingPlacement ? "!" : string.Empty);
+            }
+            foreach (PendingPlacement placement in p.PendingPlacements) sb.Append("/p").Append(placement.TypeId).Append('@').Append(placement.Queue);
+            sb.Append(';');
         }
+        sb.Append(nextProbeEntityId).Append('|');
         foreach (SimEntity e in entities.OrderBy(e => e.Id.Value))
         {
             sb.Append(e.Id.Value).Append(':').Append(e.Owner.Value).Append(':').Append(e.TypeId).Append(':')
-              .Append(e.Health).Append(':').Append(e.Position.X).Append(',').Append(e.Position.Y).Append(':')
-              .Append(e.SuperweaponCharge.ToString("R", System.Globalization.CultureInfo.InvariantCulture)).Append(';');
+              .Append(e.Health).Append('/').Append(e.MaxHealth).Append(':').Append(e.Position.X).Append(',').Append(e.Position.Y).Append(':')
+              .Append(D(e.ExactX)).Append(',').Append(D(e.ExactY)).Append(':').Append(e.Region.Value).Append(':').Append(e.Deployed).Append(':')
+              .Append(e.ExplicitTarget?.Value).Append(':').Append(string.Join(',', e.RemainingPath.Select(static r => r.Value))).Append(':')
+              .Append(e.FinalDestination is { } dest ? $"{dest.X},{dest.Y}" : "-").Append(':').Append(e.HoldForCombat).Append(':')
+              .Append(e.Phase).Append(':').Append(Id(e.AssignedOreRegion)).Append(':').Append(Id(e.TargetRefineryRegion)).Append(':')
+              .Append(e.CarriedValue).Append(':').Append(D(e.PhaseSecondsRemaining)).Append(':').Append(e.RepairRequested).Append(':')
+              .Append(D(e.SuperweaponCharge)).Append(';');
         }
         foreach ((RegionId region, double remaining) in oreRemaining.OrderBy(kv => kv.Key.Value))
         {
-            sb.Append(region.Value).Append('=').Append(remaining).Append(';');
+            sb.Append(region.Value).Append('=').Append(D(remaining)).Append(';');
+        }
+        foreach ((PlayerId player, GameCommand command) in pending)
+        {
+            sb.Append("cmd:").Append(player.Value).Append(':').Append(command).Append(';');
         }
         byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()));
         return Convert.ToHexString(hash);
