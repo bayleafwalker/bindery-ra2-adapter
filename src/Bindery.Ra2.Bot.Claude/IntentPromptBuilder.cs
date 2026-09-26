@@ -351,9 +351,7 @@ public sealed class IntentPromptBuilder
             return null;
         }
         GameTime now = context.Features.Time;
-        IntentHistoryEntry? entry = context.History.FirstOrDefault(h => h.IntentId == intent.IntentId && h.EndedAt is null);
-        GameTime acceptedAt = entry?.AcceptedAt ?? intent.IssuedAt;
-        double active = Math.Max(0, now.SecondsSince(acceptedAt));
+        double active = Math.Max(0, now.SecondsSince(CommitmentStart(context.History, intent)));
         double? minCommit = context.Playbooks.TryGet(intent.PlaybookId, out Playbook playbook) ? playbook.MinCommitSeconds : null;
 
         JsonObject parameters = new();
@@ -383,6 +381,47 @@ public sealed class IntentPromptBuilder
             ["expiresInSeconds"] = CanonicalJson.Number(Math.Max(0, intent.ExpiresAt.SecondsSince(now))),
         };
     }
+
+    /// <summary>
+    /// When the arbiter's commitment clock for the active intent started. A renewal (same playbook and posture)
+    /// closes the previous history entry as <see cref="RenewedEndReason"/> at the renewal time and opens a new
+    /// entry, but the arbiter does not restart its clock, so the start is the acceptance of the first entry of
+    /// that renewal chain. Measuring from the open entry instead would report a fresh commitment window after
+    /// every renewal and tell the model a switch is refused when the arbiter would accept it. The walk follows
+    /// insertion order backwards, so it terminates even when renewals share a frame. If the chain reaches past the
+    /// arbiter's bounded history the oldest retained entry is used, which can only overstate the remaining window.
+    /// </summary>
+    private static GameTime CommitmentStart(IReadOnlyList<IntentHistoryEntry> history, StrategicIntent intent)
+    {
+        int index = -1;
+        for (int i = history.Count - 1; i >= 0; i--)
+        {
+            if (history[i].EndedAt is null && string.Equals(history[i].IntentId, intent.IntentId, StringComparison.Ordinal))
+            {
+                index = i;
+                break;
+            }
+        }
+        if (index < 0) return intent.IssuedAt;
+
+        IntentHistoryEntry current = history[index];
+        for (int i = index - 1; i >= 0; i--)
+        {
+            if (!Continues(history[i], current)) continue;
+            current = history[i];
+        }
+        return current.AcceptedAt;
+    }
+
+    /// <summary>Arbiter end reason of a history entry that was superseded by a renewal of the same plan.</summary>
+    private const string RenewedEndReason = "renewed";
+
+    /// <summary>True when <paramref name="later"/> is the arbiter's renewal of <paramref name="earlier"/>.</summary>
+    private static bool Continues(IntentHistoryEntry earlier, IntentHistoryEntry later) =>
+        string.Equals(earlier.EndReason, RenewedEndReason, StringComparison.Ordinal)
+        && earlier.EndedAt is { } ended && ended.Frame == later.AcceptedAt.Frame
+        && string.Equals(earlier.PlaybookId, later.PlaybookId, StringComparison.Ordinal)
+        && earlier.Posture == later.Posture;
 
     private JsonArray History(IReadOnlyList<IntentHistoryEntry> history)
     {
