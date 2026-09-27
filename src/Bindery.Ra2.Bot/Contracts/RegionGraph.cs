@@ -51,7 +51,19 @@ public sealed class RegionGraph
             foreach ((RegionId next, double step) in ground[current])
             {
                 double candidate = distance + step;
-                if (best.TryGetValue(next, out double known) && known <= candidate) continue;
+                if (best.TryGetValue(next, out double known))
+                {
+                    // Equal routes keep the lowest-numbered predecessor. Every shortest predecessor is settled before
+                    // `next` (links are positive), so this is independent of link order and of which equal-priority
+                    // entry the queue returns first; with same-side regions numbered alike on both halves of a mirrored
+                    // map, both starts then route the same way.
+                    if (known < candidate) continue;
+                    if (known == candidate)
+                    {
+                        if (current.Value < previous[next].Value) previous[next] = current;
+                        continue;
+                    }
+                }
                 best[next] = candidate;
                 previous[next] = current;
                 frontier.Enqueue(next, candidate);

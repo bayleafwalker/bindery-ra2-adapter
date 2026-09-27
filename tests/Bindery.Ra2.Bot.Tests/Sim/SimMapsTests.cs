@@ -100,6 +100,49 @@ public sealed class SimMapsTests
             if (!map.OreFields.Any(o => o.Center == target && o.Region == image[field.Region] && o.InitialValue == field.InitialValue && o.Gems == field.Gems))
                 return $"ore field at {field.Center} has no twin at {target}";
         }
+        // A unit's region is the region of the cell it stands on, so fog, combat and sight follow RegionOf. A cell on
+        // a border between two regions must belong to the twin of whatever its mirror cell belongs to, or units on
+        // one half count as forward of the border while their mirror images count as behind it.
+        for (int x = 0; x < map.Width; x++)
+        for (int y = 0; y < map.Height; y++)
+        {
+            Cell cell = new(x, y), twin = reflect(cell);
+            if (twin.X < 0 || twin.Y < 0 || twin.X >= map.Width || twin.Y >= map.Height) continue;
+            // A cell on the axis equally near a region and that region's own twin must go to one of them; no rule
+            // can give it to both, so it is exempt.
+            if (twin == cell) continue;
+            if (map.RegionOf(cell) is { } here && map.RegionOf(twin) is { } there && image[here.Id] != there.Id)
+                return $"cell {cell} lies in {here.Name} but its mirror {twin} lies in {there.Name}";
+        }
+        // The planner and the simulator break distance ties by region id. Two regions on the same side of the map
+        // that are equally far from some region are such a tie, and the reflected pair must break it the same way, or
+        // one start routes its army through the empty field while the other walks through the defended ore field:
+        // river-crossing numbered ore-west below field-west but field-east below ore-east, and the west start won
+        // every decisive mirror match. A pair straddling the axis cannot keep its order (a reflection swaps the sides),
+        // so only same-side pairs are held to it.
+        Bindery.Ra2.Bot.RegionGraph graph = new(map);
+        RegionId startA = map.Regions.First(static r => r.IsStartLocation).Id;
+        RegionId startB = image[startA];
+        bool SideA(Region r) => image[r.Id] != r.Id && graph.Distance(startA, r.Id) < graph.Distance(startB, r.Id);
+        List<Region> sideA = [.. map.Regions.Where(SideA)];
+        // A region on the axis (its own twin) compared with a side region must compare the same way with that
+        // region's twin: twin-valley's centre (4) sat between ore-west (1) and ore-east (8), so an east scout choosing
+        // between the centre and ore-west took ore-west while its mirror image took the centre.
+        foreach (Region axis in map.Regions.Where(r => image[r.Id] == r.Id))
+        foreach (Region r in sideA)
+        {
+            if ((axis.Id.Value < r.Id.Value) != (axis.Id.Value < image[r.Id].Value))
+                return $"axis region {axis.Name} is numbered between {r.Name} and its twin";
+        }
+        foreach (Region from in map.Regions)
+        foreach (Region r in sideA)
+        foreach (Region s in sideA.Where(s => s.Id.Value > r.Id.Value))
+        {
+            double dr = graph.Distance(from.Id, r.Id), ds = graph.Distance(from.Id, s.Id);
+            if (double.IsInfinity(dr) || Math.Abs(dr - ds) > 1e-9) continue;
+            if (image[r.Id].Value > image[s.Id].Value)
+                return $"regions {r.Name} and {s.Name} tie at {dr} from {from.Name}, but their twins are numbered the other way round";
+        }
         return null;
     }
 

@@ -105,6 +105,13 @@ public sealed record MapInfo(
     IReadOnlyList<RegionLink> Links,
     IReadOnlyList<OreField> OreFields)
 {
+    /// <summary>The region whose centre is nearest <paramref name="cell"/>.</summary>
+    /// <remarks>
+    /// A cell equally near two centres goes to the larger region, then to the one whose centre is farther from the
+    /// map centre, then to the lower id. The first two keys are the same for a region and its mirror image, so both
+    /// halves of a mirrored map split their borders alike; resolving ties by list order put a west border cell in the
+    /// forward region and its mirror cell in the rear one.
+    /// </remarks>
     public Region? RegionOf(Cell cell)
     {
         Region? best = null;
@@ -112,13 +119,27 @@ public sealed record MapInfo(
         foreach (Region region in Regions)
         {
             double d = region.Center.DistanceTo(cell);
-            if (d <= bestDistance)
+            if (best is null || d < bestDistance - 1e-9 || (Math.Abs(d - bestDistance) <= 1e-9 && WinsTie(region, best)))
             {
                 best = region;
                 bestDistance = d;
             }
         }
         return best;
+    }
+
+    private bool WinsTie(Region challenger, Region incumbent)
+    {
+        if (challenger.Radius != incumbent.Radius) return challenger.Radius > incumbent.Radius;
+        double c = FromMapCentre(challenger.Center), i = FromMapCentre(incumbent.Center);
+        if (Math.Abs(c - i) > 1e-9) return c > i;
+        return challenger.Id.Value < incumbent.Id.Value;
+    }
+
+    private double FromMapCentre(Cell c)
+    {
+        double dx = c.X - (Width / 2.0), dy = c.Y - (Height / 2.0);
+        return (dx * dx) + (dy * dy);
     }
 }
 

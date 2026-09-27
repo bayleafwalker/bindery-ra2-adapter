@@ -263,7 +263,7 @@ public sealed class SkirmishSimulation
         {
             sb.Append(e.Id.Value).Append(':').Append(e.Owner.Value).Append(':').Append(e.TypeId).Append(':')
               .Append(e.Health).Append('/').Append(e.MaxHealth).Append(':').Append(e.Position.X).Append(',').Append(e.Position.Y).Append(':')
-              .Append(D(e.ExactX)).Append(',').Append(D(e.ExactY)).Append(':').Append(e.Region.Value).Append(':').Append(e.Deployed).Append(':')
+              .Append(D(e.OffsetX)).Append(',').Append(D(e.OffsetY)).Append(':').Append(e.Region.Value).Append(':').Append(e.Deployed).Append(':')
               .Append(e.ExplicitTarget?.Value).Append(':').Append(string.Join(',', e.RemainingPath.Select(static r => r.Value))).Append(':')
               .Append(e.FinalDestination is { } dest ? $"{dest.X},{dest.Y}" : "-").Append(':').Append(e.HoldForCombat).Append(':')
               .Append(e.Phase).Append(':').Append(Id(e.AssignedOreRegion)).Append(':').Append(Id(e.TargetRefineryRegion)).Append(':')
@@ -317,7 +317,7 @@ public sealed class SkirmishSimulation
             Health = rule.Strength,
             MaxHealth = rule.Strength,
         };
-        entity.SnapTo(position);
+        entity.SnapTo(position, CentreX, CentreY);
         entities.Add(entity);
     }
 
@@ -340,7 +340,7 @@ public sealed class SkirmishSimulation
             Health = rule.Strength,
             MaxHealth = rule.Strength,
         };
-        entity.SnapTo(position);
+        entity.SnapTo(position, CentreX, CentreY);
         entities.Add(entity);
         GameEvent[] announced =
         [
@@ -428,7 +428,7 @@ public sealed class SkirmishSimulation
             Health = rule.Strength,
             MaxHealth = rule.Strength,
         };
-        entity.SnapTo(cell);
+        entity.SnapTo(cell, CentreX, CentreY);
         entities.Add(entity);
         return entity.Id;
     }
@@ -470,7 +470,7 @@ public sealed class SkirmishSimulation
             Health = rule.Strength,
             MaxHealth = rule.Strength,
         };
-        entity.SnapTo(position);
+        entity.SnapTo(position, CentreX, CentreY);
         entities.Add(entity);
         frameEvents.Add(new GameEvent(GameEventKind.EntityCreated, Time, entity.Id, owner, typeId, position));
         return entity;
@@ -771,6 +771,15 @@ public sealed class SkirmishSimulation
 
     // ----- movement -----
 
+    private double CentreX => map.Map.Width / 2.0;
+
+    private double CentreY => map.Map.Height / 2.0;
+
+    // Rounds the offset, not the absolute coordinate, so mirrored offsets land in mirrored cells (banker's rounding
+    // is symmetric under negation); with an odd dimension the centre is a half-cell and no rounding can be.
+    private static int ToCell(double offset, double centre) =>
+        centre == Math.Floor(centre) ? (int)(Math.Round(offset) + centre) : (int)Math.Round(offset + centre);
+
     private void AdvanceMovement()
     {
         foreach (SimEntity e in entities)
@@ -781,11 +790,11 @@ public sealed class SkirmishSimulation
 
             double stepCells = rule.Speed / GameTime.FramesPerSecond;
             Cell target = e.RemainingPath.Count == 1 && e.FinalDestination is { } dest ? dest : RegionCenter(e.RemainingPath[0]);
-            double dx = target.X - e.ExactX, dy = target.Y - e.ExactY;
+            double dx = (target.X - CentreX) - e.OffsetX, dy = (target.Y - CentreY) - e.OffsetY;
             double distance = Math.Sqrt(dx * dx + dy * dy);
             if (distance <= stepCells || distance == 0)
             {
-                e.SnapTo(target);
+                e.SnapTo(target, CentreX, CentreY);
                 e.Region = e.RemainingPath[0];
                 e.RemainingPath.RemoveAt(0);
                 if (e.RemainingPath.Count == 0) e.HoldForCombat = false;
@@ -793,9 +802,9 @@ public sealed class SkirmishSimulation
             else
             {
                 double t = stepCells / distance;
-                e.ExactX += dx * t;
-                e.ExactY += dy * t;
-                e.Position = new Cell((int)Math.Round(e.ExactX), (int)Math.Round(e.ExactY));
+                e.OffsetX += dx * t;
+                e.OffsetY += dy * t;
+                e.Position = new Cell(ToCell(e.OffsetX, CentreX), ToCell(e.OffsetY, CentreY));
                 // A unit is in the region it stands in from the moment it crosses the border, not when it reaches
                 // the next region's centre: fog, combat and sight all work by region, and a lagging region let a
                 // unit that had walked into fog still be seen (and shot at) where it no longer was.

@@ -45,8 +45,52 @@ public static class SimMaps
 
     private static SimMap Build(string id, int width, int height, IReadOnlyList<Region> regions, IReadOnlyList<RegionLink> links, IReadOnlyList<OreField> ore, int start0, int start1)
     {
-        MapInfo map = new(id, width, height, regions, links, ore);
-        return new SimMap(map, [new RegionId(start0), new RegionId(start1)]);
+        Dictionary<int, int> renumber = MirrorNumbering(regions, start0, start1);
+        RegionId Map(RegionId r) => new(renumber[r.Value]);
+        MapInfo map = new(
+            id, width, height,
+            [.. regions.Select(r => r with { Id = Map(r.Id) }).OrderBy(static r => r.Id.Value)],
+            [.. links.Select(l => l with { A = Map(l.A), B = Map(l.B) })],
+            [.. ore.Select(o => o with { Region = Map(o.Region) })]);
+        return new SimMap(map, [Map(new RegionId(start0)), Map(new RegionId(start1))]);
+    }
+
+    /// <summary>
+    /// Region ids in the order the planner and simulator need on a map mirrored between its starts: regions on the
+    /// axis first, then one half in declared order, then each region of the other half at its twin's position.
+    /// </summary>
+    /// <remarks>
+    /// Deterministic code breaks remaining ties by region id, and a reflection must not change the outcome of any
+    /// comparison one player can make: two regions on the same side, or an axis region and a side region, must
+    /// compare the same way as their twins. Hand numbering got this wrong on every map (an axis region between a
+    /// start and its twin, an ore field numbered before its lane on one side and after it on the other), which made
+    /// equal scouting and routing choices resolve differently for the two starts. A map without a mirror keeps its
+    /// declared ids.
+    /// </remarks>
+    private static Dictionary<int, int> MirrorNumbering(IReadOnlyList<Region> regions, int start0, int start1)
+    {
+        Dictionary<int, int> identity = regions.ToDictionary(static r => r.Id.Value, static r => r.Id.Value);
+        Cell a = regions.Single(r => r.Id.Value == start0).Center, b = regions.Single(r => r.Id.Value == start1).Center;
+        if (a.Y != b.Y) return identity;
+        int axisTwice = a.X + b.X;
+        Dictionary<int, int> twin = [];
+        foreach (Region r in regions)
+        {
+            Cell mirror = new(axisTwice - r.Center.X, r.Center.Y);
+            Region? t = regions.FirstOrDefault(o => o.Center == mirror);
+            if (t is null) return identity;
+            twin[r.Id.Value] = t.Id.Value;
+        }
+
+        bool westIsA = a.X < b.X;
+        List<Region> axis = [.. regions.Where(r => twin[r.Id.Value] == r.Id.Value).OrderBy(static r => r.Id.Value)];
+        List<Region> first = [.. regions.Where(r => twin[r.Id.Value] != r.Id.Value && (r.Center.X * 2 < axisTwice) == westIsA).OrderBy(static r => r.Id.Value)];
+        Dictionary<int, int> result = [];
+        int next = 0;
+        foreach (Region r in axis) result[r.Id.Value] = next++;
+        foreach (Region r in first) result[r.Id.Value] = next++;
+        foreach (Region r in first) result[twin[r.Id.Value]] = next++;
+        return result;
     }
 
     // 9 regions: two symmetric lanes meeting at a contested, ore-rich centre; each start has its own home ore field
@@ -90,8 +134,8 @@ public static class SimMaps
             R(4, "river", 50, 50, 5, water: true),
             R(5, "bank-east", 58, 50, 7),
             R(6, "ford-north", 50, 20, 5),
-            R(7, "field-east", 78, 70, 7),
-            R(8, "ore-east", 78, 30, 6, ore: true),
+            R(7, "ore-east", 78, 30, 6, ore: true),
+            R(8, "field-east", 78, 70, 7),
             R(9, "start-east", 92, 50, 8, start: true),
         ];
         RegionLink[] links =
@@ -101,7 +145,7 @@ public static class SimMaps
             L(3, 6, 24), L(6, 5, 24),
             L(5, 7, 20), L(5, 8, 20), L(7, 9, 18), L(8, 9, 18),
         ];
-        OreField[] ore = [Ore(1, 22, 30), Ore(8, 78, 30)];
+        OreField[] ore = [Ore(1, 22, 30), Ore(7, 78, 30)];
         return Build("river-crossing", 100, 100, regions, links, ore, 0, 9);
     }
 
@@ -117,8 +161,8 @@ public static class SimMaps
             R(4, "isle-centre", 50, 50, 8, ore: true),
             R(5, "isle-north", 50, 20, 6, ore: true),
             R(6, "strait-east", 60, 50, 4, water: true),
-            R(7, "dock-east", 75, 50, 6),
-            R(8, "ore-east", 85, 25, 6, ore: true),
+            R(7, "ore-east", 85, 25, 6, ore: true),
+            R(8, "dock-east", 75, 50, 6),
             R(9, "home-east", 90, 50, 8, start: true),
         ];
         RegionLink[] links =
@@ -127,10 +171,10 @@ public static class SimMaps
             // route to each other, and the fixture has no naval units, so every match could only time out.
             L(0, 1, 14), L(0, 2, 14), L(2, 1, 20), L(2, 3, 8, ground: true, naval: true),
             L(3, 4, 8, ground: true, naval: true), L(4, 5, 18),
-            L(4, 6, 8, ground: true, naval: true), L(6, 7, 8, ground: true, naval: true),
-            L(7, 8, 20), L(7, 9, 14), L(9, 8, 14),
+            L(4, 6, 8, ground: true, naval: true), L(6, 8, 8, ground: true, naval: true),
+            L(8, 7, 20), L(8, 9, 14), L(9, 7, 14),
         ];
-        OreField[] ore = [Ore(1, 15, 25), Ore(4, 50, 50, 14_000), Ore(5, 50, 20), Ore(8, 85, 25)];
+        OreField[] ore = [Ore(1, 15, 25), Ore(4, 50, 50, 14_000), Ore(5, 50, 20), Ore(7, 85, 25)];
         return Build("island-bridges", 100, 100, regions, links, ore, 0, 9);
     }
 

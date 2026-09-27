@@ -21,14 +21,19 @@ internal sealed class SimEntity
     // one cell per frame) would otherwise never accumulate visible movement if every frame rounded and
     // discarded the fractional remainder. Kept in sync with Position by SnapTo everywhere except the
     // fractional-step branch of movement, which is the only place allowed to diverge between the two.
-    public double ExactX { get; set; }
-    public double ExactY { get; set; }
+    //
+    // The exact position is held as an offset from the map centre, not as an absolute coordinate. IEEE arithmetic is
+    // exactly symmetric under negation, so a unit and its mirror image on a map reflected through the centre take
+    // bit-for-bit mirrored steps; absolute coordinates (10 + k*s against 90 - k*s) round differently, and near a
+    // half-cell the two land in different cells and cross borders a frame apart.
+    public double OffsetX { get; set; }
+    public double OffsetY { get; set; }
 
-    public void SnapTo(Cell cell)
+    public void SnapTo(Cell cell, double centreX, double centreY)
     {
         Position = cell;
-        ExactX = cell.X;
-        ExactY = cell.Y;
+        OffsetX = cell.X - centreX;
+        OffsetY = cell.Y - centreY;
     }
     public required int Health { get; set; }
     public required int MaxHealth { get; set; }

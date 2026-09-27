@@ -46,5 +46,6 @@ public sealed class MirrorMatchTests(ITestOutputHelper output)
         yield return [SimMaps.TwinValley];
         yield return [SimMaps.RiverCrossing];
         yield return [SimMaps.OpenSteppe];
+        yield return [SimMaps.IslandBridges];
     }
 }
