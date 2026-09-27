@@ -35,7 +35,12 @@ install -m 0755 twitch-relay.sh /opt/ra2-channel/twitch-relay.sh
 TWITCH_STREAM_KEY=... mediamtx /path/to/deploy/ra2-channel/mediamtx.yml
 ```
 
-`ffmpeg` must be on the MediaMTX host's `PATH`. The Twitch key is read only from
+`ffmpeg` must be on the MediaMTX host's `PATH`. On the NixOS workstation, set
+`profiles.ra2Channel.enable = true` in `gitops-nixos` instead
+(`modules/system/ra2-channel.nix`). It serves this same configuration, adds
+`ffmpeg` and the flag directory, and opens the ports only on the listed
+interfaces. Point `twitchEnvironmentFile` at a SOPS secret holding
+`TWITCH_STREAM_KEY=...`. The Twitch key is read only from
 the `TWITCH_STREAM_KEY` environment variable of the MediaMTX process.
 
 ## Public output
