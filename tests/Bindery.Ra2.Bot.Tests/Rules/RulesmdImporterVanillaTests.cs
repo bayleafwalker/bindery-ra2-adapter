@@ -406,7 +406,8 @@ public sealed class RulesmdImporterVanillaTests
     [Fact]
     public void Build_time_uses_general_build_speed_and_the_types_multiplier()
     {
-        string ini = VanillaIni
+        // The raw literal takes the checkout's line endings (CRLF on Windows); the edits below match "\n".
+        string ini = VanillaIni.ReplaceLineEndings("\n")
             .Replace("[General]", "[General]\nBuildSpeed=0.7\nMultipleFactory=0.8", StringComparison.Ordinal)
             .Replace("Cost=700\n", "Cost=700\nBuildTimeMultiplier=2\n", StringComparison.Ordinal);
         RulesDocument document = RulesmdImporter.Import(new StringReader(ini), "cafe");
