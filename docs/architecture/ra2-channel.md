@@ -273,10 +273,22 @@ elsewhere. None of them is implemented here.
 - **Command sink.** A per-player command path in
   [bayleafwalker/ra2yrcpp](https://github.com/bayleafwalker/ra2yrcpp),
   bound to one house and refusing orders for any other. The adapter side
-  implements `IPlayerCommandSink`, and the observer gets none. The fork's
-  `feat/bindery-player-command-boundary` branch rejects unit orders whose
-  sources belong to another player. The native command transport and stable
-  entity-ID mapping are still to come.
+  implements `IPlayerCommandSink`, and the observer gets none.
+  - The fork's `feat/bindery-player-command-boundary` branch rejects unit
+    orders whose sources belong to another player.
+  - bayleafwalker/ra2yrcpp#1 checks ownership against live game objects
+    (mind control included) for unit, sell-cell, produce and place orders,
+    and refuses all of them for an observer.
+  - It also adds an opt-in `allowedCommands` list. A sink connection should
+    run with `GetGameState`, `ReadValue`, `UnitOrder`, `ProduceOrder` and
+    `PlaceBuilding` only.
+  - That list limits actions, not information: state reads are
+    spectator-grade. An agent must never hold the connection itself, only
+    this adapter's filtered seat.
+  - Stable entity IDs need new ra2yrproto fields (`AbstractClass::UniqueID`;
+    see the fork's `docs/bindery-seat-boundary.md`). Until then, a sink
+    should drop any stored address that is missing from the latest snapshot.
+  - The native command transport is still to come.
 - **Camera for several matches.** With more than one match running, choose
   which one is on air. The loop plays one match at a time today; extra matches
   would be separate unbroadcast runners.
