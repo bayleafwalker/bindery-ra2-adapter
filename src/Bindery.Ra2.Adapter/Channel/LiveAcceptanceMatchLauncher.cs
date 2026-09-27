@@ -266,6 +266,11 @@ public sealed class LiveAcceptanceMatchLauncher : IChannelMatchLauncher
             lock (issues) issues.Add($"agent seat: {exception.GetType().Name}: {exception.Message}");
             return null;
         }
+        finally
+        {
+            // The seat was made for this match; its command connection ends with it.
+            await seat.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     private static async Task QuietlyAsync(Task task, string what, List<string> issues)

@@ -55,6 +55,7 @@ public sealed class Ra2yrcppCommandSink : IPlayerCommandSink, IAsyncDisposable
     private readonly Dictionary<string, ObjectTypeClass> types = new(StringComparer.OrdinalIgnoreCase);
     private Ra2yrcppClient? client;
     private string? refusal;
+    private bool disposed;
 
     public Ra2yrcppCommandSink(string house, Ra2YrcppEndpoint endpoint, Ra2yrcppClientOptions? options = null)
     {
@@ -184,6 +185,7 @@ public sealed class Ra2yrcppCommandSink : IPlayerCommandSink, IAsyncDisposable
 
     private async Task<(GameState State, House Own)> LocalHouseAsync(CancellationToken cancellationToken)
     {
+        ObjectDisposedException.ThrowIf(disposed, this);
         if (refusal is not null) throw new Ra2yrcppSeatException(refusal);
         if (client is not { IsOpen: true })
         {
@@ -231,9 +233,25 @@ public sealed class Ra2yrcppCommandSink : IPlayerCommandSink, IAsyncDisposable
         return new Coordinates { X = Read(arguments, "x", true), Y = Read(arguments, "y", true), Z = Read(arguments, "z", false) };
     }
 
+    /// <summary>
+    /// Waits for an order in flight, then closes the connection. Orders
+    /// after that throw <see cref="ObjectDisposedException"/>.
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
-        if (client is not null) await client.DisposeAsync().ConfigureAwait(false);
-        gate.Dispose();
+        // The gate is never disposed, so an order finishing after this
+        // cannot fail on releasing it.
+        await gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (disposed) return;
+            disposed = true;
+            if (client is not null) await client.DisposeAsync().ConfigureAwait(false);
+            client = null;
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
 }

@@ -237,6 +237,28 @@ public sealed class Ra2yrcppCommandSinkTests
         return null;
     }
 
+    [Fact]
+    public async Task DisposingDuringAnOrderWaitsForItAndThenClosesTheSeat()
+    {
+        FakeGame game = new();
+        await using FakeRa2yrcppServer server = new(command =>
+        {
+            CommandResult? result = game.Handle(command);
+            // The game takes a while to run the order.
+            if (command.Is(UnitOrder.Descriptor)) Thread.Sleep(300);
+            return result;
+        });
+        Ra2yrcppCommandSink sink = Sink(server);
+
+        Task sending = sink.SendAsync(Command(Ra2yrcppCommandSink.Deploy, "{\"objects\":[161]}"), CancellationToken.None);
+        while (game.Orders.IsEmpty) await Task.Delay(10);
+        await sink.DisposeAsync();
+
+        Exception? failure = await Record.ExceptionAsync(() => sending);
+        Assert.Null(failure);
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => sink.SendAsync(Command(Ra2yrcppCommandSink.Deploy, "{\"objects\":[161]}"), CancellationToken.None));
+    }
+
     private sealed class OneCommandController(PlayerCommand command) : IPlayerController
     {
         public string ControllerId => "test/one-command";

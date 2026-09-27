@@ -141,6 +141,37 @@ public sealed class ChannelExtensionTests
     }
 
     [Fact]
+    public async Task TheSeatsCommandSinkIsDisposedWhenItsMatchEnds()
+    {
+        DisposableCommands commands = new("Americans");
+        LiveAcceptanceMatchLauncher launcher = new(
+            (request, hooks, ct) => Task.FromResult(Evidence(complete: true)),
+            _ => Request(),
+            new LiveChannelMatchOptions(
+                Telemetry: _ => new FakeTelemetry([Observation(Ra2TelemetryEventTypes.MatchStarted, "{}"), Observation(Ra2TelemetryEventTypes.MatchEnded, "{}")]),
+                AgentSeat: _ => new AgentSeat(new ScriptedController(), commands, new PlayerObservationFilter("Americans"))));
+
+        await launcher.RunMatchAsync(Context() with { AgentSeat = Agent() }, _ => Task.CompletedTask, CancellationToken.None);
+
+        Assert.True(commands.Disposed);
+    }
+
+    private sealed class DisposableCommands(string house) : IPlayerCommandSink, IAsyncDisposable
+    {
+        public string House => house;
+
+        public bool Disposed { get; private set; }
+
+        public Task SendAsync(PlayerCommand command, CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public ValueTask DisposeAsync()
+        {
+            Disposed = true;
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    [Fact]
     public async Task LauncherRecordsWinnerAndAgentTraceFromTelemetry()
     {
         string directory = Path.Combine(Path.GetTempPath(), "bindery-launcher-" + Guid.NewGuid().ToString("N"));

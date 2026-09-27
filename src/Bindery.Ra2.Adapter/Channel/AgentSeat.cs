@@ -176,7 +176,7 @@ public sealed record AgentSeatSummary(
 /// observations in, commands out, every decision appended to an NDJSON trace
 /// that sits beside the match record.
 /// </summary>
-public sealed class AgentSeat
+public sealed class AgentSeat : IAsyncDisposable
 {
     public const string TraceFileName = "decision-trace.ndjson";
 
@@ -203,6 +203,15 @@ public sealed class AgentSeat
     }
 
     public string House => filter.House;
+
+    /// <summary>
+    /// A seat is made for one match and owns its command sink: disposing
+    /// the seat disposes the sink if it holds a connection.
+    /// </summary>
+    public async ValueTask DisposeAsync()
+    {
+        if (commands is IAsyncDisposable disposable) await disposable.DisposeAsync().ConfigureAwait(false);
+    }
 
     public async Task<AgentSeatSummary> RunAsync(IRa2TelemetrySource source, string traceDirectory, CancellationToken cancellationToken = default)
     {

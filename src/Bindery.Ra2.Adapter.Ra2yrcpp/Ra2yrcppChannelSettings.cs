@@ -65,7 +65,7 @@ public sealed class Ra2yrcppAgentSeatSettings
         return new(House, ClientInstanceId, ControllerDeclaration.Agent(controller.ControllerId, controller.ControllerVersion));
     }
 
-    /// <summary>A fresh seat for one match; the caller disposes the sink when the match ends.</summary>
+    /// <summary>A fresh seat for one match. The seat owns the sink: disposing the seat when the match ends closes it.</summary>
     public (AgentSeat Seat, Ra2yrcppCommandSink Commands) CreateSeat(AgentSeatLaunch launch)
     {
         Validate();

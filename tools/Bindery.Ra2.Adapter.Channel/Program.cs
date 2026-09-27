@@ -28,7 +28,6 @@ if (args.Length != 1)
 
 using CancellationTokenSource stop = new();
 ChannelRunner? runner = null;
-List<Ra2yrcppCommandSink> seatSinks = [];
 int interrupts = 0;
 // First Ctrl+C: finish the current match, then stop. Second: stop now.
 Console.CancelKeyPress += (_, e) =>
@@ -98,13 +97,10 @@ try
     },
     new LiveChannelMatchOptions(
         Telemetry: settings.TelemetryFor,
-        AgentSeat: settings.AgentSeat is null ? null : launch =>
-        {
-            // A fresh controller and connection per match, into the agent client's own service; the sinks close with the channel.
-            (AgentSeat seat, Ra2yrcppCommandSink sink) = settings.AgentSeat.CreateSeat(launch);
-            lock (seatSinks) seatSinks.Add(sink);
-            return seat;
-        },
+        // A fresh controller and connection per match, into the agent
+        // client's own service; the launcher disposes the seat, and with it
+        // the connection, when the match ends.
+        AgentSeat: settings.AgentSeat is null ? null : launch => settings.AgentSeat.CreateSeat(launch).Seat,
         Overlay: settings.Obs?.OverlayTextInput is { Length: > 0 } ? obs : null));
     if (settings.LiveTelemetry is { } liveTelemetry)
         Console.WriteLine($"telemetry: live ra2yrcpp at {liveTelemetry.Endpoint}");
@@ -145,10 +141,6 @@ catch (Exception exception)
 {
     Console.Error.WriteLine($"channel failed: {exception.Message}");
     return 1;
-}
-finally
-{
-    foreach (Ra2yrcppCommandSink sink in seatSinks) await sink.DisposeAsync();
 }
 
 internal sealed class ChannelToolSettings
