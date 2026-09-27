@@ -57,6 +57,7 @@ dotnet test tests/Bindery.Ra2.Adapter.Tests/Bindery.Ra2.Adapter.Tests.csproj --c
 dotnet build tools/Bindery.Ra2.Adapter.LiveAcceptance/Bindery.Ra2.Adapter.LiveAcceptance.csproj --configuration Release
 dotnet build tools/Bindery.Ra2.Adapter.ControlPlaneGate/Bindery.Ra2.Adapter.ControlPlaneGate.csproj --configuration Release
 dotnet build tools/Bindery.Ra2.Adapter.Channel/Bindery.Ra2.Adapter.Channel.csproj --configuration Release
+dotnet build src/Bindery.Ra2.Adapter.Planner.Claude/Bindery.Ra2.Adapter.Planner.Claude.csproj --configuration Release
 ```
 
 The channel tool plays the live match back to back and drives OBS:

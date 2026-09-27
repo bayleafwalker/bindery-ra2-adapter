@@ -221,6 +221,24 @@ recorded on the match and leaves the trace on disk.
 Payload field names (`house`, `credits`, `type`) are `PayloadFields`
 defaults; set them to what the bridge emits.
 
+`src/Bindery.Ra2.Adapter.Planner.Claude` is the model-backed planner. It is a
+separate project, so the adapter itself takes no API dependency.
+
+- `ClaudePlaybookPlanner` sends the trigger, the current playbook and the
+  seat's `PlayerViewSummary` to Claude Opus 5. It uses the official Anthropic
+  C# SDK and a frozen system prompt.
+- The answer comes back as structured output restricted to the rule
+  planner's directive vocabulary (`economy`, `posture`, `tech`). The same
+  routine controller therefore plays either planner's playbooks, and the
+  experiment report compares like with like.
+- Effort is `medium` by default, because a plan should land within seconds.
+  Plans time out after 60 s.
+- Server-side refusal fallbacks are on (`fallbacks: "default"`).
+- A refusal, a timeout or an answer outside the vocabulary throws, so the
+  controller keeps the current playbook and traces the failure.
+- It authenticates the usual SDK way (`ANTHROPIC_API_KEY` or an
+  `ant auth login` profile). Every plan is a billed API call.
+
 **Not implemented:** the game-side command channel. `IPlayerCommandSink` is the
 boundary a per-player ra2yrcpp command path would implement. Nothing in this
 repository can issue orders into the game yet.

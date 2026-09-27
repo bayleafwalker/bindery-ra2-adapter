@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <AssemblyName>Bindery.Ra2.Adapter.Planner.Claude</AssemblyName>
+    <RootNamespace>Bindery.Ra2.Adapter.Planner.Claude</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Bindery.Ra2.Adapter/Bindery.Ra2.Adapter.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Anthropic" Version="12.50.0" />
+  </ItemGroup>
+</Project>
