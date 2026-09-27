@@ -65,7 +65,9 @@ public sealed record LiveClientEvidence(
     IReadOnlyList<string> Reports,
     int? ProcessExitCode,
     string? Failure,
-    IReadOnlyList<RunObservation>? Observations = null);
+    IReadOnlyList<RunObservation>? Observations = null,
+    // "player" or "observer"; null in evidence written before observers existed.
+    string? ClientClass = null);
 
 public sealed record LiveRelayEvidence(
     string ProviderId,
@@ -104,7 +106,10 @@ public sealed record LiveAcceptanceEvidence(
     IReadOnlyList<string> Limitations,
     // What the match was played with, so a channel record can reproduce it.
     string? MapId = null,
-    int? Seed = null);
+    int? Seed = null,
+    // Null when no observer ran. True when it failed or did not depart cleanly;
+    // a degraded observer is a worse witness, not a failed match.
+    bool? ObserverDegraded = null);
 
 /// <summary>
 /// Runs the real Windows process boundary after a two-client control-plane
@@ -289,15 +294,26 @@ public sealed class LiveAcceptanceRunner
             : await controlPlane.GetEnrollmentAsync(observer.Enrollment.ClientId, cancellationToken).ConfigureAwait(false);
         // A Failed report must veto completeness even when the exit code is 0:
         // Syringe is a debugger and exits 0 after the game it hosted crashes.
-        bool lifecycleComplete = runs.All(static run => run.ProcessExitCode == 0
-                && run.Reports.Contains(LifecycleKind.Ready)
-                && run.Reports.Contains(LifecycleKind.Started)
-                && run.Reports.Contains(LifecycleKind.Exited)
-                && !run.Reports.Contains(LifecycleKind.Failed))
+        // Completeness is the players' match. The observer is judged apart:
+        // as in the control plane, a degraded observer is a worse witness,
+        // not a failed match.
+        bool lifecycleComplete = runs.Take(2).All(CleanRun)
             && finalSession.Phase == SessionPhase.Ended
             && finalFirst.Phase == EnrollmentPhase.Departed
-            && finalSecond.Phase == EnrollmentPhase.Departed
-            && (finalObserver is null || finalObserver.Phase == EnrollmentPhase.Departed);
+            && finalSecond.Phase == EnrollmentPhase.Departed;
+        bool? observerDegraded = observer is null
+            ? null
+            : !(CleanRun(runs[2]) && finalObserver!.Phase == EnrollmentPhase.Departed);
+        List<string> limitations =
+        [
+            "relay traffic observation must be supplied from the relay/control-plane telemetry path",
+            "debugger exception lines are first-chance events, not failures; only a desync dump is treated as notable",
+            "Kctl knowledge.candidate.intake authority must be verified by the served identity",
+            "oracle reads must be traced and attached to the qualification packet",
+            "human acceptance is required before global qualification"
+        ];
+        if (observerDegraded == true)
+            limitations.Add($"observer degraded: {runs[2].Evidence.Failure ?? $"final enrollment phase {finalObserver!.Phase.ToString().ToLowerInvariant()}"}; lifecycle completeness is judged on the players");
 
         LiveAcceptanceEvidence evidence = new(
             EvidenceSchemaVersion,
@@ -317,15 +333,10 @@ public sealed class LiveAcceptanceRunner
             finalSession.Phase.ToString().ToLowerInvariant(),
             new[] { finalFirst, finalSecond, finalObserver }.OfType<EnrollmentStatus>().Select(static e => e.Phase.ToString().ToLowerInvariant()).ToArray(),
             new LiveQualificationFlags(lifecycleComplete, false, false, false, false, false),
-            [
-                "relay traffic observation must be supplied from the relay/control-plane telemetry path",
-                "debugger exception lines are first-chance events, not failures; only a desync dump is treated as notable",
-                "Kctl knowledge.candidate.intake authority must be verified by the served identity",
-                "oracle reads must be traced and attached to the qualification packet",
-                "human acceptance is required before global qualification"
-            ],
+            limitations,
             request.FirstLaunch.MapId,
-            seed);
+            seed,
+            observerDegraded);
         await LiveAcceptanceEvidenceWriter.WriteAsync(request.EvidenceDirectory, evidence, cancellationToken).ConfigureAwait(false);
         return evidence;
     }
@@ -456,7 +467,8 @@ public sealed class LiveAcceptanceRunner
         reports.Distinct().Select(LifecycleKindName).ToArray(),
         exitCode,
         failure,
-        observations);
+        observations,
+        client.Definition.ClientClass == ClientClass.Observer ? "observer" : "player");
 
     private static string LifecycleKindName(LifecycleKind kind) => kind switch
     {
@@ -493,6 +505,12 @@ public sealed class LiveAcceptanceRunner
             throw new InvalidOperationException("the placement did not carry a relay endpoint");
         return new Uri($"http://{relay.RelayHost}:{relay.RelayPort.Value}");
     }
+
+    private static bool CleanRun(LiveClientRun run) => run.ProcessExitCode == 0
+        && run.Reports.Contains(LifecycleKind.Ready)
+        && run.Reports.Contains(LifecycleKind.Started)
+        && run.Reports.Contains(LifecycleKind.Exited)
+        && !run.Reports.Contains(LifecycleKind.Failed);
 
     private static async Task NotifyAsync(Func<LiveLifecycleNotice, CancellationToken, Task>? onLifecycle, LiveLifecycleNotice notice, CancellationToken cancellationToken)
     {

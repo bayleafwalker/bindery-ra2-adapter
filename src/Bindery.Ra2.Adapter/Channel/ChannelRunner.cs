@@ -201,8 +201,15 @@ public sealed class ChannelRunner
     internal static ChannelMatchRecord FromResult(ChannelRequest request, ChannelMatchContext context, DateTimeOffset startedAt, ChannelMatchResult result)
     {
         LiveAcceptanceEvidence? evidence = result.Evidence;
-        string? failure = evidence?.Clients.Select(static c => c.Failure).FirstOrDefault(static f => f is not null);
-        bool desync = evidence?.Clients.Any(static c => c.Observations?.Any(static o => o.Kind == RunObservation.Desync) == true) == true;
+        // The match is the players'. An observer's failure, desync included,
+        // degrades the view and is recorded apart from the outcome.
+        LiveClientEvidence[] players = evidence?.Clients.Where(static c => c.ClientClass != "observer").ToArray() ?? [];
+        LiveClientEvidence? observer = evidence?.Clients.FirstOrDefault(static c => c.ClientClass == "observer");
+        string? failure = players.Select(static c => c.Failure).FirstOrDefault(static f => f is not null);
+        bool desync = players.Any(static c => c.Observations?.Any(static o => o.Kind == RunObservation.Desync) == true);
+        string? observerIssue = evidence?.ObserverDegraded == true
+            ? observer?.Failure ?? "the observer did not depart cleanly"
+            : null;
         ChannelMatchOutcome outcome = evidence is null
             ? ChannelMatchOutcome.Incomplete
             : evidence.Qualification.ControlPlaneLifecycleComplete && !desync && failure is null
@@ -234,7 +241,8 @@ public sealed class ChannelRunner
             failure,
             result.TelemetryObserved,
             result.TelemetryEnded,
-            result.TelemetryIssue);
+            result.TelemetryIssue,
+            observerIssue);
     }
 
     private static ChannelMatchRecord Failed(ChannelRequest request, ChannelMatchContext context, DateTimeOffset startedAt, Exception exception) => new(

@@ -155,6 +155,17 @@ public sealed class ChannelTests
     }
 
     [Fact]
+    public void AFailedObserverDegradesTheViewButNotTheMatch()
+    {
+        ChannelMatchContext context = new("channel-1", 1, "MAP01.MAP", playerView, null);
+        ChannelMatchRecord record = ChannelRunner.FromResult(Request(1), context, DateTimeOffset.UtcNow, new ChannelMatchResult(Evidence(complete: true, observerFailure: "desync: the game wrote SYNC0.TXT")));
+
+        Assert.Equal(ChannelMatchOutcome.Completed, record.Outcome);
+        Assert.Null(record.Failure);
+        Assert.Contains("SYNC0", record.ObserverIssue);
+    }
+
+    [Fact]
     public async Task NdjsonSinkAppendsOneLinePerMatch()
     {
         string directory = Path.Combine(Path.GetTempPath(), "bindery-channel-" + Guid.NewGuid().ToString("N"));
@@ -305,10 +316,13 @@ public sealed class ChannelTests
         return new RawObservation($"event-{sequence}", "capture-1", sequence, type, Ra2LabProfile.AdapterId, Ra2LabProfile.AdapterVersion, DateTimeOffset.UtcNow, document.RootElement.Clone(), "sha256:raw");
     }
 
-    internal static LiveAcceptanceEvidence Evidence(bool complete, bool desync = false)
+    internal static LiveAcceptanceEvidence Evidence(bool complete, bool desync = false, string? observerFailure = null)
     {
         IReadOnlyList<RunObservation> observations = desync ? [new RunObservation(RunObservation.Desync, "the game wrote SYNC0.TXT", true)] : [];
-        LiveClientEvidence Client(string id) => new(id, "account-" + id, "instance-" + id, "golden-1", "sha256:game", "sha256:ini", ["ready", "started", "exited"], 0, null, observations);
+        LiveClientEvidence Client(string id) => new(id, "account-" + id, "instance-" + id, "golden-1", "sha256:game", "sha256:ini", ["ready", "started", "exited"], 0, null, observations, "player");
+        LiveClientEvidence[] clients = observerFailure is null
+            ? [Client("a"), Client("b")]
+            : [Client("a"), Client("b"), new("o", "account-o", "observer-1", "golden-1", "sha256:game", "sha256:ini", ["ready", "failed"], 0, observerFailure, [], "observer")];
         return new LiveAcceptanceEvidence(
             LiveAcceptanceRunner.EvidenceSchemaVersion,
             Guid.NewGuid().ToString("D"),
@@ -318,13 +332,14 @@ public sealed class ChannelTests
             "golden-1",
             new LiveRelayEvidence("cncnet-private", "allocation-1", "192.168.122.1:50000", false, null),
             new LiveTelemetryEvidence(Ra2LabProfile.TelemetryProtocol, "127.0.0.1:14521", false, null),
-            [Client("a"), Client("b")],
+            clients,
             "ended",
             ["departed", "departed"],
             new LiveQualificationFlags(complete, false, false, false, false, false),
             [],
             "MAP01.MAP",
-            4242);
+            4242,
+            observerFailure is null ? null : true);
     }
 
     private sealed class FakeLauncher(Func<CancellationToken, Task<ChannelMatchResult>> play) : IChannelMatchLauncher

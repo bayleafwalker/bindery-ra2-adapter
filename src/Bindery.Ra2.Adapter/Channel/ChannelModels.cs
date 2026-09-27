@@ -120,7 +120,9 @@ public sealed record ChannelMatchRecord(
     string? Failure = null,
     long? TelemetryEvents = null,
     bool? TelemetrySawMatchEnd = null,
-    string? TelemetryIssue = null);
+    string? TelemetryIssue = null,
+    // Set when a spectator client failed; the players' match stands.
+    string? ObserverIssue = null);
 
 /// <summary>What one channel session did, in order.</summary>
 public sealed record ChannelSessionSummary(

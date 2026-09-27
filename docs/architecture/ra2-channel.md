@@ -101,7 +101,9 @@ neutral channel. `LiveAcceptanceRequest.Observer` adds it as a third client:
 - it is validated against the same private tunnel placement;
 - it receives its own tunnel port and a spawn INI with `IsSpectator=Yes`;
 - it has no `[SpawnLocations]` entry and appears last in the global order;
-- its lifecycle and departure count toward lifecycle completeness.
+- it is judged apart from the players, as Bindery Core judges it: a failed
+  or undeparted observer sets `ObserverDegraded` in the evidence and
+  `ObserverIssue` on the channel record, and the players' match stands.
 
 The live-acceptance and channel tools read it from `observerIdentity`,
 `observerClientInstanceId`, `observerLaunch` and `observerHost`. This is
