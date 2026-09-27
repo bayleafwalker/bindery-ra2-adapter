@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <AssemblyName>Bindery.Ra2.Adapter.Ra2yrcpp</AssemblyName>
+    <RootNamespace>Bindery.Ra2.Adapter.Ra2yrcpp</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Bindery.Ra2.Adapter/Bindery.Ra2.Adapter.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- protoc codegen only: the wire is protobuf over a WebSocket, not gRPC. -->
+    <PackageReference Include="Google.Protobuf" Version="3.28.3" />
+    <PackageReference Include="Grpc.Tools" Version="2.67.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <Protobuf Include="Protos/ra2yrproto/*.proto" ProtoRoot="Protos" GrpcServices="None" Access="Public" />
+  </ItemGroup>
+</Project>

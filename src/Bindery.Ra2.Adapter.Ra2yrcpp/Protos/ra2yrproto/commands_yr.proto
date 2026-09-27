@@ -1,0 +1,76 @@
+// Vendored unmodified, apart from this header, from shmocz/ra2yrproto
+// 0ad72455bcdcf5626d0e17c3311ea82556da2ad3 (ra2yrproto/commands_yr.proto; GPL-3.0,
+// see that repository's LICENSE), the protocol submodule of
+// bayleafwalker/ra2yrcpp 1370cb692b76425e02646b4a122aba40d7122fff.
+// Recorded in UPSTREAM-REVISIONS.yaml; re-vendor rather than edit.
+syntax = "proto3";
+
+package ra2yrproto.commands;
+
+import "ra2yrproto/ra2yr.proto";
+
+message CreateCallbacks {}
+
+message GetGameState {
+  ra2yrproto.ra2yr.GameState state = 1;
+}
+
+message ReadValue {
+  ra2yrproto.ra2yr.StorageValue data = 1;
+}
+
+message UnitCommand {
+  repeated uint32 object_addresses = 1;
+  ra2yrproto.ra2yr.UnitAction action = 2;
+}
+
+message ClickEvent {
+  repeated uint32 object_addresses = 1;
+  ra2yrproto.ra2yr.NetworkEvent event = 2;
+}
+
+message MissionClicked {
+  repeated uint32 object_addresses = 1;
+  ra2yrproto.ra2yr.Mission event = 2;
+  uint32 target_object = 3;
+  ra2yrproto.ra2yr.Coordinates coordinates = 4;
+}
+
+message Configuration {
+  bool debug_log = 1;
+  string record_filename = 2;
+  string traffic_filename = 3;
+  // How many frames to pass before parsing map data again. Default is 1 (every
+  // frame). Increase this if you are experiencing performance problems. Set 0
+  // to disable.
+  uint32 parse_map_data_interval = 4;
+  bool single_step = 5;
+  uint32 port = 6;
+  uint32 max_connections = 7;
+  string allowed_hosts_regex = 8;
+  string log_filename = 9;
+}
+
+message InspectConfiguration {
+  Configuration config = 1;
+  bool update = 2;
+}
+
+message AddEvent {
+  ra2yrproto.ra2yr.Event event = 1;
+  uint32 frame_delay = 2;
+  bool spoof = 3;
+}
+
+// Return coordinates where the input building can be placed
+message PlaceQuery {
+  uint32 type_class = 1;
+  uint32 house_class = 2;  // if empty, assume current player
+  repeated ra2yrproto.ra2yr.Coordinates coordinates = 3;
+}
+
+message AddMessage {
+  string message = 1;
+  uint32 duration_frames = 2;
+  ra2yrproto.ra2yr.ColorScheme color = 3;
+}

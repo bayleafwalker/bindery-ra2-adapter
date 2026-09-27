@@ -1,0 +1,27 @@
+// Vendored unmodified, apart from this header, from shmocz/ra2yrproto
+// 0ad72455bcdcf5626d0e17c3311ea82556da2ad3 (ra2yrproto/commands_game.proto; GPL-3.0,
+// see that repository's LICENSE), the protocol submodule of
+// bayleafwalker/ra2yrcpp 1370cb692b76425e02646b4a122aba40d7122fff.
+// Recorded in UPSTREAM-REVISIONS.yaml; re-vendor rather than edit.
+syntax = "proto3";
+
+package ra2yrproto.commands;
+
+import "ra2yrproto/ra2yr.proto";
+
+message UnitOrder {
+  repeated uint32 object_addresses = 1;
+  ra2yrproto.ra2yr.UnitAction action = 2;
+  uint32 target_object = 3;
+  ra2yrproto.ra2yr.Coordinates coordinates = 4;
+}
+
+message ProduceOrder {
+  ra2yrproto.ra2yr.ObjectTypeClass object_type = 1;
+  ra2yrproto.ra2yr.ProduceAction action = 2;
+}
+
+message PlaceBuilding {
+  ra2yrproto.ra2yr.Object building = 1;
+  ra2yrproto.ra2yr.Coordinates coordinates = 2;
+}

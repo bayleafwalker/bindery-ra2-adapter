@@ -34,7 +34,32 @@ sources:
     ref: develop
     commit: ee215f5a01f709c52b1fe4dd333d16cbe5d5f146
     license: GPL-3.0
-    use: native protobuf/TCP telemetry boundary reference; fork and generated protocol remain outside this repository
+    use: native protobuf telemetry boundary reference; the fork stays outside this repository and the core adapter library carries no generated protocol code (the live transport project generates it from the ra2yrproto import below)
+  - project: ra2yrcpp-bindery-fork
+    repository: https://github.com/bayleafwalker/ra2yrcpp
+    ref: feat/bindery-player-command-boundary
+    commit: 1370cb692b76425e02646b4a122aba40d7122fff
+    license: GPL-3.0
+    use: wire protocol reference for the live transport (WebSocket on port 14521, one binary protobuf message per frame, CLIENT_COMMAND then POLL_BLOCKING); no source copied
+  - project: ra2yrproto
+    repository: https://github.com/shmocz/ra2yrproto
+    ref: submodule of ra2yrcpp-bindery-fork
+    commit: 0ad72455bcdcf5626d0e17c3311ea82556da2ad3
+    license: GPL-3.0
+    imported_files:
+      - upstream: ra2yrproto/core.proto
+        path: src/Bindery.Ra2.Adapter.Ra2yrcpp/Protos/ra2yrproto/core.proto
+        upstream_sha256: sha256:a2ff56662f0c8ab452498518a6b71fea4c6353f3743916c689dba2a2a2dafe8c
+      - upstream: ra2yrproto/ra2yr.proto
+        path: src/Bindery.Ra2.Adapter.Ra2yrcpp/Protos/ra2yrproto/ra2yr.proto
+        upstream_sha256: sha256:be306110967d98e02be5f9b0972a06d8b2956a3b23f10553e351a60a976d4c5e
+      - upstream: ra2yrproto/commands_yr.proto
+        path: src/Bindery.Ra2.Adapter.Ra2yrcpp/Protos/ra2yrproto/commands_yr.proto
+        upstream_sha256: sha256:546f69c86ecdeb17ebdaabb805eff4477c5f78bd54dae16dd1c582e98ee94c92
+      - upstream: ra2yrproto/commands_game.proto
+        path: src/Bindery.Ra2.Adapter.Ra2yrcpp/Protos/ra2yrproto/commands_game.proto
+        upstream_sha256: sha256:d2de931f0c0f95b472356c46637a693b30db0fe5d74ddd91e1d5a6acf1965cd0
+    use: protocol definitions vendored unmodified apart from a provenance header; C# is generated at build time by protoc (Grpc.Tools, no gRPC services) into Bindery.Ra2.Adapter.Ra2yrcpp and never committed
   - project: cncnet-docker-tunnel
     repository: https://github.com/CnCNet/cncnet-docker-tunnel
     ref: main

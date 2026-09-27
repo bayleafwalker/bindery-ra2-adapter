@@ -7,6 +7,7 @@
   <ItemGroup>
     <ProjectReference Include="../../src/Bindery.Ra2.Adapter/Bindery.Ra2.Adapter.csproj" />
     <ProjectReference Include="../../src/Bindery.Ra2.Adapter.Planner.Claude/Bindery.Ra2.Adapter.Planner.Claude.csproj" />
+    <ProjectReference Include="../../src/Bindery.Ra2.Adapter.Ra2yrcpp/Bindery.Ra2.Adapter.Ra2yrcpp.csproj" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
