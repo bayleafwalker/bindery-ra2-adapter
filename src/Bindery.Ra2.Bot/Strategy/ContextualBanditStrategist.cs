@@ -8,7 +8,8 @@ namespace Bindery.Ra2.Bot.Strategy;
 /// <param name="Alpha">LinUCB exploration width.</param>
 /// <param name="Ridge">Ridge prior: each arm's design matrix starts as <c>Ridge · I</c>.</param>
 /// <param name="DefendThreatRatio">Base threat at which the bandit hands the decision to <c>generic-defend</c> without learning from it.</param>
-public sealed record BanditOptions(double Alpha = 0.6, double Ridge = 1.0, double DefendThreatRatio = 1.3);
+/// <param name="SwitchMargin">Within a match, how far another playbook's mean must exceed the committed playbook's before the bandit switches.</param>
+public sealed record BanditOptions(double Alpha = 0.6, double Ridge = 1.0, double DefendThreatRatio = 1.3, double SwitchMargin = 0.2);
 
 /// <summary>
 /// LinUCB over the faction's playbooks with the shared <see cref="FeatureVector"/>
@@ -20,7 +21,8 @@ public sealed record BanditOptions(double Alpha = 0.6, double Ridge = 1.0, doubl
 /// <para>Learning: <see cref="Observe"/> is the <see cref="IOutcomeLearner"/> update for one
 /// decision. The strategist also remembers the decisions it made since the last
 /// <see cref="CompleteEpisode"/>, so a harness that only knows the match outcome can credit
-/// the decisions of that match with it. Only decisions that took effect are remembered: a proposal
+/// the decisions of that match with it, once per contiguous run of one playbook: the proposer renews its intent every
+/// few seconds, and crediting each renewal would weight a match by how long it lasted. Only decisions that took effect are remembered: a proposal
 /// is a request that the scheduler may discard as late, the validator may reject and the arbiter may
 /// refuse, and crediting a playbook that never played with the result of a match another intent
 /// played would corrupt its estimate. A proposal took effect when the next request's
@@ -30,6 +32,9 @@ public sealed record BanditOptions(double Alpha = 0.6, double Ridge = 1.0, doubl
 /// One instance is meant to live across the matches
 /// of an arena run (the spec's "learns across matches within a run"); decisions are
 /// deterministic given the same update order.</para>
+/// <para>Exploration happens once per match: the first proposal of an episode takes the highest upper bound and
+/// commits to it. Later proposals keep the committed playbook unless another playbook's mean exceeds it by
+/// <see cref="BanditOptions.SwitchMargin"/>, so the width term cannot flip the plan every proposal.</para>
 /// <para>Base defence is not learned: at a base threat ratio of
 /// <see cref="BanditOptions.DefendThreatRatio"/> the bandit proposes <c>generic-defend</c> and
 /// records nothing, the same guard the selector applies.</para>
@@ -40,6 +45,7 @@ public sealed class ContextualBanditStrategist : IStrategist, IOutcomeLearner
     private readonly Dictionary<string, Arm> arms = new(StringComparer.Ordinal);
     private readonly List<(double[] Context, string PlaybookId)> episode = [];
     private (double[] Context, string PlaybookId, string IntentId)? pending;
+    private string? committed;
     private readonly object gate = new();
 
     public ContextualBanditStrategist(BanditOptions? options = null, string id = "bandit")
@@ -76,13 +82,26 @@ public sealed class ContextualBanditStrategist : IStrategist, IOutcomeLearner
         double[] x = FeatureVector.Encode(features);
         Playbook? best = null;
         double bestScore = double.NegativeInfinity, bestMean = 0, bestWidth = 0;
+        string rule;
         lock (gate)
         {
+            // Explore (upper bound) only when committing at the start of an episode; afterwards rank by mean.
+            bool exploring = committed is null || !candidates.Any(p => p.Id == committed);
+            double explore = exploring ? options.Alpha : 0;
+            double committedScore = double.NegativeInfinity, committedMean = 0, committedWidth = 0;
+            Playbook? current = null;
             foreach (Playbook playbook in candidates)
             {
                 (double mean, double width) = ArmFor(playbook.Id).Score(x);
                 // A personality leans the choice toward its playbook without stopping the learner from overruling it.
-                double score = mean + options.Alpha * width + (playbook.Id == preferred ? personality!.BanditBonus : 0);
+                double score = mean + explore * width + (playbook.Id == preferred ? personality!.BanditBonus : 0);
+                if (playbook.Id == committed)
+                {
+                    current = playbook;
+                    committedScore = score;
+                    committedMean = mean;
+                    committedWidth = width;
+                }
                 if (score > bestScore + 1e-12)
                 {
                     best = playbook;
@@ -91,6 +110,22 @@ public sealed class ContextualBanditStrategist : IStrategist, IOutcomeLearner
                     bestWidth = width;
                 }
             }
+            if (exploring)
+            {
+                rule = string.Create(CultureInfo.InvariantCulture, $"LinUCB: highest upper bound, mean {bestMean:0.000} + {options.Alpha:0.00} × width {bestWidth:0.000} over {candidates.Count} playbooks");
+            }
+            else if (best!.Id != committed && bestScore > committedScore + options.SwitchMargin)
+            {
+                rule = string.Create(CultureInfo.InvariantCulture, $"LinUCB: switched, mean {bestMean:0.000} beats committed {committed} {committedMean:0.000} by more than {options.SwitchMargin:0.00}");
+            }
+            else
+            {
+                best = current;
+                bestMean = committedMean;
+                bestWidth = committedWidth;
+                rule = string.Create(CultureInfo.InvariantCulture, $"LinUCB: kept committed playbook, mean {bestMean:0.000}, no other mean ahead by {options.SwitchMargin:0.00}");
+            }
+            committed = best!.Id;
         }
 
         double confidence = Math.Clamp(0.5 + 0.5 * Math.Tanh(bestMean) - 0.2 * Math.Min(1, bestWidth), 0.05, 0.95);
@@ -98,7 +133,7 @@ public sealed class ContextualBanditStrategist : IStrategist, IOutcomeLearner
         lock (gate) pending = (x, best!.Id, intentId);
         StrategicIntent intent = IntentComposer.Compose(
             best!, features, intentId, Source, confidence,
-            StrategyRationale.Explain(best!.Id, string.Create(CultureInfo.InvariantCulture, $"LinUCB: highest upper bound, mean {bestMean:0.000} + {options.Alpha:0.00} × width {bestWidth:0.000} over {candidates.Count} playbooks")
+            StrategyRationale.Explain(best!.Id, rule
                 + (personality is null ? string.Empty : string.Create(CultureInfo.InvariantCulture, $" (personality {personality.Id}, +{personality.BanditBonus:0.00} to {preferred})")), features),
             parameters: personality?.ScaledParameters(best!));
         return Task.FromResult<StrategistProposal?>(new StrategistProposal(intent, new ProposalCost(0, 0, 0, 0, null), null));
@@ -126,11 +161,11 @@ public sealed class ContextualBanditStrategist : IStrategist, IOutcomeLearner
     }
 
     /// <summary>
-    /// Credits every decision since the last call that took effect with <paramref name="reward"/> and starts a new
+    /// Credits each playbook segment (a contiguous run of decisions that took effect) since the last call with <paramref name="reward"/> and starts a new
     /// episode. <paramref name="finalActive"/> is the intent active when the match ended; it settles the last
     /// proposal, which is dropped when it is null or another intent.
     /// </summary>
-    /// <returns>The number of decisions credited.</returns>
+    /// <returns>The number of segments credited.</returns>
     public int CompleteEpisode(double reward, StrategicIntent? finalActive = null)
     {
         List<(double[] Context, string PlaybookId)> decisions;
@@ -139,6 +174,7 @@ public sealed class ContextualBanditStrategist : IStrategist, IOutcomeLearner
             Settle(finalActive);
             decisions = [.. episode];
             episode.Clear();
+            committed = null;
         }
         foreach ((double[] context, string playbookId) in decisions) Update(context, playbookId, reward);
         return decisions.Count;
@@ -151,6 +187,7 @@ public sealed class ContextualBanditStrategist : IStrategist, IOutcomeLearner
         {
             episode.Clear();
             pending = null;
+            committed = null;
         }
     }
 
@@ -159,7 +196,11 @@ public sealed class ContextualBanditStrategist : IStrategist, IOutcomeLearner
     {
         if (pending is { } previous && active is not null && string.Equals(active.IntentId, previous.IntentId, StringComparison.Ordinal))
         {
-            episode.Add((previous.Context, previous.PlaybookId));
+            // A renewal of the playbook already running continues its segment; only a new segment is a new decision.
+            if (episode.Count == 0 || !string.Equals(episode[^1].PlaybookId, previous.PlaybookId, StringComparison.Ordinal))
+            {
+                episode.Add((previous.Context, previous.PlaybookId));
+            }
         }
         pending = null;
     }

@@ -131,4 +131,45 @@ public sealed class StrategyLifecycleTests
         bandit.AbandonEpisode();
         Assert.Equal(0, bandit.CompleteEpisode(1.0, last));
     }
+
+    [Fact]
+    public void Bandit_does_not_explore_away_from_the_committed_playbook_within_a_match()
+    {
+        ContextualBanditStrategist bandit = new();
+        StrategicIntent first = Propose(bandit, Fx.Features(100));
+
+        // A slightly bad reading narrows the committed arm, so the untried arms now have the higher upper bound;
+        // exploring is for the start of a match, so the bandit keeps its playbook.
+        bandit.Update(FeatureVector.Encode(Fx.Features(100)), first.PlaybookId, -0.05);
+        StrategicIntent second = Propose(bandit, Fx.Features(120), first);
+
+        Assert.Equal(first.PlaybookId, second.PlaybookId);
+    }
+
+    [Fact]
+    public void Bandit_switches_within_a_match_only_when_another_mean_clears_the_margin()
+    {
+        ContextualBanditStrategist bandit = new(new BanditOptions(SwitchMargin: 0.2));
+        StrategicIntent first = Propose(bandit, Fx.Features(100));
+        string rival = Fx.Playbooks.For(Fx.Features(100).Faction).Select(static p => p.Id).First(id => id != first.PlaybookId);
+        double[] x = FeatureVector.Encode(Fx.Features(100));
+
+        bandit.Update(x, rival, 0.1);                                   // mean below the margin: stay
+        StrategicIntent second = Propose(bandit, Fx.Features(100), first);
+        Assert.Equal(first.PlaybookId, second.PlaybookId);
+
+        for (int i = 0; i < 5; i++) bandit.Update(x, rival, 1.0);      // mean well above it: switch
+        StrategicIntent third = Propose(bandit, Fx.Features(100), second);
+        Assert.Equal(rival, third.PlaybookId);
+    }
+
+    [Fact]
+    public void Bandit_credits_a_run_of_renewals_of_one_playbook_once()
+    {
+        ContextualBanditStrategist bandit = new();
+        StrategicIntent? active = null;
+        for (int i = 0; i < 5; i++) active = Propose(bandit, Fx.Features(100 + 20 * i), active);
+
+        Assert.Equal(1, bandit.CompleteEpisode(1.0, active));
+    }
 }

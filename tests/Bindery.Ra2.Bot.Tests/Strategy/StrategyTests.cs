@@ -102,9 +102,10 @@ public sealed class StrategyTests
         StrategicIntent second = Propose(bandit, features, first);
         Assert.Equal(IntentSource.Bandit, second.Source);
 
-        // Episode crediting: the two decisions above took effect (the second is the final active intent), so each
-        // is credited once, then forgotten.
-        Assert.Equal(2, bandit.CompleteEpisode(1.0, second));
+        // Episode crediting: both decisions took effect (the second is the final active intent) and the second renews
+        // the first's playbook, so they are one segment, credited once, then forgotten.
+        Assert.Equal(first.PlaybookId, second.PlaybookId);
+        Assert.Equal(1, bandit.CompleteEpisode(1.0, second));
         Assert.Equal(0, bandit.CompleteEpisode(1.0));
     }
 
