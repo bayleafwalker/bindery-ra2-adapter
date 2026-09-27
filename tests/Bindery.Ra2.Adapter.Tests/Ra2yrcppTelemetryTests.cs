@@ -1,0 +1,217 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+using System.Text.Json;
+using Bindery.Ra2.Adapter.Channel;
+using Bindery.Ra2.Adapter.Ra2yrcpp;
+using Ra2Yrproto.Commands;
+using Ra2Yrproto.Ra2Yr;
+using Xunit;
+
+namespace Bindery.Ra2.Adapter.Tests;
+
+/// <summary>Snapshots as the fork sends them, for the telemetry and command tests.</summary>
+internal static class Snapshots
+{
+    public const uint Americans = 0x100, Soviets = 0x200, Special = 0x10, Neutral = 0x20;
+    public const uint Amcv = 0x1000, Smcv = 0x1001, Gapowr = 0x1100, Napowr = 0x1101, Htnk = 0x1002;
+
+    public static ObjectTypeClass[] Types { get; } =
+    [
+        new() { Name = "AMCV", PointerSelf = Amcv, Type = AbstractType.Unittype },
+        new() { Name = "SMCV", PointerSelf = Smcv, Type = AbstractType.Unittype },
+        new() { Name = "HTNK", PointerSelf = Htnk, Type = AbstractType.Unittype },
+        new() { Name = "GAPOWR", PointerSelf = Gapowr, Type = AbstractType.Buildingtype },
+        new() { Name = "NAPOWR", PointerSelf = Napowr, Type = AbstractType.Buildingtype },
+    ];
+
+    public static House House(string name, uint self, int money = 10000, bool current = false, bool defeated = false, bool winner = false, bool gameOver = false) =>
+        new() { Name = name, Self = self, Money = money, CurrentPlayer = current, Defeated = defeated, IsWinner = winner, IsGameOver = gameOver, PowerOutput = 0, PowerDrain = 0 };
+
+    public static Ra2Yrproto.Ra2Yr.Object Unit(uint address, uint owner, uint type, AbstractType kind = AbstractType.Unit, bool limbo = false) =>
+        new() { PointerSelf = address, PointerHouse = owner, PointerTechnotypeclass = type, ObjectType = kind, InLimbo = limbo, Coordinates = new Coordinates { X = 100, Y = 200, Z = 0 } };
+
+    public static GameState State(uint frame, IEnumerable<House> houses, IEnumerable<Ra2Yrproto.Ra2Yr.Object> objects, LoadStage stage = LoadStage.StageIngame)
+    {
+        GameState state = new() { CurrentFrame = frame, Stage = stage };
+        state.Houses.AddRange(houses);
+        state.Objects.AddRange(objects);
+        return state;
+    }
+
+    public static House[] Opening(int americanMoney = 10000, int sovietMoney = 10000) =>
+    [
+        House("Special", Special),
+        House("Neutral", Neutral),
+        House("Americans", Americans, americanMoney, current: true),
+        House("Soviets", Soviets, sovietMoney),
+    ];
+}
+
+public sealed class Ra2yrcppTelemetryTests
+{
+    private static readonly DateTimeOffset start = new(2026, 9, 27, 12, 0, 0, TimeSpan.Zero);
+
+    private static Ra2yrcppSnapshotDiff Diff(string? seat = null)
+    {
+        Ra2yrcppSnapshotDiff diff = new(seat, creditsHeartbeat: TimeSpan.FromSeconds(10));
+        diff.SetTypes(Snapshots.Types);
+        return diff;
+    }
+
+    private static string? Text(Ra2yrcppEvent e, string field) =>
+        e.Payload.TryGetProperty(field, out JsonElement value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+    [Fact]
+    public void TheFirstInGameSnapshotStartsTheMatchWithItsPlayersAndStartingUnits()
+    {
+        Ra2yrcppSnapshotDiff diff = Diff();
+        Assert.Empty(diff.Next(Snapshots.State(0, [], [], LoadStage.StageLoading), start));
+
+        IReadOnlyList<Ra2yrcppEvent> events = diff.Next(Snapshots.State(1, Snapshots.Opening(), [Snapshots.Unit(0xA1, Snapshots.Americans, Snapshots.Amcv), Snapshots.Unit(0xB1, Snapshots.Soviets, Snapshots.Smcv)]), start);
+
+        Assert.NotEmpty(events);
+        Assert.Equal(Ra2TelemetryEventTypes.MatchStarted, events[0].EventType);
+        // Special and Neutral are the engine's houses, not players.
+        Assert.Equal(["Americans", "Soviets"], events.Where(static e => e.EventType == Ra2TelemetryEventTypes.PlayerJoined).Select(e => Text(e, "house")));
+        Ra2yrcppEvent mcv = Assert.Single(events, e => e.EventType == Ra2TelemetryEventTypes.UnitCreated && Text(e, "house") == "Americans");
+        Assert.Equal("AMCV", Text(mcv, "type"));
+        Assert.Equal(0xA1u, mcv.Payload.GetProperty("object").GetUInt32());
+        // Each house sees its own objects; nothing claims more than that.
+        Assert.Equal(["Americans"], mcv.Payload.GetProperty("visible_to").EnumerateArray().Select(static v => v.GetString()));
+        Assert.True(diff.Started);
+    }
+
+    [Fact]
+    public void LaterSnapshotsBecomeBuildDestroyEconomyDefeatAndEndEvents()
+    {
+        Ra2yrcppSnapshotDiff diff = Diff();
+        diff.Next(Snapshots.State(1, Snapshots.Opening(), [Snapshots.Unit(0xA1, Snapshots.Americans, Snapshots.Amcv), Snapshots.Unit(0xB1, Snapshots.Soviets, Snapshots.Smcv)]), start);
+
+        // The MCV deployed: it is gone and a construction yard... here a power plant... stands; money was spent.
+        IReadOnlyList<Ra2yrcppEvent> built = diff.Next(Snapshots.State(2,
+            Snapshots.Opening(americanMoney: 9200),
+            [Snapshots.Unit(0xA2, Snapshots.Americans, Snapshots.Gapowr, AbstractType.Building), Snapshots.Unit(0xB1, Snapshots.Soviets, Snapshots.Smcv), Snapshots.Unit(0xB2, Snapshots.Soviets, Snapshots.Napowr, AbstractType.Building, limbo: true)]), start.AddSeconds(1));
+        Assert.Contains(built, e => e.EventType == Ra2TelemetryEventTypes.UnitDestroyed && Text(e, "type") == "AMCV");
+        Assert.Contains(built, e => e.EventType == Ra2TelemetryEventTypes.BuildingPlaced && Text(e, "type") == "GAPOWR" && Text(e, "house") == "Americans");
+        // A finished building waiting in its factory is not on the map yet.
+        Assert.DoesNotContain(built, e => Text(e, "type") == "NAPOWR");
+        Ra2yrcppEvent credits = Assert.Single(built, static e => e.EventType == Ra2TelemetryEventTypes.CreditsSampled);
+        Assert.Equal(9200, credits.Payload.GetProperty("credits").GetInt64());
+
+        // Unchanged credits are still sampled at the heartbeat, so a flat economy is visible.
+        Assert.DoesNotContain(diff.Next(Snapshots.State(3, Snapshots.Opening(americanMoney: 9200), [Snapshots.Unit(0xA2, Snapshots.Americans, Snapshots.Gapowr, AbstractType.Building)]), start.AddSeconds(5)), static e => e.EventType == Ra2TelemetryEventTypes.CreditsSampled && e.Payload.GetProperty("house").GetString() == "Americans");
+        Assert.Contains(diff.Next(Snapshots.State(4, Snapshots.Opening(americanMoney: 9200), [Snapshots.Unit(0xA2, Snapshots.Americans, Snapshots.Gapowr, AbstractType.Building)]), start.AddSeconds(12)), static e => e.EventType == Ra2TelemetryEventTypes.CreditsSampled && e.Payload.GetProperty("house").GetString() == "Americans");
+
+        House[] over =
+        [
+            Snapshots.House("Special", Snapshots.Special),
+            Snapshots.House("Neutral", Snapshots.Neutral),
+            Snapshots.House("Americans", Snapshots.Americans, 9200, current: true, winner: true, gameOver: true),
+            Snapshots.House("Soviets", Snapshots.Soviets, 0, defeated: true),
+        ];
+        IReadOnlyList<Ra2yrcppEvent> end = diff.Next(Snapshots.State(5, over, [Snapshots.Unit(0xA2, Snapshots.Americans, Snapshots.Gapowr, AbstractType.Building)]), start.AddSeconds(13));
+        Assert.Contains(end, static e => e.EventType == Ra2TelemetryEventTypes.PlayerDefeated && e.Payload.GetProperty("house").GetString() == "Soviets");
+        Ra2yrcppEvent ended = end[^1];
+        Assert.Equal(Ra2TelemetryEventTypes.MatchEnded, ended.EventType);
+        Assert.Equal("Americans", Text(ended, "winner"));
+        Assert.True(diff.Ended);
+        Assert.Empty(diff.Next(Snapshots.State(6, over, []), start.AddSeconds(14)));
+    }
+
+    [Fact]
+    public void ASeatScopedDiffLeavesOtherHousesOutAndEverythingItEmitsPassesTheSeatFilter()
+    {
+        Ra2yrcppSnapshotDiff diff = Diff("Americans");
+        List<Ra2yrcppEvent> events =
+        [
+            .. diff.Next(Snapshots.State(1, Snapshots.Opening(), [Snapshots.Unit(0xA1, Snapshots.Americans, Snapshots.Amcv), Snapshots.Unit(0xB1, Snapshots.Soviets, Snapshots.Smcv)]), start),
+            .. diff.Next(Snapshots.State(2, Snapshots.Opening(americanMoney: 9000, sovietMoney: 8000), [Snapshots.Unit(0xA1, Snapshots.Americans, Snapshots.Amcv), Snapshots.Unit(0xB3, Snapshots.Soviets, Snapshots.Htnk)]), start.AddSeconds(1)),
+        ];
+
+        Assert.DoesNotContain(events, e => e.EventType is not (Ra2TelemetryEventTypes.PlayerJoined or Ra2TelemetryEventTypes.PlayerDefeated) && Text(e, "house") == "Soviets");
+        Assert.Contains(events, e => e.EventType == Ra2TelemetryEventTypes.PlayerJoined && Text(e, "house") == "Soviets");
+        Assert.Contains(events, e => e.EventType == Ra2TelemetryEventTypes.CreditsSampled && Text(e, "house") == "Americans");
+        PlayerObservationFilter filter = new("Americans");
+        Assert.All(events, e => Assert.True(filter.Admits(Observation(e))));
+    }
+
+    [Fact]
+    public void ASpectatorDiffKeepsEveryHouseButTheSeatFilterStillWithholdsTheEnemy()
+    {
+        Ra2yrcppSnapshotDiff diff = Diff();
+        IReadOnlyList<Ra2yrcppEvent> events = diff.Next(Snapshots.State(1, Snapshots.Opening(), [Snapshots.Unit(0xA1, Snapshots.Americans, Snapshots.Amcv), Snapshots.Unit(0xB1, Snapshots.Soviets, Snapshots.Smcv)]), start);
+
+        PlayerObservationFilter filter = new("Americans");
+        Ra2yrcppEvent enemy = Assert.Single(events, e => e.EventType == Ra2TelemetryEventTypes.UnitCreated && Text(e, "house") == "Soviets");
+        Assert.False(filter.Admits(Observation(enemy)));
+        Assert.True(filter.Admits(Observation(Assert.Single(events, e => e.EventType == Ra2TelemetryEventTypes.UnitCreated && Text(e, "house") == "Americans"))));
+    }
+
+    [Fact]
+    public async Task TheSourcePollsGameStateUntilTheMatchEndsWithTypeNamesFromTheInitialState()
+    {
+        Queue<GameState> frames = new(
+        [
+            Snapshots.State(0, [], [], LoadStage.StageLoading),
+            Snapshots.State(1, Snapshots.Opening(), [Snapshots.Unit(0xA1, Snapshots.Americans, Snapshots.Amcv)]),
+            Snapshots.State(2,
+            [
+                Snapshots.House("Special", Snapshots.Special),
+                Snapshots.House("Neutral", Snapshots.Neutral),
+                Snapshots.House("Americans", Snapshots.Americans, current: true, defeated: true, gameOver: true),
+                Snapshots.House("Soviets", Snapshots.Soviets, winner: true),
+            ], []),
+        ]);
+        GameState last = frames.Last();
+        await using FakeRa2yrcppServer server = new(command =>
+        {
+            if (command.Is(GetGameState.Descriptor)) return FakeRa2yrcppServer.Ok(new GetGameState { State = frames.Count > 0 ? frames.Dequeue() : last });
+            if (command.Is(ReadValue.Descriptor))
+            {
+                GameState initial = new();
+                initial.ObjectTypes.AddRange(Snapshots.Types);
+                return FakeRa2yrcppServer.Ok(new ReadValue { Data = new StorageValue { InitialGameState = initial } });
+            }
+            return FakeRa2yrcppServer.Error(command, "unexpected");
+        });
+        Ra2yrcppTelemetrySource source = new(new Ra2YrcppEndpoint(server.Uri.Host, server.Uri.Port), new Ra2yrcppTelemetryOptions(PollInterval: TimeSpan.FromMilliseconds(10)));
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(20));
+
+        List<RawObservation> observed = [];
+        await foreach (RawObservation observation in source.ReadAsync(timeout.Token)) observed.Add(observation);
+
+        Assert.NotEmpty(observed);
+        Assert.Equal(Ra2TelemetryEventTypes.MatchStarted, observed[0].EventType);
+        Assert.Contains(observed, static o => o.EventType == Ra2TelemetryEventTypes.UnitCreated && o.Payload.GetProperty("type").GetString() == "AMCV");
+        Assert.Equal(Ra2TelemetryEventTypes.MatchEnded, observed[^1].EventType);
+        MatchTelemetryTracker tracker = new();
+        foreach (RawObservation observation in observed) tracker.Observe(observation);
+        Assert.Equal("Soviets", tracker.Winner);
+        Assert.Equal(observed.Select(static (_, i) => (ulong)(i + 1)), observed.Select(static o => o.Sequence));
+        Assert.All(observed, static o => Assert.StartsWith("sha256:", o.RawObjectHash, StringComparison.Ordinal));
+        Assert.Equal(observed.Count, source.Capture.RawEventCount);
+        Assert.True(source.Capture.RawEventsObserved);
+    }
+
+    [Fact]
+    public async Task TheSourceWaitsForTheServiceToComeUp()
+    {
+        // Nothing listens yet: the game has not loaded the DLL.
+        int port;
+        using (System.Net.Sockets.TcpListener probe = new(System.Net.IPAddress.Loopback, 0))
+        {
+            probe.Start();
+            port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
+        }
+        Ra2yrcppTelemetrySource source = new(new Ra2YrcppEndpoint("localhost", port), new Ra2yrcppTelemetryOptions(PollInterval: TimeSpan.FromMilliseconds(10), ConnectRetry: TimeSpan.FromMilliseconds(20)));
+        using CancellationTokenSource timeout = new(TimeSpan.FromMilliseconds(400));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            await foreach (RawObservation _ in source.ReadAsync(timeout.Token)) { }
+        });
+        Assert.False(source.Capture.RawEventsObserved);
+    }
+
+    private static RawObservation Observation(Ra2yrcppEvent e) =>
+        new("e-1", "capture-1", 1, e.EventType, Ra2LabProfile.AdapterId, Ra2LabProfile.AdapterVersion, start, e.Payload, "sha256:raw");
+}
