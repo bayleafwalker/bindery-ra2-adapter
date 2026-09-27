@@ -50,18 +50,20 @@ public static class SimMaps
     }
 
     // 9 regions: two symmetric lanes meeting at a contested, ore-rich centre; each start has its own home ore field
-    // (the east start had none, so the start the arm always takes began with a 33-cell head start to income).
+    // (the east start had none, so the start the arm always takes began with a 33-cell head start to income). The
+    // layout is a mirror image about x = 50: units move in straight lines between region centres, so a centre at
+    // x = 55 with lanes at x = 45 and 75 gave the west start 37 of 48 mirror matches although graph distances agreed.
     private static SimMap BuildTwinValley()
     {
         Region[] regions =
         [
             R(0, "start-west", 10, 50, 8, start: true),
             R(1, "ore-west", 25, 50, 6, ore: true),
-            R(2, "lane-north", 45, 25, 7),
-            R(3, "lane-south", 45, 75, 7),
-            R(4, "centre", 55, 50, 9, ore: true),
-            R(5, "lane-north-east", 75, 25, 7),
-            R(6, "lane-south-east", 75, 75, 7),
+            R(2, "lane-north", 40, 25, 7),
+            R(3, "lane-south", 40, 75, 7),
+            R(4, "centre", 50, 50, 9, ore: true),
+            R(5, "lane-north-east", 60, 25, 7),
+            R(6, "lane-south-east", 60, 75, 7),
             R(7, "start-east", 90, 50, 8, start: true),
             R(8, "ore-east", 75, 50, 6, ore: true),
         ];
@@ -70,11 +72,13 @@ public static class SimMaps
             L(0, 1, 15), L(1, 2, 26), L(1, 3, 26), L(2, 4, 22), L(3, 4, 22),
             L(4, 5, 22), L(4, 6, 22), L(5, 8, 26), L(6, 8, 26), L(8, 7, 15),
         ];
-        OreField[] ore = [Ore(1, 25, 50), Ore(4, 55, 50, 16_000), Ore(8, 75, 50)];
+        OreField[] ore = [Ore(1, 25, 50), Ore(4, 50, 50, 16_000), Ore(8, 75, 50)];
         return Build("twin-valley", 100, 100, regions, links, ore, 0, 7);
     }
 
-    // 10 regions: a central river forces two crossings between symmetric halves.
+    // 10 regions: a central river forces two crossings between symmetric halves, mirrored about x = 50. Both home
+    // ore fields lie on the north side by the ford; with the east field in the south the west start alone had its
+    // ore on the ford road.
     private static SimMap BuildRiverCrossing()
     {
         Region[] regions =
@@ -86,8 +90,8 @@ public static class SimMaps
             R(4, "river", 50, 50, 5, water: true),
             R(5, "bank-east", 58, 50, 7),
             R(6, "ford-north", 50, 20, 5),
-            R(7, "field-east", 78, 30, 7),
-            R(8, "ore-east", 78, 70, 6, ore: true),
+            R(7, "field-east", 78, 70, 7),
+            R(8, "ore-east", 78, 30, 6, ore: true),
             R(9, "start-east", 92, 50, 8, start: true),
         ];
         RegionLink[] links =
@@ -97,7 +101,7 @@ public static class SimMaps
             L(3, 6, 24), L(6, 5, 24),
             L(5, 7, 20), L(5, 8, 20), L(7, 9, 18), L(8, 9, 18),
         ];
-        OreField[] ore = [Ore(1, 22, 30), Ore(8, 78, 70)];
+        OreField[] ore = [Ore(1, 22, 30), Ore(8, 78, 30)];
         return Build("river-crossing", 100, 100, regions, links, ore, 0, 9);
     }
 

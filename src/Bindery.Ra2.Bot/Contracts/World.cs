@@ -112,7 +112,7 @@ public sealed record MapInfo(
         foreach (Region region in Regions)
         {
             double d = region.Center.DistanceTo(cell);
-            if (d < bestDistance)
+            if (d <= bestDistance)
             {
                 best = region;
                 bestDistance = d;

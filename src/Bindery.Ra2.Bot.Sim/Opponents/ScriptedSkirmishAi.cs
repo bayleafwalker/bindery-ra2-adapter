@@ -178,7 +178,10 @@ public sealed class ScriptedSkirmishAi
         IOrderedEnumerable<Cell> ordered = toward is { } t2
             ? candidates.OrderBy(c => c.DistanceTo(t2))
             : candidates.OrderBy(c => c.DistanceTo(region.Center));
-        return ordered.ThenBy(c => c.X).ThenBy(c => c.Y).First();
+        // Ties go to the cell farther from the map centre, which every mirror image of a map agrees on; the lowest X
+        // put a west base's buildings behind it and an east base's in front of it.
+        double cx = map.Width / 2.0, cy = map.Height / 2.0;
+        return ordered.ThenByDescending(c => ((c.X - cx) * (c.X - cx)) + ((c.Y - cy) * (c.Y - cy))).ThenBy(c => c.X).ThenBy(c => c.Y).First();
     }
 
     private Cell? ApproachCell(Region homeRegion)

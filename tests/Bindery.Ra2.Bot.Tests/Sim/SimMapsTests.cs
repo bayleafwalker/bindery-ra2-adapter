@@ -46,6 +46,63 @@ public sealed class SimMapsTests
         Assert.Equal(fromWest[map.StartRegions[1]], fromEast[map.StartRegions[0]]);
     }
 
+    // Graph distances are not what the simulator moves by: units travel in straight lines between region centres,
+    // and placement, harvesting and combat use cells. Twin-valley passed the graph test with its centre at x=55 and
+    // its lanes at x=45 and x=75, and the west start won 37 of 48 mirror matches. Each map must be its own mirror
+    // image: some reflection swaps the two starts and maps every region (centre, radius, flags), link and ore field
+    // onto one of the same.
+    [Theory]
+    [MemberData(nameof(AllMaps))]
+    public void Each_map_is_a_geometric_mirror_image_that_swaps_the_starts(SimMap map)
+    {
+        Cell a = map.Map.Regions.Single(r => r.Id == map.StartRegions[0]).Center;
+        Cell b = map.Map.Regions.Single(r => r.Id == map.StartRegions[1]).Center;
+        List<(string Name, Func<Cell, Cell> Map)> reflections =
+        [
+            ("vertical axis", c => new Cell(a.X + b.X - c.X, c.Y)),
+            ("horizontal axis", c => new Cell(c.X, a.Y + b.Y - c.Y)),
+            ("point", c => new Cell(a.X + b.X - c.X, a.Y + b.Y - c.Y)),
+            ("diagonal", c => new Cell(c.Y + (b.X - a.Y), c.X - (b.X - a.Y))),
+            ("anti-diagonal", c => new Cell(a.X + b.Y - c.Y, a.Y + b.X - c.X)),
+        ];
+        List<string> failures = [];
+        foreach ((string name, Func<Cell, Cell> reflect) in reflections)
+        {
+            if (reflect(a) != b || reflect(b) != a) continue;
+            if (MirrorFailure(map.Map, reflect) is not { } failure) return;
+            failures.Add($"{name}: {failure}");
+        }
+        Assert.Fail($"{map.Map.MapId} has no reflection that swaps the starts: {string.Join("; ", failures)}");
+    }
+
+    private static string? MirrorFailure(MapInfo map, Func<Cell, Cell> reflect)
+    {
+        Dictionary<RegionId, RegionId> image = [];
+        foreach (Region region in map.Regions)
+        {
+            Cell target = reflect(region.Center);
+            Region? twin = map.Regions.FirstOrDefault(r => r.Center == target);
+            if (twin is null) return $"region {region.Name} at {region.Center} has no twin at {target}";
+            if (twin.Radius != region.Radius || twin.HasOre != region.HasOre || twin.Water != region.Water || twin.IsStartLocation != region.IsStartLocation)
+                return $"region {region.Name} and its twin {twin.Name} differ";
+            image[region.Id] = twin.Id;
+        }
+        foreach (RegionLink link in map.Links)
+        {
+            RegionId ia = image[link.A], ib = image[link.B];
+            if (!map.Links.Any(l => ((l.A == ia && l.B == ib) || (l.A == ib && l.B == ia))
+                    && Math.Abs(l.Distance - link.Distance) < 1e-9 && l.Ground == link.Ground && l.Naval == link.Naval))
+                return $"link {link.A.Value}-{link.B.Value} has no twin";
+        }
+        foreach (OreField field in map.OreFields)
+        {
+            Cell target = reflect(field.Center);
+            if (!map.OreFields.Any(o => o.Center == target && o.Region == image[field.Region] && o.InitialValue == field.InitialValue && o.Gems == field.Gems))
+                return $"ore field at {field.Center} has no twin at {target}";
+        }
+        return null;
+    }
+
     // Full connectivity (checked below, from one start region over an undirected link graph) already
     // implies every region is reachable from both start regions using some combination of ground and
     // naval links; an "island" region reachable only by sea is fine, one reachable by neither is a map bug.

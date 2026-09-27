@@ -614,8 +614,8 @@ public sealed class SkirmishSimulation
             .OrderBy(static r => r.Cost).ThenBy(static r => r.TypeId, StringComparer.Ordinal)
             .FirstOrDefault();
         if (harvester is null) return;
-        Cell beside = new(refinery.X + 1, refinery.Y + 1);
-        Cell cell = map.Map.RegionOf(beside)?.Id == region && beside.X < map.Map.Width && beside.Y < map.Map.Height ? beside : refinery;
+        Cell beside = Beside(refinery, 1, 1);
+        Cell cell = map.Map.RegionOf(beside)?.Id == region && beside.X >= 0 && beside.Y >= 0 && beside.X < map.Map.Width && beside.Y < map.Map.Height ? beside : refinery;
         SpawnEntity(player, harvester.TypeId, cell, region);
     }
 
@@ -1009,13 +1009,25 @@ public sealed class SkirmishSimulation
         return timers;
     }
 
+    /// <summary>
+    /// A cell offset from <paramref name="origin"/> by the given distances on the side facing the map centre. A fixed
+    /// +x, +y offset put a west base's new units and harvesters on its front side and an east base's behind it,
+    /// which no mirror image of a map can cancel; facing the centre, both starts of a mirrored map get the same.
+    /// </summary>
+    private Cell Beside(Cell origin, int dx, int dy)
+    {
+        int sx = origin.X * 2 <= map.Map.Width ? 1 : -1;
+        int sy = origin.Y * 2 <= map.Map.Height ? 1 : -1;
+        return new Cell(origin.X + (sx * dx), origin.Y + (sy * dy));
+    }
+
     /// <summary>Where a finished unit appears: beside the newest factory of its queue (any building if it has none).</summary>
     private Cell RallyPointFor(PlayerId owner, QueueKind queue)
     {
         SimEntity? factory = entities.Where(e => e.Owner == owner && e.Alive && IsFactoryFor(e.TypeId, queue)).OrderBy(e => e.Id.Value).LastOrDefault()
             ?? entities.Where(e => e.Owner == owner && e.Alive && rules.TryGet(e.TypeId, out UnitRule r) && r.Kind == EntityKind.Building)
                        .OrderBy(e => e.Id.Value).LastOrDefault();
-        if (factory is not null) return new Cell(factory.Position.X + 1 + rng.NextInt(3), factory.Position.Y + 1 + rng.NextInt(3));
+        if (factory is not null) return Beside(factory.Position, 1 + rng.NextInt(3), 1 + rng.NextInt(3));
         int index = players.Keys.OrderBy(p => p.Value).ToList().IndexOf(owner);
         return RegionCenter(map.StartRegions[Math.Max(0, index)]);
     }

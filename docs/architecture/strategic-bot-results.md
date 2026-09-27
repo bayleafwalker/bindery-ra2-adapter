@@ -356,10 +356,20 @@ contested benchmark.
    escalation rate (0.3–1.1%) and near-zero cost show the mechanism works,
    not that it distils Claude.
 10. **Retail telemetry gaps.** `bindery.ra2.bot-observation/v1` carries no
-    production queue state, ore fields, superweapon timers or visible-region
-    set. On retail the planner treats queues as empty and those features are
-    absent, so the retail bot will play with less information than the
-    simulator bot measured here.
+    production queue state, ore fields, superweapon timers, visible-region
+    set or house allegiance, so the retail bot will play with less information
+    than the simulator bot measured here. Frames say so (`QueuesKnown`,
+    `CreditsKnown`, `PowerKnown` false where unreported) rather than inventing
+    values. With queues unreported the planner orders into a queue at most
+    once per build time and counts what its own orders still owe
+    (`OperationalPlan.UnreportedProductionDebt`, cost times the unbuilt share
+    of the build time) against both its credits and the budget ledger; this is
+    an estimate that assumes each order starts building at once, so a stalled
+    or refused order is counted as paid off early. Credits and power are held
+    at the last sample (zero before the first one arrives). Allegiance is not
+    in v1: whoever constructs `Ra2ObservationAssembler` must pass the
+    non-hostile owners (allies, neutral and civilian houses) from the game
+    setup, or every non-self owner is treated as an enemy.
 11. **Retail transport missing.** No native `IRa2TelemetrySource` or
     `IRa2CommandTransport` exists in this repo. The ra2yrcpp fork must provide
     them (see below). `Ra2BotHost` is tested only against recorded telemetry

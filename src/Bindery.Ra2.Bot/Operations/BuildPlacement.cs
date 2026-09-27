@@ -35,9 +35,14 @@ internal static class BuildPlacement
                 }
             }
 
+            // Ties go to the cell farther from the map centre (behind the base), a rule every mirror image of a map
+            // agrees on. Breaking them by the lowest X put a west base's buildings behind it and an east base's in
+            // front of it, toward the enemy: on river-crossing the west start won 48 of 48 mirror matches.
+            double centreX = width / 2.0, centreY = height / 2.0;
+            double FromCentre(Cell c) => ((c.X - centreX) * (c.X - centreX)) + ((c.Y - centreY) * (c.Y - centreY));
             IEnumerable<Cell> ordered = bias is { } b
-                ? candidates.OrderBy(c => c.DistanceTo(b)).ThenBy(c => c.X).ThenBy(c => c.Y)
-                : candidates.OrderBy(c => c.X).ThenBy(c => c.Y);
+                ? candidates.OrderBy(c => c.DistanceTo(b)).ThenByDescending(FromCentre).ThenBy(c => c.X).ThenBy(c => c.Y)
+                : candidates.OrderByDescending(FromCentre).ThenBy(c => c.X).ThenBy(c => c.Y);
 
             foreach (Cell candidate in ordered)
             {
