@@ -342,7 +342,8 @@ elsewhere, or a lab run, before they count as done.
     spectator-grade. An agent must never hold the connection itself, only
     this adapter's filtered seat.
   - Stable entity IDs (`AbstractClass::UniqueID`) are in
-    bayleafwalker/ra2yrproto#1, vendored here while its merge is pending.
+    bayleafwalker/ra2yrproto (#1, merged as e8754b5), and the ra2yrcpp fork
+    checks them for unit orders and placement (#3, merged into `develop`).
     Telemetry payloads carry `unique_id`. `Ra2yrcppCommandSink` drops an
     address that the latest snapshot does not show as the house's, or whose
     ID differs from the one the command gave. It sends the snapshot's IDs

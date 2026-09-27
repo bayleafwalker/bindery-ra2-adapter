@@ -43,7 +43,7 @@ sources:
     use: wire protocol reference for the live transport (WebSocket on port 14521, one binary protobuf message per frame, CLIENT_COMMAND then POLL_BLOCKING); no source copied
   - project: ra2yrproto
     repository: https://github.com/bayleafwalker/ra2yrproto
-    ref: stable object IDs (bayleafwalker/ra2yrproto#1, merge pending)
+    ref: stable object IDs (bayleafwalker/ra2yrproto#1, merged into main as e8754b5)
     commit: a7708edf7f69bb8a1b922e7ae628bc88118e81a7
     base: shmocz/ra2yrproto 0ad72455bcdcf5626d0e17c3311ea82556da2ad3 (the submodule of ra2yrcpp-bindery-fork 1370cb6)
     license: GPL-3.0
