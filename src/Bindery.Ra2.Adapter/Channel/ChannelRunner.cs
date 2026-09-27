@@ -22,7 +22,10 @@ public sealed record ChannelMatchResult(
     string? ReplayPath = null,
     string? DecisionTracePath = null,
     int PlaybookRevisions = 0,
-    string? Winner = null);
+    string? Winner = null,
+    long? TelemetryObserved = null,
+    bool? TelemetryEnded = null,
+    string? TelemetryIssue = null);
 
 /// <summary>
 /// Plays one match. The existing private RA2 path sits behind this: session,
@@ -228,7 +231,10 @@ public sealed class ChannelRunner
             result.PlaybookRevisions,
             request.Capture,
             request.Broadcast.Public is not null,
-            failure);
+            failure,
+            result.TelemetryObserved,
+            result.TelemetryEnded,
+            result.TelemetryIssue);
     }
 
     private static ChannelMatchRecord Failed(ChannelRequest request, ChannelMatchContext context, DateTimeOffset startedAt, Exception exception) => new(
@@ -253,32 +259,4 @@ public sealed class ChannelRunner
         request.Capture,
         request.Broadcast.Public is not null,
         $"{exception.GetType().Name}: {exception.Message}");
-}
-
-/// <summary>
-/// Plays each channel match through the existing <see cref="LiveAcceptanceRunner"/>.
-/// </summary>
-/// <remarks>
-/// The runner reports only when the clients have exited, so the cut to the
-/// match scene happens as the launch begins and the capture shows the
-/// loading screen first. Each match needs fresh idempotency keys, which is
-/// why the request comes from a factory.
-/// </remarks>
-public sealed class LiveAcceptanceMatchLauncher(
-    LiveAcceptanceRunner runner,
-    Func<ChannelMatchContext, LiveAcceptanceRequest> requestFor) : IChannelMatchLauncher
-{
-    public async Task<ChannelMatchResult> RunMatchAsync(ChannelMatchContext context, Func<CancellationToken, Task> onAir, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(context);
-        ArgumentNullException.ThrowIfNull(onAir);
-        LiveAcceptanceRequest request = requestFor(context) ?? throw new InvalidOperationException("the request factory returned nothing");
-        if (!string.Equals(request.FirstLaunch.MapId, context.MapId, StringComparison.Ordinal)
-            || !string.Equals(request.SecondLaunch.MapId, context.MapId, StringComparison.Ordinal))
-            throw new InvalidOperationException("the live request must play the channel's map on both clients");
-        Task<LiveAcceptanceEvidence> run = runner.RunAsync(request, cancellationToken);
-        await onAir(cancellationToken).ConfigureAwait(false);
-        LiveAcceptanceEvidence evidence = await run.ConfigureAwait(false);
-        return new ChannelMatchResult(evidence, request.EvidenceDirectory);
-    }
 }

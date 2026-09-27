@@ -94,6 +94,7 @@ public enum ChannelMatchOutcome
 /// <remarks>
 /// <paramref name="Winner"/> stays null unless the telemetry actually named
 /// one. Exit codes do not: Yuri's Revenge exits the same way for both sides.
+/// The telemetry fields are null when no instrumented stream was attached.
 /// </remarks>
 public sealed record ChannelMatchRecord(
     string ChannelId,
@@ -116,7 +117,10 @@ public sealed record ChannelMatchRecord(
     int PlaybookRevisions,
     CaptureSource Capture,
     bool PublishedPublicly,
-    string? Failure = null);
+    string? Failure = null,
+    long? TelemetryEvents = null,
+    bool? TelemetrySawMatchEnd = null,
+    string? TelemetryIssue = null);
 
 /// <summary>What one channel session did, in order.</summary>
 public sealed record ChannelSessionSummary(

@@ -202,7 +202,7 @@ public sealed class ChannelTests
         Assert.Equal(1, identify["op"]!.GetValue<int>());
         Assert.Equal(ObsWebSocketProduction.Authentication("pw", "s", "c"), identify["d"]!["authentication"]!.GetValue<string>());
         Assert.Equal(
-            ["SetCurrentProgramScene:ra2-holding", "GetStreamStatus", "StartStream", "SetCurrentProgramScene:client-a", "SetCurrentProgramScene:ra2-match", "SetCurrentProgramScene:ra2-holding"],
+            ["GetSceneList", "SetCurrentProgramScene:ra2-holding", "GetStreamStatus", "StartStream", "SetCurrentProgramScene:client-a", "SetCurrentProgramScene:ra2-match", "SetCurrentProgramScene:ra2-holding"],
             obs.Requests);
     }
 
@@ -214,6 +214,27 @@ public sealed class ChannelTests
 
         InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(() => production.StartAsync(LocalOnly(), CancellationToken.None));
         Assert.Contains("600", error.Message);
+    }
+
+    [Fact]
+    public async Task ObsPreflightRefusesMissingScenesAndMutedAudio()
+    {
+        FakeObsConnection obs = new(authenticated: false, outputActive: false)
+        {
+            Scenes = ["ra2-holding"],
+            Inputs = new() { ["game-audio"] = true },
+        };
+        await using ObsWebSocketProduction production = new(_ => Task.FromResult<IObsConnection>(obs), null, requiredAudioInputs: ["game-audio", "commentary"]);
+
+        IReadOnlyList<string> problems = await production.PreflightAsync(LocalOnly(), CancellationToken.None);
+
+        Assert.Equal(3, problems.Count);
+        Assert.Contains(problems, static p => p.Contains("'ra2-match' does not exist", StringComparison.Ordinal));
+        Assert.Contains(problems, static p => p.Contains("'game-audio' is muted", StringComparison.Ordinal));
+        Assert.Contains(problems, static p => p.Contains("'commentary' is unavailable", StringComparison.Ordinal));
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(() => production.StartAsync(LocalOnly(), CancellationToken.None));
+        Assert.StartsWith("OBS is not ready", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("StartStream", obs.Requests);
     }
 
     [Fact]
@@ -277,14 +298,14 @@ public sealed class ChannelTests
 
     private static ulong nextSequence;
 
-    private static RawObservation Observation(string type, string payload)
+    internal static RawObservation Observation(string type, string payload)
     {
         using JsonDocument document = JsonDocument.Parse(payload);
         ulong sequence = Interlocked.Increment(ref nextSequence);
         return new RawObservation($"event-{sequence}", "capture-1", sequence, type, Ra2LabProfile.AdapterId, Ra2LabProfile.AdapterVersion, DateTimeOffset.UtcNow, document.RootElement.Clone(), "sha256:raw");
     }
 
-    private static LiveAcceptanceEvidence Evidence(bool complete, bool desync = false)
+    internal static LiveAcceptanceEvidence Evidence(bool complete, bool desync = false)
     {
         IReadOnlyList<RunObservation> observations = desync ? [new RunObservation(RunObservation.Desync, "the game wrote SYNC0.TXT", true)] : [];
         LiveClientEvidence Client(string id) => new(id, "account-" + id, "instance-" + id, "golden-1", "sha256:game", "sha256:ini", ["ready", "started", "exited"], 0, null, observations);
@@ -371,6 +392,10 @@ public sealed class ChannelTests
 
         public bool RejectScenes { get; init; }
 
+        public string[] Scenes { get; init; } = ["ra2-holding", "ra2-match", "client-a"];
+
+        public Dictionary<string, bool> Inputs { get; init; } = new() { ["game-audio"] = false };
+
         public Task SendAsync(string message, CancellationToken cancellationToken)
         {
             JsonNode node = JsonNode.Parse(message)!;
@@ -391,6 +416,16 @@ public sealed class ChannelTests
                 ["requestStatus"] = ok ? new JsonObject { ["result"] = true, ["code"] = 100 } : new JsonObject { ["result"] = false, ["code"] = 600, ["comment"] = "No scene" },
             };
             if (type == "GetStreamStatus") response["responseData"] = new JsonObject { ["outputActive"] = outputActive };
+            if (type == "GetSceneList")
+                response["responseData"] = new JsonObject { ["scenes"] = new JsonArray(Scenes.Select(static n => (JsonNode)new JsonObject { ["sceneName"] = n }).ToArray()) };
+            if (type == "GetInputMute")
+            {
+                string input = d["requestData"]!["inputName"]!.GetValue<string>();
+                if (!Inputs.TryGetValue(input, out bool muted))
+                    response["requestStatus"] = new JsonObject { ["result"] = false, ["code"] = 600, ["comment"] = "No source was found" };
+                else
+                    response["responseData"] = new JsonObject { ["inputMuted"] = muted };
+            }
             inbound.Enqueue(new JsonObject { ["op"] = 7, ["d"] = response }.ToJsonString());
             return Task.CompletedTask;
         }
@@ -400,7 +435,7 @@ public sealed class ChannelTests
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
-    private sealed class ScriptedController : IPlayerController
+    internal sealed class ScriptedController : IPlayerController
     {
         public List<RawObservation> Seen { get; } = [];
 
@@ -419,7 +454,7 @@ public sealed class ChannelTests
         }
     }
 
-    private sealed class MemoryCommands(string house) : IPlayerCommandSink
+    internal sealed class MemoryCommands(string house) : IPlayerCommandSink
     {
         public string House { get; } = house;
 
@@ -429,7 +464,7 @@ public sealed class ChannelTests
             command.Kind == RejectKind ? throw new InvalidOperationException("rejected") : Task.CompletedTask;
     }
 
-    private sealed class FakeTelemetry(IReadOnlyList<RawObservation> observations) : IRa2TelemetrySource
+    internal sealed class FakeTelemetry(IReadOnlyList<RawObservation> observations) : IRa2TelemetrySource
     {
         public Ra2TelemetryCapture Capture { get; } = new(Ra2LabProfile.TelemetryProtocol, new Ra2YrcppEndpoint("127.0.0.1", 14521), true, observations.Count, null);
 

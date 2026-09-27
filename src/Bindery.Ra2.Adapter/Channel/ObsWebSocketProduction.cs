@@ -37,6 +37,7 @@ public sealed class ObsWebSocketProduction : IBroadcastProduction, IAsyncDisposa
     private readonly Func<CancellationToken, Task<IObsConnection>> connect;
     private readonly string? password;
     private readonly IReadOnlyDictionary<string, string> matchSceneByClient;
+    private readonly IReadOnlyList<string> requiredAudioInputs;
     private readonly SemaphoreSlim gate = new(1, 1);
     private IObsConnection? connection;
     private BroadcastScenes scenes = new();
@@ -46,26 +47,71 @@ public sealed class ObsWebSocketProduction : IBroadcastProduction, IAsyncDisposa
     /// Optional scene per capture client instance, for a collection with one
     /// window-capture scene per client. Without it the plan's match scene is used.
     /// </param>
+    /// <param name="requiredAudioInputs">
+    /// OBS inputs that carry the game's sound. Preflight refuses to go on air
+    /// if any of them is missing or muted: a silent channel is the failure
+    /// nobody notices from the picture.
+    /// </param>
     public ObsWebSocketProduction(
         Func<CancellationToken, Task<IObsConnection>> connect,
         string? password,
-        IReadOnlyDictionary<string, string>? matchSceneByClient = null)
+        IReadOnlyDictionary<string, string>? matchSceneByClient = null,
+        IReadOnlyList<string>? requiredAudioInputs = null)
     {
         this.connect = connect ?? throw new ArgumentNullException(nameof(connect));
         this.password = password;
         this.matchSceneByClient = matchSceneByClient ?? new Dictionary<string, string>();
+        this.requiredAudioInputs = requiredAudioInputs ?? [];
     }
 
-    public static ObsWebSocketProduction ForUri(Uri uri, string? password, IReadOnlyDictionary<string, string>? matchSceneByClient = null)
+    public static ObsWebSocketProduction ForUri(
+        Uri uri,
+        string? password,
+        IReadOnlyDictionary<string, string>? matchSceneByClient = null,
+        IReadOnlyList<string>? requiredAudioInputs = null)
     {
         ArgumentNullException.ThrowIfNull(uri);
-        return new ObsWebSocketProduction(ct => ClientWebSocketObsConnection.ConnectAsync(uri, ct), password, matchSceneByClient);
+        return new ObsWebSocketProduction(ct => ClientWebSocketObsConnection.ConnectAsync(uri, ct), password, matchSceneByClient, requiredAudioInputs);
+    }
+
+    /// <summary>
+    /// What would stop this production from working: missing scenes and
+    /// missing or muted audio inputs. Empty means ready.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> PreflightAsync(BroadcastPlan plan, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        BroadcastScenes planned = plan.EffectiveScenes;
+        List<string> problems = [];
+        JsonNode? list = await RequestAsync("GetSceneList", null, cancellationToken).ConfigureAwait(false);
+        HashSet<string> present = new(
+            (list?["scenes"] as JsonArray ?? []).Select(static scene => scene?["sceneName"]?.GetValue<string>()).OfType<string>(),
+            StringComparer.Ordinal);
+        foreach (string scene in new[] { planned.Holding, planned.Match }.Concat(matchSceneByClient.Values).Distinct(StringComparer.Ordinal))
+        {
+            if (!present.Contains(scene)) problems.Add($"scene '{scene}' does not exist");
+        }
+        foreach (string input in requiredAudioInputs)
+        {
+            try
+            {
+                JsonNode? mute = await RequestAsync("GetInputMute", new JsonObject { ["inputName"] = input }, cancellationToken).ConfigureAwait(false);
+                if (mute?["inputMuted"]?.GetValue<bool>() == true) problems.Add($"audio input '{input}' is muted");
+            }
+            catch (InvalidOperationException exception)
+            {
+                problems.Add($"audio input '{input}' is unavailable: {exception.Message}");
+            }
+        }
+        return problems;
     }
 
     public async Task StartAsync(BroadcastPlan plan, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(plan);
         plan.Validate();
+        IReadOnlyList<string> problems = await PreflightAsync(plan, cancellationToken).ConfigureAwait(false);
+        if (problems.Count > 0) throw new InvalidOperationException("OBS is not ready: " + string.Join("; ", problems));
         scenes = plan.EffectiveScenes;
         await SetSceneAsync(scenes.Holding, cancellationToken).ConfigureAwait(false);
         // StartStream fails with OutputRunning if a previous session left the

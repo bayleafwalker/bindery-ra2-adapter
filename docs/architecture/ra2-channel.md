@@ -12,7 +12,8 @@ players without rebuilding the match infrastructure.
 | RA2/YR clients | The simulation: two players now, an optional observer later | External: golden-appliance clones |
 | Direct-stream adapter | Instrumented state and events for analysis, overlays and agent observations | Existing seam: `IRa2TelemetrySource` |
 | Capture and broadcast | One rendered client's video and audio, sent to the room stream and optionally Twitch | `IBroadcastProduction`, `ObsWebSocketProduction`, [`deploy/ra2-channel`](../../deploy/ra2-channel/README.md) |
-| Channel loop | Holding scene, match, record, next match or drain | `ChannelRunner`, `LiveAcceptanceMatchLauncher` |
+| Channel loop | Holding scene, match, record, next match or drain | `ChannelRunner`, `LiveAcceptanceMatchLauncher`, `tools/Bindery.Ra2.Adapter.Channel` |
+| Match telemetry | Match end and winner from the instrumented stream, shared with the agent | `MatchTelemetryTracker`, `TelemetryFanOut` |
 | Agent controller | A player seat: filtered observations in, commands out, a decision trace | `AgentSeat`, `PlayerObservationFilter`, `IPlayerController` |
 
 The key boundary: **the direct stream is game data, not the video feed.** It
@@ -23,16 +24,22 @@ from capturing a rendered participant or observer window.
 
 1. A `ChannelRequest` names the map, the capture source, the broadcast plan,
    the match budget and, optionally, the house an agent controls.
-2. `ChannelRunner` starts the OBS output and shows the holding scene.
-3. For each match, `IChannelMatchLauncher` runs the existing private path:
+2. `ChannelRunner` runs the OBS preflight (scenes exist, required audio
+   inputs present and unmuted), starts the output and shows the holding scene.
+3. For each match, `IChannelMatchLauncher` runs the existing private path.
    `LiveAcceptanceMatchLauncher` calls `LiveAcceptanceRunner` with fresh
-   idempotency keys, so Bindery creates the session, receives the
-   `cncnet-private` placement and launches both cloned clients. The channel
-   cuts to the match scene as the launch begins.
-4. When the clients exit, the channel shows the holding scene, derives a
-   `ChannelMatchRecord` from the live evidence and appends it to
-   `channel-matches.ndjson`.
-5. The channel starts the next match after the holding interval. It stops and
+   idempotency keys and its own evidence folder. Bindery creates the session,
+   issues the `cncnet-private` placement and launches both cloned clients,
+   plus the observer if one is configured. The channel cuts to the match
+   scene when the **captured** client reports `started`, so session setup
+   and loading stay on the holding scene.
+4. With a telemetry source attached, one reader feeds both the match tracker
+   and the agent seat. The tracker records match end and the winner.
+5. When the clients exit, the launcher waits briefly for the final events
+   (5 s by default), then closes the stream. The channel shows the holding
+   scene, derives a `ChannelMatchRecord` from the live evidence and the
+   tracker, and appends it to `channel-matches.ndjson`.
+6. The channel starts the next match after the holding interval. It stops and
    releases the output when the budget is spent, a drain is requested
    (`RequestDrain`), two matches in a row fail, or it is cancelled.
 
@@ -47,13 +54,18 @@ The channel ID and match index; the Bindery run and session IDs; the map and
 now written to the live evidence); the golden appliance and distinct client
 executable hashes; the adapter version; the outcome; the evidence, replay and
 decision-trace paths; the number of playbook revisions; the capture source;
-and whether the match went out publicly.
+whether the match went out publicly; and, when telemetry was attached, the
+event count, whether the stream reached `ra2.match.ended`, and any telemetry
+failure.
 
 `Completed` requires the live runner's lifecycle-complete flag, no client
 failure and no desync dump. Anything short of that is `Incomplete`; a match
 that could not be prepared is `Failed`. `Winner` stays null unless the
-telemetry names one. Exit codes cannot, because Yuri's Revenge exits the same
-way for both sides. A channel record never upgrades the qualification flags
+telemetry names one: the `winner` field of `ra2.match.ended`, or, after the
+match ends, the single joined house that was never defeated. Exit codes
+cannot name a winner, because Yuri's Revenge exits the same way for both
+sides. A telemetry, tracker or agent failure is recorded on the match and
+never turns a played match into a failed one. A channel record never upgrades the qualification flags
 in the evidence it points to.
 
 ### Continuity rules
@@ -61,6 +73,8 @@ in the evidence it points to.
 - A failed scene switch is recorded in `BroadcastIssues`, and the match keeps
   running. Broadcasting is a side effect of the loop, not a dependency.
 - The output is stopped in a `finally` block, including on cancellation.
+- The first Ctrl+C in the channel tool drains after the current match. A
+  second Ctrl+C cancels, and the output is still stopped.
 - `StartStream` is skipped when OBS reports the output is already active, so
   the channel can restart after a crash without failing on OBS's
   `OutputRunning` response.
@@ -80,9 +94,23 @@ matches can run as unbroadcast experiments with `NoBroadcastProduction`.
 
 The first broadcast captures one player's view (`CaptureSource` with
 `ClientClass.Player`). A spectator client is the better eventual view for a
-neutral channel. `IsSpectator` is already rendered into the spawn INI, but the
-proven two-client run has not established the observer-to-video path. Treat
-`ClientClass.Observer` capture as unproven until step 3 below.
+neutral channel. `LiveAcceptanceRequest.Observer` adds it as a third client:
+
+- it enrolls as `observer`, and the session's participant policy admits one
+  observer;
+- it is validated against the same private tunnel placement;
+- it receives its own tunnel port and a spawn INI with `IsSpectator=Yes`;
+- it has no `[SpawnLocations]` entry and appears last in the global order;
+- its lifecycle and departure count toward lifecycle completeness.
+
+The live-acceptance and channel tools read it from `observerIdentity`,
+`observerClientInstanceId`, `observerLaunch` and `observerHost`. This is
+built, but no lab run has proven it yet. In particular, the spawner's
+handling of a spectator with no starting location is taken from the existing
+two-client spectator support; it has not been observed with three peers. AI
+houses are numbered after every human peer, the spectator included
+(`Multi4` onward). Whether the engine expects that with a spectator present
+is also unverified, so run the first observer matches without AI houses.
 
 ## AI play
 
@@ -112,27 +140,55 @@ at `ra2.match.ended`. The trace path and revision count go into the channel
 record, so a dynamic playbook can be compared across matches with the same map
 and seed.
 
+Through the channel, set `ChannelRequest.AgentSeatHouse` and pass
+`LiveChannelMatchOptions.AgentSeat` and `Telemetry`. The launcher refuses a
+named house with no seat, or a seat bound to a different house. The trace is
+written into that match's evidence folder.
+
 **Not implemented:** the game-side command channel. `IPlayerCommandSink` is the
 boundary a per-player ra2yrcpp command path would implement. Nothing in this
 repository can issue orders into the game yet.
 
 ## Build order
 
-1. **Prove the channel.** Run `ChannelRunner` with `LiveAcceptanceMatchLauncher`
-   and `ObsWebSocketProduction` over the existing two-client match. Capture one
-   player's view to the room stream for several consecutive games.
-2. **Automate continuity.** The loop, the holding scene, drain, failure
-   back-off and output release are in place. Still to do in the lab: detecting
-   match end from telemetry before process exit, audio checks, and verifying
-   that resources are released on each clone.
-3. **Add the observer.** Show that a third client joins reliably and gives the
-   view you want. This needs a three-client live request; `LiveAcceptanceRunner`
-   drives two today.
-4. **Add agent play.** Put one controller in a player seat with filtered
-   observations and a recorded trace. The seat and trace are in place. This step
-   needs the command sink and bridge-side ownership and visibility fields.
-5. **Expand games.** Reuse the channel loop, broadcast and record. Give each new
-   game its own launcher, observation filter and command sink.
+| Step | Built here | Still needs |
+| --- | --- | --- |
+| 1. Prove the channel | `tools/Bindery.Ra2.Adapter.Channel` runs `ChannelRunner` → `LiveAcceptanceMatchLauncher` → `LiveAcceptanceRunner`, with OBS and MediaMTX ([`docs/channel-settings.example.json`](../channel-settings.example.json)) | Several consecutive lab matches on the room stream |
+| 2. Automate continuity | Cut on `started`, holding scene, drain, failure back-off, output release, OBS scene and audio preflight, per-match evidence folders | A lab check that each clone's resources are released; continuous audio-level monitoring |
+| 3. Add the observer | Optional third client end to end: enrollment, tunnel port, spectator INI, lifecycle, evidence | A lab run proving the observer joins reliably and gives the view you want |
+| 4. Add agent play | Seat, filter, trace, launcher wiring, winner from telemetry | A concrete `IRa2TelemetrySource`, bridge ownership and visibility fields, and a command sink (see below) |
+| 5. Expand games | Loop, broadcast and record are game-neutral behind `IChannelMatchLauncher` | Per-game launcher, filter and command sink |
+
+## Prospective work outside this repository
+
+These items are built against seams in this repository but need work
+elsewhere. None of them is implemented here.
+
+- **Telemetry source.** No concrete `IRa2TelemetrySource` exists: the
+  ra2yrcpp fork owns protobuf/TCP framing, so the channel tool runs without
+  telemetry until the fork's reader is wired in. Until then, records carry no
+  winner and no agent can play.
+- **Ownership and visibility.** The filter and tracker read `house`,
+  `visible_to` and `winner` from payloads. The bridge must emit these (or the
+  field names must be configured to match what it emits). Per-house
+  visibility needs the engine's own shroud and fog state; the full spectator
+  view must never be relabelled as a player's view.
+- **Command sink.** A per-player command path in the fork, bound to one house
+  and refusing orders for any other, implementing `IPlayerCommandSink`. The
+  observer gets none.
+- **Camera for several matches.** With more than one match running, choose
+  which one is on air. The loop plays one match at a time today; extra matches
+  would be separate unbroadcast runners.
+- **Remote relay.** If the home uplink limits Twitch output, move
+  `twitch-relay.sh` to an on-demand VPS that pulls the room stream over a
+  private link. The channel does not change.
+- **Bindery Core.** The channel changes no control-plane contract: observers,
+  the observer limit and capture objects already exist. Replays and decision
+  traces can be uploaded as capture objects (for example
+  `application/x-ndjson`) once a capture is opened for the match. The decision
+  record is in bindery-core
+  `docs/research/external-runtime-multiplayer/10-decisions-and-open-gates.md`
+  (ADR-011).
 
 ## Rollback
 

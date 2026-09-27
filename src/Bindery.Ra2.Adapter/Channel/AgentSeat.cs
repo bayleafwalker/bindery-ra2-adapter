@@ -166,6 +166,8 @@ public sealed class AgentSeat
         this.clock = clock ?? TimeProvider.System;
     }
 
+    public string House => filter.House;
+
     public async Task<AgentSeatSummary> RunAsync(IRa2TelemetrySource source, string traceDirectory, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(source);
