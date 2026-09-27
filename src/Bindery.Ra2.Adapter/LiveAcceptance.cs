@@ -20,7 +20,11 @@ public sealed record LiveClientLaunch(
     // is an immediate game over.
     bool IsSpectator = false,
     // Seat and colour default per client below; -1 means "not chosen".
-    string SpawnerLogName = "syringe.log");
+    string SpawnerLogName = "syringe.log",
+    // This client's own ra2yrcpp service (host:port). An agent seat's
+    // commands go here and nowhere else, so the endpoint belongs to the
+    // client, not to free-form seat settings.
+    string? CommandEndpoint = null);
 
 /// <summary>
 /// An optional third client that joins as a spectator and supplies the

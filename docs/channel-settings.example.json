@@ -27,7 +27,6 @@
   "agentSeat": {
     "house": "player-b",
     "clientInstanceId": "<stable-machine-b-instance>",
-    "commandEndpoint": "192.168.122.10:14521",
     "routine": "deploy_mcv",
     "controllerVersion": "0.1.0"
   },
@@ -83,7 +82,8 @@
         "-SPAWN",
         "-CD",
         "-LOG"
-      ]
+      ],
+      "commandEndpoint": "192.168.122.10:14521"
     },
     "evidenceDirectory": "C:/Temp/bindery-ra2-channel",
     "region": "eu-north",

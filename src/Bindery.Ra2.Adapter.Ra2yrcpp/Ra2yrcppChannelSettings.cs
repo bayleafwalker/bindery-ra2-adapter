@@ -46,9 +46,6 @@ public sealed class Ra2yrcppAgentSeatSettings
     /// <summary>The player client whose seat the agent takes.</summary>
     public string ClientInstanceId { get; init; } = string.Empty;
 
-    /// <summary><c>host:port</c> of that client's own ra2yrcpp service.</summary>
-    public string CommandEndpoint { get; init; } = string.Empty;
-
     public string Routine { get; init; } = IdleRoutine;
 
     public string ControllerVersion { get; init; } = "0.1.0";
@@ -57,7 +54,6 @@ public sealed class Ra2yrcppAgentSeatSettings
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(House);
         ArgumentException.ThrowIfNullOrWhiteSpace(ClientInstanceId);
-        Ra2YrcppEndpoint.Parse(CommandEndpoint);
         if (Routine is not (IdleRoutine or DeployMcvRoutine))
             throw new ArgumentException($"routine is {IdleRoutine} or {DeployMcvRoutine}, not {Routine}");
         ToAssignment().Validate();
@@ -69,11 +65,19 @@ public sealed class Ra2yrcppAgentSeatSettings
         return new(House, ClientInstanceId, ControllerDeclaration.Agent(controller.ControllerId, controller.ControllerVersion));
     }
 
-    /// <summary>A fresh seat for one match; the caller disposes the sink when the channel stops.</summary>
-    public (AgentSeat Seat, Ra2yrcppCommandSink Commands) CreateSeat()
+    /// <summary>A fresh seat for one match; the caller disposes the sink when the match ends.</summary>
+    public (AgentSeat Seat, Ra2yrcppCommandSink Commands) CreateSeat(AgentSeatLaunch launch)
     {
         Validate();
-        Ra2yrcppCommandSink sink = new(House, Ra2YrcppEndpoint.Parse(CommandEndpoint));
+        ArgumentNullException.ThrowIfNull(launch);
+        // Orders go only to the agent client's own service, named by its launch.
+        if (!string.Equals(launch.Assignment.ClientInstanceId, ClientInstanceId, StringComparison.Ordinal) || !string.Equals(launch.Assignment.House, House, StringComparison.Ordinal))
+            throw new InvalidOperationException("the match assigns a different agent seat than these settings");
+        if (!string.Equals(launch.Launch.PlayerName, House, StringComparison.Ordinal))
+            throw new InvalidOperationException($"client {ClientInstanceId} plays {launch.Launch.PlayerName}, not the seat's house {House}");
+        if (string.IsNullOrWhiteSpace(launch.Launch.CommandEndpoint))
+            throw new InvalidOperationException($"client {ClientInstanceId}'s launch has no commandEndpoint for its ra2yrcpp service");
+        Ra2yrcppCommandSink sink = new(House, Ra2YrcppEndpoint.Parse(launch.Launch.CommandEndpoint));
         return (new AgentSeat(Controller(), sink, new PlayerObservationFilter(House)), sink);
     }
 
@@ -82,4 +86,23 @@ public sealed class Ra2yrcppAgentSeatSettings
         new RulePlaybookPlanner(),
         Routine == DeployMcvRoutine ? new DeployMcvRoutineController() : new IdleRoutineController(),
         controllerVersion: ControllerVersion);
+}
+
+/// <summary>How the channel tool's telemetry and seat settings fit together.</summary>
+public static class Ra2yrcppChannelSettings
+{
+    /// <summary>
+    /// One telemetry source at most, and an agent seat only with live
+    /// telemetry: a recording is not the match the seat's commands act on.
+    /// </summary>
+    public static void Validate(Ra2yrcppLiveTelemetrySettings? liveTelemetry, string? telemetryRecording, Ra2yrcppAgentSeatSettings? agentSeat)
+    {
+        if (liveTelemetry is not null && !string.IsNullOrWhiteSpace(telemetryRecording))
+            throw new ArgumentException("set liveTelemetry or telemetryRecording, not both");
+        liveTelemetry?.Validate();
+        if (agentSeat is null) return;
+        agentSeat.Validate();
+        if (liveTelemetry is null)
+            throw new ArgumentException("an agent seat needs liveTelemetry: a recording is not the match its orders act on");
+    }
 }

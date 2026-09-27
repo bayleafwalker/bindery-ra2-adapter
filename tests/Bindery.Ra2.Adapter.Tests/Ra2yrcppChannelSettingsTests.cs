@@ -16,7 +16,7 @@ public sealed class Ra2yrcppChannelSettingsTests
     public void AnAgentSeatFromSettingsDeclaresThePlaybookControllerForItsHouseAndClient()
     {
         Ra2yrcppAgentSeatSettings settings = JsonSerializer.Deserialize<Ra2yrcppAgentSeatSettings>(
-            "{\"house\":\"player-b\",\"clientInstanceId\":\"machine-b\",\"commandEndpoint\":\"192.168.122.10:14521\",\"routine\":\"deploy_mcv\"}", web)!;
+            "{\"house\":\"player-b\",\"clientInstanceId\":\"machine-b\",\"routine\":\"deploy_mcv\"}", web)!;
         settings.Validate();
 
         AgentSeatAssignment assignment = settings.ToAssignment();
@@ -24,15 +24,48 @@ public sealed class Ra2yrcppChannelSettingsTests
         Assert.Equal("machine-b", assignment.ClientInstanceId);
         Assert.Equal(ControllerDeclaration.Agent("bindery.playbook/rules/v1", "0.1.0"), assignment.Controller);
         assignment.Validate();
-        (AgentSeat seat, Ra2yrcppCommandSink commands) = settings.CreateSeat();
+        (AgentSeat seat, Ra2yrcppCommandSink commands) = settings.CreateSeat(Launch(assignment, "player-b", "192.168.122.10:14521"));
         Assert.Equal("player-b", seat.House);
         Assert.Equal("player-b", commands.House);
+        Assert.Equal(new Uri("ws://192.168.122.10:14521/"), commands.Uri);
     }
 
+    [Fact]
+    public void ASeatOnlyCommandsItsOwnClientsServiceUnderThatClientsPlayerName()
+    {
+        Ra2yrcppAgentSeatSettings settings = new() { House = "player-b", ClientInstanceId = "machine-b" };
+        AgentSeatAssignment assignment = settings.ToAssignment();
+
+        // The client carries no service endpoint: there is nowhere safe to send orders.
+        Assert.Throws<InvalidOperationException>(() => settings.CreateSeat(Launch(assignment, "player-b", null)));
+        Assert.ThrowsAny<ArgumentException>(() => settings.CreateSeat(Launch(assignment, "player-b", "no-port")));
+        // The client plays someone else.
+        Assert.Throws<InvalidOperationException>(() => settings.CreateSeat(Launch(assignment, "player-a", "192.168.122.10:14521")));
+    }
+
+    [Fact]
+    public void AnAgentSeatNeedsLiveTelemetryNotARecording()
+    {
+        Ra2yrcppAgentSeatSettings seat = new() { House = "player-b", ClientInstanceId = "machine-b" };
+        Ra2yrcppLiveTelemetrySettings live = new() { Endpoint = "192.168.122.11:14521" };
+
+        Assert.Throws<ArgumentException>(() => Ra2yrcppChannelSettings.Validate(null, "C:/rec/{match}.ndjson", seat));
+        Assert.Throws<ArgumentException>(() => Ra2yrcppChannelSettings.Validate(null, null, seat));
+        Assert.Throws<ArgumentException>(() => Ra2yrcppChannelSettings.Validate(live, "C:/rec/{match}.ndjson", null));
+        Ra2yrcppChannelSettings.Validate(live, null, seat);
+        Ra2yrcppChannelSettings.Validate(null, "C:/rec/{match}.ndjson", null);
+        Ra2yrcppChannelSettings.Validate(null, null, null);
+    }
+
+    private static AgentSeatLaunch Launch(AgentSeatAssignment assignment, string playerName, string? endpoint) => new(
+        new ChannelMatchContext("channel-1", 1, "MAP01.MAP", new CaptureSource(assignment.ClientInstanceId, ClientClass.Player), assignment),
+        assignment,
+        new LiveClientLaunch("C:/b/gamemd.exe", "C:/b", "MAP01.MAP", playerName, CommandEndpoint: endpoint));
+
     [Theory]
-    [InlineData("{\"house\":\"\",\"clientInstanceId\":\"m\",\"commandEndpoint\":\"h:14521\"}")]
-    [InlineData("{\"house\":\"p\",\"clientInstanceId\":\"m\",\"commandEndpoint\":\"no-port\"}")]
-    [InlineData("{\"house\":\"p\",\"clientInstanceId\":\"m\",\"commandEndpoint\":\"h:14521\",\"routine\":\"rush\"}")]
+    [InlineData("{\"house\":\"\",\"clientInstanceId\":\"m\"}")]
+    [InlineData("{\"house\":\"p\",\"clientInstanceId\":\"\"}")]
+    [InlineData("{\"house\":\"p\",\"clientInstanceId\":\"m\",\"routine\":\"rush\"}")]
     public void AnIncompleteAgentSeatIsRejected(string json)
     {
         Ra2yrcppAgentSeatSettings settings = JsonSerializer.Deserialize<Ra2yrcppAgentSeatSettings>(json, web)!;
@@ -63,10 +96,9 @@ public sealed class Ra2yrcppChannelSettingsTests
         {
             House = "Americans",
             ClientInstanceId = "machine-a",
-            CommandEndpoint = $"{server.Uri.Host}:{server.Uri.Port}",
             Routine = Ra2yrcppAgentSeatSettings.DeployMcvRoutine,
         };
-        (AgentSeat seat, Ra2yrcppCommandSink commands) = settings.CreateSeat();
+        (AgentSeat seat, Ra2yrcppCommandSink commands) = settings.CreateSeat(Launch(settings.ToAssignment(), "Americans", $"{server.Uri.Host}:{server.Uri.Port}"));
         await using Ra2yrcppCommandSink _ = commands;
         string directory = Path.Combine(Path.GetTempPath(), "bindery-seat-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);

@@ -275,7 +275,15 @@ in-process fake of the service.
   seat with live commands into that player's client
   ([`docs/channel-settings.example.json`](../channel-settings.example.json)
   shows both). With neither key set, the tool runs today's two-client path
-  unchanged.
+  unchanged. An agent seat requires `liveTelemetry`, because a recording is
+  not the match its orders act on.
+- The seat is bound to its client. The launcher refuses an agent seat
+  unless `house` is that client's `playerName` (the game names a house after
+  its player) and every client in the match has a distinct player name, in
+  any letter case. Duplicate names would make the filter admit the enemy's
+  events as "own". The command endpoint is the client's own
+  `commandEndpoint` in its launch (`firstLaunch`/`secondLaunch`), not a seat
+  setting, so a seat cannot order the other player's client.
 
 ## Build order
 

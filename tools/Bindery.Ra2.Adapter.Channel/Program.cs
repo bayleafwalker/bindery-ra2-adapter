@@ -98,10 +98,10 @@ try
     },
     new LiveChannelMatchOptions(
         Telemetry: settings.TelemetryFor,
-        AgentSeat: settings.AgentSeat is null ? null : _ =>
+        AgentSeat: settings.AgentSeat is null ? null : launch =>
         {
-            // A fresh controller and connection per match; the sinks close with the channel.
-            (AgentSeat seat, Ra2yrcppCommandSink sink) = settings.AgentSeat.CreateSeat();
+            // A fresh controller and connection per match, into the agent client's own service; the sinks close with the channel.
+            (AgentSeat seat, Ra2yrcppCommandSink sink) = settings.AgentSeat.CreateSeat(launch);
             lock (seatSinks) seatSinks.Add(sink);
             return seat;
         },
@@ -111,7 +111,7 @@ try
     else if (string.IsNullOrWhiteSpace(settings.TelemetryRecording))
         Console.WriteLine("telemetry: none attached; match records will carry no winner");
     if (settings.AgentSeat is { } agent)
-        Console.WriteLine($"agent seat: house={agent.House} client={agent.ClientInstanceId} routine={agent.Routine} commands={agent.CommandEndpoint}");
+        Console.WriteLine($"agent seat: house={agent.House} client={agent.ClientInstanceId} routine={agent.Routine}");
 
     ChannelRequest request = settings.ToRequest(live);
     NdjsonChannelRecordSink records = new(channelDirectory);
@@ -201,13 +201,16 @@ internal sealed class ChannelToolSettings
 
     public void Validate()
     {
-        if (LiveTelemetry is not null && !string.IsNullOrWhiteSpace(TelemetryRecording))
-            throw new ArgumentException("set liveTelemetry or telemetryRecording, not both");
-        LiveTelemetry?.Validate();
+        Ra2yrcppChannelSettings.Validate(LiveTelemetry, TelemetryRecording, AgentSeat);
         if (AgentSeat is null) return;
-        AgentSeat.Validate();
-        if (LiveTelemetry is null && string.IsNullOrWhiteSpace(TelemetryRecording))
-            throw new ArgumentException("an agent seat needs telemetry: set liveTelemetry");
+        LiveClientLaunch? launch = string.Equals(AgentSeat.ClientInstanceId, Live.FirstClientInstanceId, StringComparison.Ordinal) ? Live.FirstLaunch
+            : string.Equals(AgentSeat.ClientInstanceId, Live.SecondClientInstanceId, StringComparison.Ordinal) ? Live.SecondLaunch
+            : null;
+        if (launch is null) throw new ArgumentException($"agentSeat.clientInstanceId {AgentSeat.ClientInstanceId} is not one of the two players");
+        if (!string.Equals(launch.PlayerName, AgentSeat.House, StringComparison.Ordinal))
+            throw new ArgumentException($"agentSeat.house must be that client's playerName, {launch.PlayerName}");
+        if (string.IsNullOrWhiteSpace(launch.CommandEndpoint))
+            throw new ArgumentException("the agent client's launch needs commandEndpoint, its own ra2yrcpp service");
     }
 
     public IRa2TelemetrySource? TelemetryFor(ChannelMatchContext context) =>

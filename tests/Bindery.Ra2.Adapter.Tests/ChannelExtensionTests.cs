@@ -104,6 +104,43 @@ public sealed class ChannelExtensionTests
     }
 
     [Fact]
+    public void AnAgentSeatMustPlayItsClientsHouseAndEveryPlayerNameMustBeDistinct()
+    {
+        ChannelMatchContext context = Context() with { AgentSeat = Agent() };
+        LiveAcceptanceMatchLauncher.Validate(context, Request());
+
+        // instance-a plays "Americans"; a seat for "Soviets" there would steer the other house's view.
+        ChannelMatchContext wrongHouse = Context() with { AgentSeat = Agent() with { House = "Soviets" } };
+        Assert.Throws<InvalidOperationException>(() => LiveAcceptanceMatchLauncher.Validate(wrongHouse, Request()));
+        // Two houses under one name would make the filter admit the enemy as "own".
+        Assert.Throws<InvalidOperationException>(() => LiveAcceptanceMatchLauncher.Validate(context, Request() with { SecondLaunch = Launch("americans") }));
+        Assert.Throws<InvalidOperationException>(() => LiveAcceptanceMatchLauncher.Validate(context, Request() with { Observer = Observer() with { Launch = Launch("Americans", spectator: true) } }));
+    }
+
+    [Fact]
+    public async Task TheSeatFactoryIsGivenTheAgentClientsOwnLaunch()
+    {
+        AgentSeatLaunch? given = null;
+        LiveAcceptanceMatchLauncher launcher = new(
+            (request, hooks, ct) => Task.FromResult(Evidence(complete: true)),
+            _ => Request() with { FirstLaunch = Launch("Americans") with { CommandEndpoint = "192.168.122.10:14521" }, SecondLaunch = Launch("Soviets") with { CommandEndpoint = "192.168.122.20:14521" } },
+            new LiveChannelMatchOptions(
+                Telemetry: _ => new FakeTelemetry([Observation(Ra2TelemetryEventTypes.MatchStarted, "{}"), Observation(Ra2TelemetryEventTypes.MatchEnded, "{}")]),
+                AgentSeat: launch =>
+                {
+                    given = launch;
+                    return new AgentSeat(new ScriptedController(), new MemoryCommands("Americans"), new PlayerObservationFilter("Americans"));
+                }));
+
+        await launcher.RunMatchAsync(Context() with { AgentSeat = Agent() }, _ => Task.CompletedTask, CancellationToken.None);
+
+        Assert.NotNull(given);
+        Assert.Equal("192.168.122.10:14521", given.Launch.CommandEndpoint);
+        Assert.Equal("Americans", given.Launch.PlayerName);
+        Assert.Equal(Agent(), given.Assignment);
+    }
+
+    [Fact]
     public async Task LauncherRecordsWinnerAndAgentTraceFromTelemetry()
     {
         string directory = Path.Combine(Path.GetTempPath(), "bindery-launcher-" + Guid.NewGuid().ToString("N"));
@@ -250,8 +287,8 @@ public sealed class ChannelExtensionTests
             new CapturePolicy(true, true, true)),
         Definition("account-a", "instance-a"),
         Definition("account-b", "instance-b"),
-        Launch("player-a"),
-        Launch("player-b"),
+        Launch("Americans"),
+        Launch("Soviets"),
         "session-key",
         "enroll-a",
         "enroll-b",

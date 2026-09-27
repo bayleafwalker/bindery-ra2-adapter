@@ -64,6 +64,9 @@ public sealed class Ra2yrcppCommandSink : IPlayerCommandSink, IAsyncDisposable
 
     public string House { get; }
 
+    /// <summary>The client's service this sink orders, and no other.</summary>
+    public Uri Uri => uri;
+
     /// <summary>Connects and checks the seat's house, without sending an order.</summary>
     public async Task OpenAsync(CancellationToken cancellationToken = default)
     {
