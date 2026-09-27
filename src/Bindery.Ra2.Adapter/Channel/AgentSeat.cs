@@ -70,6 +70,29 @@ public sealed class PlayerObservationFilter
 public sealed record PlayerCommand(string Kind, JsonElement Arguments);
 
 /// <summary>
+/// The command channel's vocabulary. Object orders name object addresses
+/// (<c>objects</c>), because stable entity IDs do not exist yet; the sink
+/// drops any the house does not own.
+/// </summary>
+public static class PlayerCommandKinds
+{
+    /// <summary><c>{objects}</c>: deploy, e.g. an MCV into a construction yard.</summary>
+    public const string Deploy = "deploy";
+    /// <summary><c>{objects}</c></summary>
+    public const string Stop = "stop";
+    /// <summary><c>{objects, x, y, z?}</c></summary>
+    public const string Move = "move";
+    /// <summary><c>{objects, x, y, z?}</c></summary>
+    public const string AttackMove = "attack_move";
+    /// <summary><c>{objects, target}</c></summary>
+    public const string Attack = "attack";
+    /// <summary><c>{type, action?: begin|hold|cancel}</c></summary>
+    public const string Produce = "produce";
+    /// <summary><c>{object, x, y, z?}</c>: a finished building from one of the house's factories.</summary>
+    public const string PlaceBuilding = "place_building";
+}
+
+/// <summary>
 /// A change of plan, made at a meaningful moment -- new threat, stalled
 /// economy, tech transition -- rather than every frame.
 /// </summary>

@@ -27,22 +27,18 @@ public sealed class Ra2yrcppSeatException(string message) : InvalidOperationExce
 /// The fork re-checks ownership on the game thread, and an ERROR result is
 /// thrown as <see cref="Ra2yrcppCommandException"/>.
 ///
-/// Vocabulary (<see cref="PlayerCommand.Kind"/>, then its arguments):
-/// <c>deploy</c>/<c>stop</c> <c>{objects}</c>; <c>move</c>/<c>attack_move</c>
-/// <c>{objects, x, y, z?}</c>; <c>attack</c> <c>{objects, target}</c>;
-/// <c>produce</c> <c>{type, action?: begin|hold|cancel}</c>;
-/// <c>place_building</c> <c>{object, x, y, z?}</c> for a finished building
-/// in one of the house's factories.
+/// The vocabulary is <see cref="PlayerCommandKinds"/>; an unknown kind is
+/// refused.
 /// </remarks>
 public sealed class Ra2yrcppCommandSink : IPlayerCommandSink, IAsyncDisposable
 {
-    public const string Deploy = "deploy";
-    public const string Move = "move";
-    public const string AttackMove = "attack_move";
-    public const string Attack = "attack";
-    public const string Stop = "stop";
-    public const string Produce = "produce";
-    public const string PlaceBuilding = "place_building";
+    public const string Deploy = PlayerCommandKinds.Deploy;
+    public const string Move = PlayerCommandKinds.Move;
+    public const string AttackMove = PlayerCommandKinds.AttackMove;
+    public const string Attack = PlayerCommandKinds.Attack;
+    public const string Stop = PlayerCommandKinds.Stop;
+    public const string Produce = PlayerCommandKinds.Produce;
+    public const string PlaceBuilding = PlayerCommandKinds.PlaceBuilding;
 
     private readonly Uri uri;
     private readonly Ra2yrcppClientOptions? options;

@@ -159,6 +159,43 @@ public sealed class PlaybookTests
         }
     }
 
+    [Fact]
+    public void TheMcvRoutineDeploysTheHousesOwnMcvOnceAtMatchStart()
+    {
+        DeployMcvRoutineController routine = new();
+        PlayerView view = new("Americans");
+        List<PlayerCommand> commands = [];
+        void Observe(RawObservation observation)
+        {
+            view.Apply(observation);
+            commands.AddRange(routine.Decide(Playbook.Empty, view, observation));
+        }
+
+        Observe(At(0, Ra2TelemetryEventTypes.MatchStarted, "{}"));
+        // Someone else's MCV and our own tank are not ours to deploy.
+        Observe(At(0, Ra2TelemetryEventTypes.UnitCreated, "{\"house\":\"Soviets\",\"type\":\"SMCV\",\"object\":177}"));
+        Observe(At(0, Ra2TelemetryEventTypes.UnitCreated, "{\"house\":\"Americans\",\"type\":\"MTNK\",\"object\":162}"));
+        Observe(At(0, Ra2TelemetryEventTypes.UnitCreated, "{\"house\":\"Americans\",\"type\":\"AMCV\",\"object\":161}"));
+        Observe(At(1, Ra2TelemetryEventTypes.CreditsSampled, "{\"house\":\"Americans\",\"credits\":10000}"));
+        // A second MCV later in the match (bought, not the opening one) is left alone.
+        Observe(At(300, Ra2TelemetryEventTypes.UnitCreated, "{\"house\":\"Americans\",\"type\":\"AMCV\",\"object\":170}"));
+
+        PlayerCommand deploy = Assert.Single(commands);
+        Assert.Equal(PlayerCommandKinds.Deploy, deploy.Kind);
+        Assert.Equal([161u], deploy.Arguments.GetProperty("objects").EnumerateArray().Select(static o => o.GetUInt32()));
+    }
+
+    [Fact]
+    public async Task APlaybookSeatWithTheMcvRoutineIssuesTheDeploy()
+    {
+        PlaybookController controller = new("Americans", new RulePlaybookPlanner(), new DeployMcvRoutineController());
+
+        await controller.ObserveAsync(At(0, Ra2TelemetryEventTypes.MatchStarted, "{}"), CancellationToken.None);
+        ControllerStep step = await controller.ObserveAsync(At(0, Ra2TelemetryEventTypes.UnitCreated, "{\"house\":\"Americans\",\"type\":\"AMCV\",\"object\":161}"), CancellationToken.None);
+
+        Assert.Equal(PlayerCommandKinds.Deploy, Assert.Single(step.Commands).Kind);
+    }
+
     private static RawObservation At(int seconds, string type, string payload)
     {
         using JsonDocument document = JsonDocument.Parse(payload);
