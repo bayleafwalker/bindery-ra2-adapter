@@ -101,7 +101,10 @@ dotnet run --project tools/Bindery.Ra2.Adapter.LiveAcceptance/Bindery.Ra2.Adapte
 The harness creates one session, enrolls both players, requires a
 coordinator-issued `cncnet-private` placement, writes per-client spawner
 configuration, starts both processes, reports ready/started/exited lifecycle
-events, reads final control-plane state, and writes
+events (heartbeating every enrollment's lease, at a third of the lease the
+control plane grants, from enrollment until its terminal report, so matches
+longer than one lease do not end `lost`/410; per-client `heartbeat_count` and
+`last_heartbeat_error` go in the evidence), reads final control-plane state, and writes
 `live-acceptance-evidence.json`. It never writes credentials to evidence and
 never changes global qualification.
 
