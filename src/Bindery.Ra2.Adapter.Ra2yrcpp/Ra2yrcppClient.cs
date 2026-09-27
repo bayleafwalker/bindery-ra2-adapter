@@ -132,12 +132,16 @@ public sealed class Ra2yrcppClient : IAsyncDisposable
                     return result.Result.Unpack<TResult>();
                 }
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            // A cancelled socket operation may surface as a WebSocketException
+            // rather than a cancellation; once the deadline or the caller has
+            // fired, it is reported as what it is.
+            catch (Exception exception) when (deadline.IsCancellationRequested && (exception is OperationCanceledException or WebSocketException or ObjectDisposedException))
             {
                 Abort();
-                throw new TimeoutException($"{name}: no result within {options.EffectiveCommandTimeout.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture)} s");
+                if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException($"{name} was cancelled", exception, cancellationToken);
+                throw new TimeoutException($"{name}: no result within {options.EffectiveCommandTimeout.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture)} s", exception);
             }
-            catch (Exception exception) when (exception is OperationCanceledException or WebSocketException or InvalidDataException or InvalidProtocolBufferException)
+            catch (Exception exception) when (exception is WebSocketException or InvalidDataException or InvalidProtocolBufferException)
             {
                 Abort();
                 throw;
