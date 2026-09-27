@@ -142,10 +142,25 @@ at `ra2.match.ended`. The trace path and revision count go into the channel
 record, so a dynamic playbook can be compared across matches with the same map
 and seed.
 
-Through the channel, set `ChannelRequest.AgentSeatHouse` and pass
-`LiveChannelMatchOptions.AgentSeat` and `Telemetry`. The launcher refuses a
-named house with no seat, or a seat bound to a different house. The trace is
-written into that match's evidence folder.
+Through the channel, set `ChannelRequest.AgentSeat` to an
+`AgentSeatAssignment` (house, player client instance, agent
+`ControllerDeclaration`) and pass `LiveChannelMatchOptions.AgentSeat` and
+`Telemetry`. The launcher refuses:
+
+- an assignment with no seat;
+- a seat bound to a different house;
+- an assignment on a client that is not a player of the match.
+
+It then:
+
+- declares the agent controller on that client's enrollment, so Bindery's
+  public enrollment record says the seat was agent-driven;
+- writes the trace into the match's evidence folder;
+- once the clients exit, uploads the trace into that client's capture as
+  `application/vnd.bindery.decision-trace.v1+ndjson`.
+
+The trace's content hash goes into the channel record. A failed upload is
+recorded on the match and leaves the trace on disk.
 
 **Not implemented:** the game-side command channel. `IPlayerCommandSink` is the
 boundary a per-player ra2yrcpp command path would implement. Nothing in this
@@ -158,7 +173,7 @@ repository can issue orders into the game yet.
 | 1. Prove the channel | `tools/Bindery.Ra2.Adapter.Channel` runs `ChannelRunner` → `LiveAcceptanceMatchLauncher` → `LiveAcceptanceRunner`, with OBS and MediaMTX ([`docs/channel-settings.example.json`](../channel-settings.example.json)) | Several consecutive lab matches on the room stream |
 | 2. Automate continuity | Cut on `started`, holding scene, drain, failure back-off, output release, OBS scene and audio preflight, per-match evidence folders | A lab check that each clone's resources are released; continuous audio-level monitoring |
 | 3. Add the observer | Optional third client end to end: enrollment, tunnel port, spectator INI, lifecycle, evidence | A lab run proving the observer joins reliably and gives the view you want |
-| 4. Add agent play | Seat, filter, trace, launcher wiring, winner from telemetry | A concrete `IRa2TelemetrySource`, bridge ownership and visibility fields, and a command sink (see below) |
+| 4. Add agent play | Seat, filter, trace, launcher wiring, winner from telemetry, controller declaration, trace upload, NDJSON telemetry recordings | The fork's live reader, bridge ownership and visibility fields, and the native command transport (see below) |
 | 5. Expand games | Loop, broadcast and record are game-neutral behind `IChannelMatchLauncher` | Per-game launcher, filter and command sink |
 
 ## Prospective work outside this repository
@@ -166,36 +181,43 @@ repository can issue orders into the game yet.
 These items are built against seams in this repository but need work
 elsewhere. None of them is implemented here.
 
-- **Telemetry source.** No concrete `IRa2TelemetrySource` exists: the
-  ra2yrcpp fork owns protobuf/TCP framing, so the channel tool runs without
-  telemetry until the fork's reader is wired in. Until then, records carry no
-  winner and no agent can play.
+- **Live telemetry reader.** The ra2yrcpp fork owns protobuf/TCP framing.
+  This repository reads **recordings**: `NdjsonTelemetrySource` follows a
+  file of raw observations, one per line, as they are written
+  (`NdjsonTelemetryFormat` defines the line). The channel tool's
+  `telemetryRecording` setting points it at one file per match. Anything
+  that decodes the live stream can write that file. A direct TCP reader
+  belongs with the fork's decoder.
 - **Ownership and visibility.** The filter and tracker read `house`,
   `visible_to` and `winner` from payloads. The bridge must emit these (or the
   field names must be configured to match what it emits). Per-house
   visibility needs the engine's own shroud and fog state; the full spectator
   view must never be relabelled as a player's view.
-- **Command sink.** A per-player command path in the fork, bound to one house
-  and refusing orders for any other, implementing `IPlayerCommandSink`. The
-  observer gets none.
+- **Command sink.** A per-player command path in
+  [bayleafwalker/ra2yrcpp](https://github.com/bayleafwalker/ra2yrcpp),
+  bound to one house and refusing orders for any other. The adapter side
+  implements `IPlayerCommandSink`, and the observer gets none. The fork's
+  `feat/bindery-player-command-boundary` branch rejects unit orders whose
+  sources belong to another player. The native command transport and stable
+  entity-ID mapping are still to come.
 - **Camera for several matches.** With more than one match running, choose
   which one is on air. The loop plays one match at a time today; extra matches
   would be separate unbroadcast runners.
 - **Remote relay.** If the home uplink limits Twitch output, move
   `twitch-relay.sh` to an on-demand VPS that pulls the room stream over a
   private link. The channel does not change.
-- **Bindery Core.** The channel changes no control-plane contract: observers,
-  the observer limit and capture objects already exist. Replays and decision
-  traces can be uploaded as capture objects (for example
-  `application/x-ndjson`) once a capture is opened for the match. The decision
-  record is in bindery-core
-  `docs/research/external-runtime-multiplayer/10-decisions-and-open-gates.md`
-  (ADR-011).
+- **Bindery Core.** Observers, the observer limit and capture objects already
+  existed. The channel's enablers are in bayleafwalker/bindery-core#9:
+  - an optional `controller` on player enrollment;
+  - `GET /v1/objects/{content_hash}`;
+  - the decision-trace media type.
+
+  The decision note is `docs/decisions/ra2-channel.md` there.
 
 ## Rollback
 
 Remove the public flag file to stop publishing. Use `NoBroadcastProduction` to
-stop capture. Leave `AgentSeatHouse` unset and run no `AgentSeat` to disable the
+stop capture. Leave `AgentSeat` unset and pass no seat factory to disable the
 agent. The private RA2 match path (`LiveAcceptanceRunner`, the
 `cncnet-private` tunnel and the golden clones) is unchanged by all of this. The
 only change to it is the optional seed pin and the seed and map recorded in its

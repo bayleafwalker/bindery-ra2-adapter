@@ -18,6 +18,7 @@
   "twitchUri": "rtmp://live.twitch.tv/app",
   "twitchStreamKeyEnvironmentVariable": "TWITCH_STREAM_KEY",
   "publishPublicly": false,
+  "telemetryRecording": "C:/Temp/bindery-ra2-channel/{channel}/telemetry/match-{match}.ndjson",
   "live": {
     "serviceUri": "https://control-plane.example.invalid",
     "firstIdentity": {

@@ -68,8 +68,9 @@ public sealed class ChannelExtensionTests
     {
         List<string> order = [];
         LiveAcceptanceMatchLauncher launcher = new(
-            async (request, onLifecycle, ct) =>
+            async (request, hooks, ct) =>
             {
+                Func<LiveLifecycleNotice, CancellationToken, Task> onLifecycle = hooks.OnLifecycle!;
                 await onLifecycle(new LiveLifecycleNotice("instance-a", ClientClass.Player, LifecycleKind.Ready), ct);
                 order.Add("a-ready");
                 await onLifecycle(new LiveLifecycleNotice("instance-b", ClientClass.Player, LifecycleKind.Started), ct);
@@ -118,13 +119,13 @@ public sealed class ChannelExtensionTests
                 Observation(Ra2TelemetryEventTypes.MatchEnded, "{}"),
             ]);
             LiveAcceptanceMatchLauncher launcher = new(
-                (request, onLifecycle, ct) => Task.FromResult(Evidence(complete: true)),
+                (request, hooks, ct) => Task.FromResult(Evidence(complete: true)),
                 _ => Request() with { EvidenceDirectory = directory },
                 new LiveChannelMatchOptions(
                     Telemetry: _ => telemetry,
                     AgentSeat: _ => new AgentSeat(new ScriptedController(), new MemoryCommands("Americans"), new PlayerObservationFilter("Americans"))));
 
-            ChannelMatchResult result = await launcher.RunMatchAsync(Context() with { AgentSeatHouse = "Americans" }, _ => Task.CompletedTask, CancellationToken.None);
+            ChannelMatchResult result = await launcher.RunMatchAsync(Context() with { AgentSeat = Agent() }, _ => Task.CompletedTask, CancellationToken.None);
 
             Assert.Equal("Americans", result.Winner);
             Assert.True(result.TelemetryEnded);
@@ -144,7 +145,7 @@ public sealed class ChannelExtensionTests
     {
         LiveAcceptanceMatchLauncher launcher = new((_, _, _) => Task.FromResult(Evidence(complete: true)), _ => Request());
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            launcher.RunMatchAsync(Context() with { AgentSeatHouse = "Americans" }, _ => Task.CompletedTask, CancellationToken.None));
+            launcher.RunMatchAsync(Context() with { AgentSeat = Agent() }, _ => Task.CompletedTask, CancellationToken.None));
     }
 
     [Fact]
@@ -217,6 +218,8 @@ public sealed class ChannelExtensionTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => driver.EnrollObserverAsync(native, Observer().Definition, "enroll-observer-2"));
         await Assert.ThrowsAsync<NotSupportedException>(() => new TwoClientMatchDriver(new BinderyAdapterClient(http), http.BaseAddress!).EnrollObserverAsync(session, Observer().Definition, "k"));
     }
+
+    private static AgentSeatAssignment Agent() => new("Americans", "instance-a", ControllerDeclaration.Agent("scripted", "0.0.1"));
 
     private static ChannelMatchContext Context() => new("channel-1", 1, "MAP01.MAP", playerView, null);
 

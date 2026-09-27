@@ -45,6 +45,23 @@ public sealed record CaptureSource(string ClientInstanceId, ClientClass ClientCl
 }
 
 /// <summary>
+/// An agent in a player seat: the house it plays, the player client whose
+/// seat it takes, and the controller it declares at enrollment.
+/// </summary>
+public sealed record AgentSeatAssignment(string House, string ClientInstanceId, ControllerDeclaration Controller)
+{
+    public void Validate()
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(House);
+        ArgumentException.ThrowIfNullOrWhiteSpace(ClientInstanceId);
+        ArgumentNullException.ThrowIfNull(Controller);
+        Controller.Validate();
+        if (Controller.Kind != ControllerDeclaration.AgentKind)
+            throw new ArgumentException("an agent seat declares an agent controller");
+    }
+}
+
+/// <summary>
 /// "Start the RA2 channel": what to play, where to show it, and whether a
 /// seat is driven by an agent controller.
 /// </summary>
@@ -54,7 +71,7 @@ public sealed record ChannelRequest(
     CaptureSource Capture,
     BroadcastPlan Broadcast,
     int MaximumMatches = 1,
-    string? AgentSeatHouse = null,
+    AgentSeatAssignment? AgentSeat = null,
     TimeSpan? HoldingDuration = null)
 {
     /// <summary>Consecutive failed matches after which the channel drains rather than retry.</summary>
@@ -72,7 +89,7 @@ public sealed record ChannelRequest(
         Broadcast.Validate();
         if (MaximumMatches < 1) throw new ArgumentOutOfRangeException(nameof(MaximumMatches), "a channel runs at least one match");
         if (HoldingDuration is { } holding && holding < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(HoldingDuration));
-        if (AgentSeatHouse is not null) ArgumentException.ThrowIfNullOrWhiteSpace(AgentSeatHouse);
+        AgentSeat?.Validate();
     }
 }
 
@@ -122,7 +139,10 @@ public sealed record ChannelMatchRecord(
     bool? TelemetrySawMatchEnd = null,
     string? TelemetryIssue = null,
     // Set when a spectator client failed; the players' match stands.
-    string? ObserverIssue = null);
+    string? ObserverIssue = null,
+    // The trace's content hash in Bindery, once uploaded into the agent's capture.
+    string? DecisionTraceContentHash = null,
+    ControllerDeclaration? AgentController = null);
 
 /// <summary>What one channel session did, in order.</summary>
 public sealed record ChannelSessionSummary(

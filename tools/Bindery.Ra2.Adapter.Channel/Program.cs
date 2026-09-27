@@ -68,7 +68,10 @@ try
         string directory = Path.Combine(channelDirectory, "match-" + context.MatchIndex.ToString("D3", CultureInfo.InvariantCulture));
         Console.WriteLine($"match {context.MatchIndex}: session_idempotency_key={match.SessionIdempotencyKey} evidence={directory}");
         return match.ToRequest(directory, settings.Seed);
-    });
+    },
+    new LiveChannelMatchOptions(Telemetry: settings.TelemetryFor));
+    if (string.IsNullOrWhiteSpace(settings.TelemetryRecording))
+        Console.WriteLine("telemetry: none attached; match records will carry no winner");
 
     await using ObsWebSocketProduction? obs = settings.Obs is null ? null : await settings.Obs.CreateAsync();
     IBroadcastProduction production = (IBroadcastProduction?)obs ?? new NoBroadcastProduction();
@@ -124,6 +127,22 @@ internal sealed class ChannelToolSettings
     /// the MediaMTX flag file; keep the two in agreement.
     /// </summary>
     public bool PublishPublicly { get; init; }
+
+    /// <summary>
+    /// A telemetry recording to follow for each match, as NDJSON raw
+    /// observations. <c>{channel}</c> and <c>{match}</c> (three digits) are
+    /// replaced per match. Omit to run without telemetry.
+    /// </summary>
+    public string TelemetryRecording { get; init; } = string.Empty;
+
+    public IRa2TelemetrySource? TelemetryFor(ChannelMatchContext context) =>
+        string.IsNullOrWhiteSpace(TelemetryRecording)
+            ? null
+            : new NdjsonTelemetrySource(
+                TelemetryRecording
+                    .Replace("{channel}", context.ChannelId, StringComparison.Ordinal)
+                    .Replace("{match}", context.MatchIndex.ToString("D3", CultureInfo.InvariantCulture), StringComparison.Ordinal),
+                follow: true);
 
     public string MatchScene { get; init; } = "ra2-match";
     public string HoldingScene { get; init; } = "ra2-holding";

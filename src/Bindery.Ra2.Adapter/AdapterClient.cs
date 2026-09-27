@@ -132,7 +132,8 @@ public sealed class BinderyAdapterClient(HttpClient httpClient)
             ClientClassName(enrollmentRequest.ClientClass),
             new AdapterRequestDto(enrollmentRequest.Adapter.Id, enrollmentRequest.Adapter.Version),
             new ClientHashesRequestDto(enrollmentRequest.Compatibility.GameHash, enrollmentRequest.Compatibility.ModHash, enrollmentRequest.Compatibility.MapHash),
-            enrollmentRequest.RegionProbes);
+            enrollmentRequest.RegionProbes,
+            enrollmentRequest.Controller is null ? null : ToControllerDto(enrollmentRequest.Controller, enrollmentRequest.ClientClass));
         using HttpRequestMessage request = new(HttpMethod.Post, $"/v1/sessions/{enrollmentRequest.SessionId}/enrollments")
         {
             Content = JsonContent.Create(requestBody, options: json),
@@ -143,7 +144,52 @@ public sealed class BinderyAdapterClient(HttpClient httpClient)
         using HttpResponseMessage response = await httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
         EnrollmentCreateDto dto = await response.Content.ReadFromJsonAsync<EnrollmentCreateDto>(json, cancellationToken).ConfigureAwait(false) ?? throw new InvalidOperationException("enrollment response was empty");
-        return new EnrollmentCredentials(dto.PublicEnrollment.ClientId, dto.ClientLeaseToken, dto.TransportCredential);
+        return new EnrollmentCredentials(
+            dto.PublicEnrollment.ClientId,
+            dto.ClientLeaseToken,
+            dto.TransportCredential,
+            dto.CaptureStreamOffers?.Select(static offer => new CaptureStreamOffer(offer.CaptureId, ParseClientClass(offer.ProducerClass), offer.CaptureMethod, offer.MaxObjectBytes)).ToArray() ?? []);
+    }
+
+    /// <summary>
+    /// Uploads one heavy artifact -- a decision trace, a replay -- into a
+    /// capture this client was offered at enrollment. The bytes are content
+    /// addressed, so a retry of the same upload is harmless.
+    /// </summary>
+    public async Task<CaptureObjectManifest> StoreCaptureObjectAsync(
+        string clientLeaseToken,
+        CaptureStreamOffer capture,
+        string mediaType,
+        ReadOnlyMemory<byte> content,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(clientLeaseToken);
+        ArgumentNullException.ThrowIfNull(capture);
+        RequireUuid(capture.CaptureId, "capture id");
+        ArgumentException.ThrowIfNullOrWhiteSpace(mediaType);
+        if (content.IsEmpty) throw new ArgumentException("a capture object cannot be empty", nameof(content));
+        if (capture.MaxObjectBytes > 0 && content.Length > capture.MaxObjectBytes)
+            throw new ArgumentException($"the object is {content.Length} bytes; the capture accepts at most {capture.MaxObjectBytes}", nameof(content));
+        using HttpRequestMessage request = new(HttpMethod.Post, $"/v1/captures/{capture.CaptureId}/objects")
+        {
+            Content = new ReadOnlyMemoryContent(content),
+        };
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue(mediaType);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", clientLeaseToken);
+        using HttpResponseMessage response = await httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+        CaptureObjectManifestDto dto = await response.Content.ReadFromJsonAsync<CaptureObjectManifestDto>(json, cancellationToken).ConfigureAwait(false) ?? throw new InvalidOperationException("object manifest was empty");
+        EnsureIdentifier(capture.CaptureId, dto.CaptureId, "capture");
+        return new CaptureObjectManifest(dto.ContentHash, dto.MediaType, dto.Bytes, dto.CaptureId, dto.ProducerClientId);
+    }
+
+    private static ControllerDto ToControllerDto(ControllerDeclaration controller, ClientClass clientClass)
+    {
+        // The control plane refuses this too; failing here names the cause
+        // before a session is half-built.
+        if (clientClass == ClientClass.Observer) throw new InvalidOperationException("an observer has no seat and cannot declare a controller");
+        controller.Validate();
+        return new ControllerDto(controller.Kind, controller.ControllerId, controller.ControllerVersion);
     }
 
     public async Task<DateTimeOffset> HeartbeatAsync(AdapterConfiguration configuration, CancellationToken cancellationToken = default)
@@ -244,7 +290,66 @@ public sealed class BinderyAdapterClient(HttpClient httpClient)
 internal sealed record PublicIdentityDto([property: JsonPropertyName("account_id")] string AccountId);
 public sealed record IdentityCredentials(string AccountId, string AccountToken);
 public sealed record SessionCredentials(string SessionId, string SessionJoinCredential, RelayPlacement? Placement = null);
-public sealed record EnrollmentCredentials(string ClientId, string ClientLeaseToken, string TransportCredential);
+public sealed record EnrollmentCredentials(
+    string ClientId,
+    string ClientLeaseToken,
+    string TransportCredential,
+    IReadOnlyList<CaptureStreamOffer>? CaptureOffers = null);
+
+/// <summary>A capture stream the control plane minted for this client at enrollment.</summary>
+public sealed record CaptureStreamOffer(string CaptureId, ClientClass ProducerClass, string CaptureMethod, long MaxObjectBytes);
+
+/// <summary>What the control plane recorded for one uploaded object.</summary>
+public sealed record CaptureObjectManifest(string ContentHash, string MediaType, long Bytes, string CaptureId, string ProducerClientId);
+
+/// <summary>Media types for capture objects this adapter uploads.</summary>
+public static class CaptureMediaTypes
+{
+    /// <summary>
+    /// An agent seat's NDJSON decision trace. Bindery Core's convention; the
+    /// control plane stores it without reading it.
+    /// </summary>
+    public const string DecisionTrace = "application/vnd.bindery.decision-trace.v1+ndjson";
+}
+
+/// <summary>
+/// Who drives a player seat, declared at enrollment so public records say
+/// which seats were agent-driven. Absent means undeclared, not human.
+/// </summary>
+public sealed record ControllerDeclaration(string Kind, string? ControllerId = null, string? ControllerVersion = null)
+{
+    public const string HumanKind = "human";
+    public const string BuiltinAiKind = "builtin_ai";
+    public const string AgentKind = "agent";
+
+    public static ControllerDeclaration Human { get; } = new(HumanKind);
+
+    public static ControllerDeclaration BuiltinAi { get; } = new(BuiltinAiKind);
+
+    public static ControllerDeclaration Agent(string controllerId, string controllerVersion) => new(AgentKind, controllerId, controllerVersion);
+
+    public void Validate()
+    {
+        switch (Kind)
+        {
+            case AgentKind:
+                ArgumentException.ThrowIfNullOrWhiteSpace(ControllerId);
+                ArgumentException.ThrowIfNullOrWhiteSpace(ControllerVersion);
+                if (!IsIdentifier(ControllerId) || !IsIdentifier(ControllerVersion))
+                    throw new ArgumentException("controller id and version are 1-128 characters of [A-Za-z0-9._:@/+-]");
+                break;
+            case HumanKind or BuiltinAiKind:
+                if (ControllerId is not null || ControllerVersion is not null)
+                    throw new ArgumentException($"a {Kind} controller carries no id or version");
+                break;
+            default:
+                throw new ArgumentException($"unknown controller kind '{Kind}'");
+        }
+    }
+
+    private static bool IsIdentifier(string value) =>
+        value.Length is >= 1 and <= 128 && value.All(static c => char.IsAsciiLetterOrDigit(c) || "._:@/+-".Contains(c));
+}
 
 internal sealed record IdentityCreateDto([property: JsonPropertyName("public_identity")] PublicIdentityDto PublicIdentity, [property: JsonPropertyName("account_token")] string AccountToken);
 internal sealed record SessionCreateDto([property: JsonPropertyName("public_session")] SessionPublicDto PublicSession, [property: JsonPropertyName("session_join_credential")] string SessionJoinCredential);
@@ -256,7 +361,28 @@ internal sealed record PublicPlacementDto(
     [property: JsonPropertyName("relay_endpoint")] string RelayEndpoint,
     [property: JsonPropertyName("policy_version")] string PolicyVersion,
     [property: JsonPropertyName("decision_summary")] string? DecisionSummary);
-internal sealed record EnrollmentCreateDto([property: JsonPropertyName("public_enrollment")] EnrollmentPublicDto PublicEnrollment, [property: JsonPropertyName("client_lease_token")] string ClientLeaseToken, [property: JsonPropertyName("transport_credential")] string TransportCredential);
+internal sealed record EnrollmentCreateDto(
+    [property: JsonPropertyName("public_enrollment")] EnrollmentPublicDto PublicEnrollment,
+    [property: JsonPropertyName("client_lease_token")] string ClientLeaseToken,
+    [property: JsonPropertyName("transport_credential")] string TransportCredential,
+    [property: JsonPropertyName("capture_stream_offers")] IReadOnlyList<CaptureStreamOfferDto>? CaptureStreamOffers = null);
+internal sealed record CaptureStreamOfferDto(
+    [property: JsonPropertyName("capture_id")] string CaptureId,
+    [property: JsonPropertyName("producer_class")] string ProducerClass,
+    [property: JsonPropertyName("capture_method")] string CaptureMethod,
+    [property: JsonPropertyName("max_object_bytes")] long MaxObjectBytes);
+internal sealed record CaptureObjectManifestDto(
+    [property: JsonPropertyName("content_hash")] string ContentHash,
+    [property: JsonPropertyName("media_type")] string MediaType,
+    [property: JsonPropertyName("bytes")] long Bytes,
+    [property: JsonPropertyName("capture_id")] string CaptureId,
+    [property: JsonPropertyName("producer_client_id")] string ProducerClientId);
+internal sealed record ControllerDto(
+    [property: JsonPropertyName("kind")] string Kind,
+    [property: JsonPropertyName("controller_id")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ControllerId,
+    [property: JsonPropertyName("controller_version")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ControllerVersion);
 internal sealed record EnrollmentPublicDto([property: JsonPropertyName("client_id")] string ClientId);
 internal sealed record EnrollmentRequestDto(
     [property: JsonPropertyName("client_instance_id")] string ClientInstanceId,
@@ -264,7 +390,9 @@ internal sealed record EnrollmentRequestDto(
     [property: JsonPropertyName("adapter")] AdapterRequestDto Adapter,
     [property: JsonPropertyName("compatibility")] ClientHashesRequestDto Compatibility,
     [property: JsonPropertyName("region_probes")]
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<RegionProbe>? RegionProbes);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<RegionProbe>? RegionProbes,
+    [property: JsonPropertyName("controller")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ControllerDto? Controller = null);
 
 internal sealed record AdapterRequestDto(
     [property: JsonPropertyName("id")] string Id,

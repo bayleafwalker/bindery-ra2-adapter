@@ -9,7 +9,7 @@ public sealed record ChannelMatchContext(
     int MatchIndex,
     string MapId,
     CaptureSource Capture,
-    string? AgentSeatHouse);
+    AgentSeatAssignment? AgentSeat);
 
 /// <summary>
 /// What the launcher brings back. <paramref name="Evidence"/> is the live
@@ -25,7 +25,8 @@ public sealed record ChannelMatchResult(
     string? Winner = null,
     long? TelemetryObserved = null,
     bool? TelemetryEnded = null,
-    string? TelemetryIssue = null);
+    string? TelemetryIssue = null,
+    string? DecisionTraceContentHash = null);
 
 /// <summary>
 /// Plays one match. The existing private RA2 path sits behind this: session,
@@ -129,7 +130,7 @@ public sealed class ChannelRunner
                 }
 
                 Enter(ChannelPhase.Starting);
-                ChannelMatchContext context = new(request.ChannelId, index, request.MapId, request.Capture, request.AgentSeatHouse);
+                ChannelMatchContext context = new(request.ChannelId, index, request.MapId, request.Capture, request.AgentSeat);
                 DateTimeOffset startedAt = DateTimeOffset.UtcNow;
                 ChannelMatchRecord record;
                 try
@@ -242,7 +243,9 @@ public sealed class ChannelRunner
             result.TelemetryObserved,
             result.TelemetryEnded,
             result.TelemetryIssue,
-            observerIssue);
+            observerIssue,
+            result.DecisionTraceContentHash,
+            context.AgentSeat?.Controller);
     }
 
     private static ChannelMatchRecord Failed(ChannelRequest request, ChannelMatchContext context, DateTimeOffset startedAt, Exception exception) => new(

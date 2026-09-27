@@ -7,7 +7,9 @@ public sealed record MatchClientDefinition(
     ClientClass ClientClass,
     AdapterIdentity Adapter,
     CompatibilityHashes Compatibility,
-    IReadOnlyList<RegionProbe>? RegionProbes = null);
+    IReadOnlyList<RegionProbe>? RegionProbes = null,
+    // Who drives this seat; declared at enrollment. Players only.
+    ControllerDeclaration? Controller = null);
 
 public sealed record PreparedMatchClient(
     MatchClientDefinition Definition,
@@ -235,7 +237,8 @@ public sealed class TwoClientMatchDriver : ILiveMatchDriver
         definition.ClientClass,
         definition.Adapter,
         definition.Compatibility,
-        definition.RegionProbes);
+        definition.RegionProbes,
+        definition.Controller);
 
     private AdapterConfiguration ToConfiguration(MatchClientDefinition definition, SessionCredentials session, EnrollmentCredentials enrollment, RelayProvider provider)
     {

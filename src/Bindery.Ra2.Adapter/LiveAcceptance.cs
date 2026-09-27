@@ -35,6 +35,29 @@ public sealed record LiveObserverClient(
 /// <summary>One lifecycle report as it happened, for callers that react to a running match.</summary>
 public sealed record LiveLifecycleNotice(string ClientInstanceId, ClientClass ClientClass, LifecycleKind Kind);
 
+/// <summary>A file to upload into one client's capture after the match, such as a decision trace.</summary>
+public sealed record LiveArtifact(string ClientInstanceId, string MediaType, string Path);
+
+/// <summary>What happened to one artifact: its manifest, or why it was not stored.</summary>
+public sealed record LiveArtifactEvidence(
+    string ClientInstanceId,
+    string MediaType,
+    string Path,
+    string? ContentHash,
+    long? Bytes,
+    string? CaptureId,
+    string? Failure);
+
+/// <summary>Callers' hooks into a running match. Both are bystanders: their failures never fail the run.</summary>
+/// <param name="OnLifecycle">Told about each lifecycle report as it is sent.</param>
+/// <param name="CollectArtifacts">
+/// Called once every client has exited, before the evidence is written. The
+/// files it returns are uploaded into their clients' captures.
+/// </param>
+public sealed record LiveRunHooks(
+    Func<LiveLifecycleNotice, CancellationToken, Task>? OnLifecycle = null,
+    Func<CancellationToken, Task<IReadOnlyList<LiveArtifact>>>? CollectArtifacts = null);
+
 public sealed record LiveAcceptanceRequest(
     SessionCreationRequest Session,
     MatchClientDefinition First,
@@ -109,7 +132,8 @@ public sealed record LiveAcceptanceEvidence(
     int? Seed = null,
     // Null when no observer ran. True when it failed or did not depart cleanly;
     // a degraded observer is a worse witness, not a failed match.
-    bool? ObserverDegraded = null);
+    bool? ObserverDegraded = null,
+    IReadOnlyList<LiveArtifactEvidence>? Artifacts = null);
 
 /// <summary>
 /// Runs the real Windows process boundary after a two-client control-plane
@@ -156,19 +180,26 @@ public sealed class LiveAcceptanceRunner
     }
 
     public Task<LiveAcceptanceEvidence> RunAsync(LiveAcceptanceRequest request, CancellationToken cancellationToken = default) =>
-        RunAsync(request, null, cancellationToken);
+        RunAsync(request, (LiveRunHooks?)null, cancellationToken);
 
     /// <param name="onLifecycle">
     /// Told about each lifecycle report as it is sent -- for example to cut a
     /// broadcast to the match when a client reports <c>started</c>. It is a
     /// bystander: an exception from it is swallowed and never affects the run.
     /// </param>
-    public async Task<LiveAcceptanceEvidence> RunAsync(
+    public Task<LiveAcceptanceEvidence> RunAsync(
         LiveAcceptanceRequest request,
         Func<LiveLifecycleNotice, CancellationToken, Task>? onLifecycle,
+        CancellationToken cancellationToken = default) =>
+        RunAsync(request, new LiveRunHooks(onLifecycle), cancellationToken);
+
+    public async Task<LiveAcceptanceEvidence> RunAsync(
+        LiveAcceptanceRequest request,
+        LiveRunHooks? hooks,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        Func<LiveLifecycleNotice, CancellationToken, Task>? onLifecycle = hooks?.OnLifecycle;
         LiveObserverClient? observerRequest = request.Observer;
         if (observerRequest is not null && observerHost is null)
             throw new ArgumentException("an observer client needs an observer host");
@@ -285,6 +316,10 @@ public sealed class LiveAcceptanceRunner
             clientRuns.Add(RunClientAsync(observerHost!, observer, observerRequest!.Launch, observerIni, request.GoldenApplianceId, onLifecycle, cancellationToken));
         }
         LiveClientRun[] runs = await Task.WhenAll(clientRuns).ConfigureAwait(false);
+        PreparedLiveClient[] prepared = observer is null ? [match.First, match.Second] : [match.First, match.Second, observer];
+        IReadOnlyList<LiveArtifactEvidence>? artifacts = hooks?.CollectArtifacts is null
+            ? null
+            : await UploadArtifactsAsync(hooks.CollectArtifacts, prepared, cancellationToken).ConfigureAwait(false);
 
         SessionStatus finalSession = await controlPlane.GetSessionAsync(match.Session.SessionId, cancellationToken).ConfigureAwait(false);
         EnrollmentStatus finalFirst = await controlPlane.GetEnrollmentAsync(match.First.Enrollment.ClientId, cancellationToken).ConfigureAwait(false);
@@ -336,7 +371,8 @@ public sealed class LiveAcceptanceRunner
             limitations,
             request.FirstLaunch.MapId,
             seed,
-            observerDegraded);
+            observerDegraded,
+            artifacts);
         await LiveAcceptanceEvidenceWriter.WriteAsync(request.EvidenceDirectory, evidence, cancellationToken).ConfigureAwait(false);
         return evidence;
     }
@@ -504,6 +540,49 @@ public sealed class LiveAcceptanceRunner
         if (string.IsNullOrWhiteSpace(relay.RelayHost) || relay.RelayPort is null)
             throw new InvalidOperationException("the placement did not carry a relay endpoint");
         return new Uri($"http://{relay.RelayHost}:{relay.RelayPort.Value}");
+    }
+
+    internal async Task<IReadOnlyList<LiveArtifactEvidence>> UploadArtifactsAsync(
+        Func<CancellationToken, Task<IReadOnlyList<LiveArtifact>>> collect,
+        IReadOnlyList<PreparedLiveClient> clients,
+        CancellationToken cancellationToken)
+    {
+        IReadOnlyList<LiveArtifact> artifacts;
+        try
+        {
+            artifacts = await collect(cancellationToken).ConfigureAwait(false) ?? [];
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            return [new LiveArtifactEvidence("-", "-", "-", null, null, null, $"collecting artifacts failed: {exception.GetType().Name}: {exception.Message}")];
+        }
+        List<LiveArtifactEvidence> results = [];
+        foreach (LiveArtifact artifact in artifacts)
+        {
+            PreparedLiveClient? client = clients.FirstOrDefault(c => string.Equals(c.Definition.ClientInstanceId, artifact.ClientInstanceId, StringComparison.Ordinal));
+            CaptureStreamOffer? capture = client?.Enrollment.CaptureOffers?.FirstOrDefault();
+            string? failure = client is null
+                ? "no client of this match has that instance id"
+                : capture is null ? "the control plane offered this client no capture" : null;
+            if (failure is not null)
+            {
+                results.Add(new LiveArtifactEvidence(artifact.ClientInstanceId, artifact.MediaType, artifact.Path, null, null, capture?.CaptureId, failure));
+                continue;
+            }
+            try
+            {
+                byte[] content = await File.ReadAllBytesAsync(artifact.Path, cancellationToken).ConfigureAwait(false);
+                CaptureObjectManifest manifest = await controlPlane.StoreCaptureObjectAsync(client!.Enrollment.ClientLeaseToken, capture!, artifact.MediaType, content, cancellationToken).ConfigureAwait(false);
+                results.Add(new LiveArtifactEvidence(artifact.ClientInstanceId, manifest.MediaType, artifact.Path, manifest.ContentHash, manifest.Bytes, manifest.CaptureId, null));
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or HttpRequestException or ArgumentException or InvalidOperationException)
+            {
+                // The artifact is still on disk; losing its upload must not
+                // cost the match its evidence.
+                results.Add(new LiveArtifactEvidence(artifact.ClientInstanceId, artifact.MediaType, artifact.Path, null, null, capture!.CaptureId, $"{exception.GetType().Name}: {exception.Message}"));
+            }
+        }
+        return results;
     }
 
     private static bool CleanRun(LiveClientRun run) => run.ProcessExitCode == 0

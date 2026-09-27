@@ -56,4 +56,5 @@ public sealed record ClientEnrollmentRequest(
     ClientClass ClientClass,
     AdapterIdentity Adapter,
     CompatibilityHashes Compatibility,
-    IReadOnlyList<RegionProbe>? RegionProbes = null);
+    IReadOnlyList<RegionProbe>? RegionProbes = null,
+    ControllerDeclaration? Controller = null);
