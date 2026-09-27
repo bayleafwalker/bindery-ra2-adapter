@@ -51,6 +51,8 @@ def main(run_dir, arm):
     shadow_by_faction, selector_by_faction = defaultdict(Counter), defaultdict(Counter)
     total = accepted = fog = grounded = same_playbook = authority_used = 0
     field_differs = Counter()
+    # Adaptability: after an event or replan trigger, does the proposal change plan (playbook or posture)?
+    adapt = {"Shadow": [0, 0], "Primary": [0, 0]}
     latencies, matches = [], 0
     for path in sorted(glob.glob(os.path.join(run_dir, "decisions", f"{arm}_*.ndjson"))):
         matches += 1
@@ -58,8 +60,22 @@ def main(run_dir, arm):
         # The arm's faction is fixed for a match; proposals do not carry it, activations and shadow records do.
         faction = next((r["data"]["faction"] for r in records if r["data"].get("faction")), "?")
         last_primary = None
+        triggers = {}  # (role, request frame) -> trigger
+        previous_plan = {}  # role -> (playbook, posture) of the last answer
         for r in records:
             d = r["data"]
+            if r["kind"] == "strategy.request":
+                triggers[(d.get("role"), r["frame"])] = d.get("trigger") or ""
+                continue
+            role = "Shadow" if r["kind"] == "strategy.shadow" else "Primary" if (
+                r["kind"] == "strategy.proposal" and d.get("role") == "Primary") else None
+            if role and d.get("intent") and (role == "Primary" or d.get("accepted")):
+                plan = (d["intent"]["playbookId"], d["intent"].get("posture"))
+                trigger = triggers.get((role, d.get("requestFrame")), "")
+                if role in previous_plan and trigger.startswith(("event:", "replan:")):
+                    adapt[role][0] += 1
+                    adapt[role][1] += plan != previous_plan[role]
+                previous_plan[role] = plan
             if r["kind"] == "strategy.proposal" and d.get("role") == "Primary" and d.get("intent"):
                 last_primary = d["intent"]
                 PLAYBOOKS.setdefault(faction, set()).add(last_primary["playbookId"])
@@ -101,6 +117,8 @@ def main(run_dir, arm):
         "authorityUse": {"samePlaybookPairs": same_playbook, "fullTierDiffers": authority_used,
                          "rate": authority_used / same_playbook if same_playbook else None,
                          "byField": {f: field_differs[f] for f in TIER_FIELDS + FULL_TIER}},
+        "adaptability": {role: {"eventAnswers": n, "planChanged": c, "rate": c / n if n else None}
+                         for role, (n, c) in (("shadow", adapt["Shadow"]), ("selector", adapt["Primary"]))},
         "explainability": {"groundedRationales": grounded, "rate": grounded / accepted if accepted else None},
     }
     json.dump(out, sys.stdout, indent=2)
