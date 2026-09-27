@@ -216,7 +216,9 @@ public sealed record Ra2yrcppTelemetryOptions(
 /// </summary>
 /// <remarks>
 /// The service comes up with the game, so until the match starts the source
-/// keeps retrying the connection. Once it has started, a connection that
+/// keeps retrying the connection. No event is emitted until the type classes
+/// (<c>ReadValue</c>'s initial game state) have loaded; if they keep coming
+/// back empty, the stream fails rather than report objects without types. Once it has started, a connection that
 /// keeps failing ends the stream with an error rather than silently opening
 /// a gap. The stream ends after <c>ra2.match.ended</c>.
 /// </remarks>
@@ -252,13 +254,14 @@ public sealed class Ra2yrcppTelemetrySource : IRa2TelemetrySource
         TimeSpan retry = options.ConnectRetry ?? TimeSpan.FromSeconds(2);
         Ra2yrcppSnapshotDiff diff = new(options.SeatHouse, options.NonPlayerHouses, options.CreditsHeartbeat, options.WinnerGrace);
         Ra2yrcppClient? client = null;
-        int failures = 0;
+        int failures = 0, typeless = 0;
         ulong sequence = 0;
         try
         {
             while (true)
             {
-                IReadOnlyList<Ra2yrcppEvent> events;
+                IReadOnlyList<Ra2yrcppEvent> events = [];
+                bool typesMissing = false;
                 try
                 {
                     if (client is not { IsOpen: true })
@@ -272,8 +275,12 @@ public sealed class Ra2yrcppTelemetrySource : IRa2TelemetrySource
                     {
                         ReadValue types = await client.RunAsync(new ReadValue { Data = new StorageValue { InitialGameState = new GameState() } }, cancellationToken).ConfigureAwait(false);
                         diff.SetTypes(types.Data?.InitialGameState?.ObjectTypes ?? []);
+                        // Without type names, object events would carry no
+                        // type and routines keyed on it (the MCV deploy)
+                        // would never act. Hold every event until they load.
+                        typesMissing = !diff.HasTypes;
                     }
-                    events = diff.Next(state, clock.GetUtcNow());
+                    if (!typesMissing) events = diff.Next(state, clock.GetUtcNow());
                     failures = 0;
                 }
                 catch (Exception exception) when (exception is WebSocketException or TimeoutException or IOException or Ra2yrcppCommandException or InvalidOperationException && !cancellationToken.IsCancellationRequested)
@@ -298,6 +305,14 @@ public sealed class Ra2yrcppTelemetrySource : IRa2TelemetrySource
                         await Task.Delay(diff.Started ? poll : retry, clock, cancellationToken).ConfigureAwait(false);
                         continue;
                     }
+                }
+
+                if (typesMissing)
+                {
+                    if (++typeless >= options.MaximumConsecutiveFailures)
+                        throw new IOException($"ra2yrcpp at {Uri} returned no object type classes {typeless} times; refusing to stream objects without types");
+                    await Task.Delay(poll, clock, cancellationToken).ConfigureAwait(false);
+                    continue;
                 }
 
                 foreach (Ra2yrcppEvent e in events)

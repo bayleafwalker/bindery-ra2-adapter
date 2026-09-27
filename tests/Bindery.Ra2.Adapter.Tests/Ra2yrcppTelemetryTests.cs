@@ -295,6 +295,50 @@ public sealed class Ra2yrcppTelemetryTests
     }
 
     [Fact]
+    public async Task EventsWaitForTypeNamesAndTheStreamFailsIfTheyNeverCome()
+    {
+        GameState running = Snapshots.State(1, Snapshots.Opening(), [Snapshots.Unit(0xA1, Snapshots.Americans, Snapshots.Amcv)]);
+        GameState won = Snapshots.State(2, [Snapshots.House("Americans", Snapshots.Americans, current: true, winner: true)], []);
+        int reads = 0, typeReads = 0;
+        int typesAfter = 2;
+        FakeRa2yrcppServer Serve() => new(command =>
+        {
+            if (command.Is(GetGameState.Descriptor)) return FakeRa2yrcppServer.Ok(new GetGameState { State = Interlocked.Increment(ref reads) < 6 ? running : won });
+            GameState initial = new();
+            if (Interlocked.Increment(ref typeReads) > typesAfter) initial.ObjectTypes.AddRange(Snapshots.Types);
+            return FakeRa2yrcppServer.Ok(new ReadValue { Data = new StorageValue { InitialGameState = initial } });
+        });
+
+        // Types arrive on the third read: the MCV is reported with its type, never without.
+        await using (FakeRa2yrcppServer server = Serve())
+        {
+            Ra2yrcppTelemetrySource source = new(new Ra2YrcppEndpoint(server.Uri.Host, server.Uri.Port), new Ra2yrcppTelemetryOptions(PollInterval: TimeSpan.FromMilliseconds(10)));
+            List<RawObservation> observed = [];
+            await foreach (RawObservation observation in source.ReadAsync(new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token)) observed.Add(observation);
+            RawObservation mcv = Assert.Single(observed, static o => o.EventType == Ra2TelemetryEventTypes.UnitCreated);
+            Assert.True(mcv.Payload.TryGetProperty("type", out JsonElement type));
+            Assert.Equal("AMCV", type.GetString());
+        }
+
+        // Types never arrive: fail loudly rather than stream typeless objects.
+        reads = 0;
+        typeReads = 0;
+        typesAfter = int.MaxValue;
+        await using (FakeRa2yrcppServer server = Serve())
+        {
+            Ra2yrcppTelemetrySource source = new(new Ra2YrcppEndpoint(server.Uri.Host, server.Uri.Port), new Ra2yrcppTelemetryOptions(PollInterval: TimeSpan.FromMilliseconds(10), MaximumConsecutiveFailures: 3));
+            List<RawObservation> observed = [];
+            Exception? failure = await Record.ExceptionAsync(async () =>
+            {
+                await foreach (RawObservation observation in source.ReadAsync(new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token)) observed.Add(observation);
+            });
+            Assert.IsType<IOException>(failure);
+            Assert.Contains("type", failure.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain(observed, static o => o.EventType == Ra2TelemetryEventTypes.UnitCreated);
+        }
+    }
+
+    [Fact]
     public async Task TheSourceWaitsForTheServiceToComeUp()
     {
         // Nothing listens yet: the game has not loaded the DLL.
