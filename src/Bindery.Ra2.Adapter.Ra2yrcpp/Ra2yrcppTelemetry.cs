@@ -201,7 +201,7 @@ public sealed class Ra2yrcppTelemetrySource : IRa2TelemetrySource
         captureId = this.options.CaptureId ?? "ra2yrcpp-" + Guid.NewGuid().ToString("N");
     }
 
-    public Uri Uri => new($"ws://{(endpoint.Host.Contains(':', StringComparison.Ordinal) ? "[" + endpoint.Host + "]" : endpoint.Host)}:{endpoint.Port}/");
+    public Uri Uri => Ra2yrcppClient.UriFor(endpoint);
 
     public Ra2TelemetryCapture Capture => new(
         "ra2yrcpp-websocket",

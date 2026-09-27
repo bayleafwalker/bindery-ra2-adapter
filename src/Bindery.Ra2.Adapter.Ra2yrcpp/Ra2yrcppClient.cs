@@ -71,6 +71,14 @@ public sealed class Ra2yrcppClient : IAsyncDisposable
         return new Ra2yrcppClient(socket, options);
     }
 
+    /// <summary>The service's WebSocket address for a <c>host:port</c> endpoint.</summary>
+    public static Uri UriFor(Ra2YrcppEndpoint endpoint)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+        string host = endpoint.Host.Contains(':', StringComparison.Ordinal) ? "[" + endpoint.Host + "]" : endpoint.Host;
+        return new Uri($"ws://{host}:{endpoint.Port.ToString(CultureInfo.InvariantCulture)}/");
+    }
+
     /// <summary>Runs a command whose result is the same message filled in, as every ra2yrcpp command's is.</summary>
     public Task<T> RunAsync<T>(T command, CancellationToken cancellationToken = default)
         where T : IMessage<T>, new() =>
