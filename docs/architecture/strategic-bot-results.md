@@ -2,52 +2,71 @@
 
 Final evaluation of the hierarchical bot described in
 [`strategic-bot.md`](strategic-bot.md). The current rerun was made on
-2026-09-27 at `c80c935` (`feat/strategic-bot`).
+2026-09-27 at `66c3185` (`feat/strategic-bot`). It includes the enemy-aware
+attack gate, start-side rotation, the Verses/BuildSpeed rules import,
+persistent attack squads and the bandit fix. The generated reports are the
+record:
+[`standard`](../results/2026-09-27-66c3185/standard-report.md) and
+[`contested`](../results/2026-09-27-66c3185/contested-report.md) (script:
+[`run.sh`](../results/2026-09-27-66c3185/run.sh)).
 
 ## Read this first
 
-- **Current rerun.** The exact documented matrix completed at `c80c935`:
-  5,520 standard matches (23 opponents) and 6,720 contested matches (28
-  opponents), six seeds per cell, with `--llm-fake`. The generated reports
-  classify the standard selector rate (599/690, 0.868) and contested selector
-  rate (705/840, 0.839) as saturated across the full matrix; compare the
-  calibrated live styles and held-out opponent cells, not those aggregate
-  rates. On contested held-out maps, selector was 285/336 (0.848,
-  95% Wilson [0.806, 0.883]); the fake `llm` arm was 188/336 (0.560,
-  [0.506, 0.612]); and `distilled` was 231/336 (0.688, [0.636, 0.735]).
-  The historical tables below remain an archived pre-merge record, not the
-  current benchmark. No live-LLM result is claimed.
+- **Current rerun.** The documented matrix ran at `66c3185`, eight seeds
+  per cell so that each rate has an equal side x faction mix: 7,360 standard
+  matches (23 opponents) and 8,960 contested matches (28 opponents), with
+  `--llm-fake`. Both reports classify the selector's rate as **saturated**:
+  0.901 over 920 standard matches and 0.864 over 1,120 contested matches, both
+  outside the 30-70% band where win rates separate arms. Compare the paired
+  tables and the held-out cells, not the aggregate rates.
+- **Contested, by map split (wins / matches, 95% Wilson interval).**
 
+  | Arm | Held-out maps | Training maps |
+  |---|---|---|
+  | `selector` | 388/448 (0.866, [0.831, 0.895]) | 580/672 (0.863, [0.835, 0.887]) |
+  | `bandit` | 375/448 (0.837, [0.800, 0.868]) | 571/672 (0.850, [0.821, 0.875]) |
+  | `distilled` | 317/448 (0.708, [0.664, 0.748]) | 475/672 (0.707, [0.671, 0.740]) |
+  | `llm` (fake client) | 276/448 (0.616, [0.570, 0.660]) | 452/672 (0.673, [0.636, 0.707]) |
+  | `llm+fast` (fake client) | 287/448 (0.641, [0.595, 0.684]) | 451/672 (0.671, [0.635, 0.706]) |
+  | `selector-oracle` | 393/448 (0.877, [0.844, 0.904]) | 609/672 (0.906, [0.882, 0.926]) |
+  | `llm-oracle` (fake client) | 308/448 (0.688, [0.643, 0.729]) | 471/672 (0.701, [0.665, 0.734]) |
+
+  `llm-shadow` plays the selector's games (the LLM only proposes), so its row
+  equals the selector's.
+- **Bandit against the selector** (contested, 958 paired games): score
+  -0.023 [-0.041, -0.005], 26 better / 48 worse / 884 tied, Holm p 0.099 -
+  not a significant difference. The bandit fix raised the bandit's training
+  record from 279/336 to 294/336 against the same selector control
+  (commit `66c3185`); it is still not better than the selector.
+- **Standard, by map split.** Selector 329/368 held-out (0.894) and 500/552
+  training (0.906); bandit 328/368 and 491/552; distilled 285/368 and
+  456/552; fake `llm` 236/368 and 406/552.
 - **Environment.** Every number here comes from the bindery region simulator
   (`src/Bindery.Ra2.Bot.Sim`), a deterministic region-graph approximation of a
   two-player RA2/YR skirmish, with the hand-authored approximate ruleset
-  `bindery-sim-approx` (costs, strengths, prerequisites and a weapon-vs-armour
-  table typed in by hand, not read from retail `rulesmd.ini`). It is not
-  retail RA2/YR. Results are directional: they rank arms inside this
-  simulator and say nothing firm about retail play.
-- **No live model.** No Claude credential exists on the host that ran this.
-  Every LLM arm (`llm-shadow`, `llm`, `llm+fast`, `llm-oracle`, and the
-  escalations of `distilled`) ran against `FakeMessageClient`
-  (`--llm-fake`): a deterministic, scripted policy (`fake-counter-v2`) that
-  answers the real prompt with a valid intent draft. These rows measure the
-  LLM pipeline and that scripted policy, not Claude. Token counts are
-  estimated from prompt size and priced at the list rate; they are not
-  measurements.
+  `bindery-sim-approx`. It is not retail RA2/YR. Results are directional:
+  they rank arms inside this simulator and say nothing firm about retail play.
+- **No live model.** Every LLM arm (`llm-shadow`, `llm`, `llm+fast`,
+  `llm-oracle`, and the escalations of `distilled`) ran against
+  `FakeMessageClient` (`--llm-fake`), a deterministic scripted policy
+  (`fake-counter-v2`). These rows measure the LLM pipeline and that scripted
+  policy, not a model. The local-model shadow pass is pre-registered in
+  `docs/experiments/2026-09-27-llm-shadow-full-vocabulary-preregistration.md`
+  and has not run yet.
 - **Oracle arms** (`selector-oracle`, `llm-oracle`) see full simulator state
   instead of their fog-limited belief. They are diagnostics, not playable
   bots.
+- **Tables below this summary** (from "Archived: headline tables at c80c935"
+  on) are the previous rerun, six seeds at `c80c935`, before the fairness and
+  strength changes. They are kept as a record and are superseded by the
+  reports linked above.
 
 ## Setup
-
-One command per benchmark (the script is
-`arena-final/run.sh` in the session scratch directory; outputs in
-`arena-final/{standard,contested}/` there: `results.json`, `report.md`,
-`probes.json`, datasets):
 
 ```bash
 nix shell nixpkgs#dotnet-sdk_8 -c dotnet run --project tools/Bindery.Ra2.Bot.Arena -c Release -- run \
   --arms selector,bandit,llm-shadow,llm,llm+fast,distilled,selector-oracle,llm-oracle \
-  --maps all --opponents <list below> --seeds 6 --llm-fake --benchmark standard|contested \
+  --maps all --opponents <list below> --seeds 8 --llm-fake --benchmark standard|contested \
   --no-decisions --out <dir>
 ```
 
@@ -56,27 +75,24 @@ nix shell nixpkgs#dotnet-sdk_8 -c dotnet run --project tools/Bindery.Ra2.Bot.Are
 | Arms | `selector`, `bandit`, `llm-shadow`, `llm`, `llm+fast`, `distilled`, `selector-oracle`, `llm-oracle` |
 | Maps | training: `twin-valley`, `river-crossing`, `island-bridges`; held-out: `open-steppe`, `fortress-choke` |
 | Opponents (both benchmarks) | independent scripted AI at every difficulty: training `ai-rush`, `ai-balanced`, `ai-turtle`, `ai-air`, held-out `ai-horde`, `ai-armor`, each `:easy`, `:medium`, `:hard` (18); pinned styles on the frozen 7f3e2c7 stack: `rush`, `turtle`, `tech`, `harass`, `balanced` (5) |
-| Extra opponents (contested only) | the five pinned styles on the live stack: `live-balanced`, `live-rush`, `live-tech`, `live-turtle`, `live-harass` (the set the contested benchmark is calibrated on) |
-| Seeds | 6 per cell; the arm plays Allied on odd seeds and Soviet on even seeds, so each rate has an equal faction mix |
-| Matches | standard 8 arms × 5 maps × 23 opponents × 6 seeds = 5,520 (1,305 s); contested 8 × 5 × 28 × 6 = 6,720 (2,492 s) |
-| Benchmarks | `standard`: fair economy, noiseless combat. `contested`: Allied side starts with 20,000 credits against 10,000 (the fixture favours Soviet), ±25% seeded combat noise |
-| Distilled arm | trained on the belief `llm` arm's primary decisions from **training maps against training opponents only** in the same run: 5,736 examples (standard), 9,470 (contested). Held-out maps and held-out opponents never enter the dataset |
+| Extra opponents (contested only) | the five pinned styles on the live stack: `live-balanced`, `live-rush`, `live-tech`, `live-turtle`, `live-harass` |
+| Seeds | 8 per cell; the start side rotates by seed (1-2 west, 3-4 east, ...) and the faction alternates, so each rate has an equal side x faction mix |
+| Matches | standard 8 arms x 5 maps x 23 opponents x 8 seeds = 7,360 (2,277 s); contested 8 x 5 x 28 x 8 = 8,960 (3,467 s) |
+| Benchmarks | `standard`: fair economy, noiseless combat. `contested`: Allied side starts with 20,000 credits against 10,000 (the fixture favours Soviet), +/-25% seeded combat noise |
+| Distilled arm | trained on the belief `llm` arm's primary decisions from training maps against training opponents only in the same run (13,992 examples, contested) |
 
-A first pass with 5 seeds (4,600 standard matches) was discarded because an odd
-seed count gives the arm Allied three times in five; its rates agree with the
-6-seed ones within their intervals.
-
-**Match duplication.** The frozen pinned styles and the three `ai-air`
-difficulties often lose before they have made a decision that differs from one
-another, so the arm plays byte-identical games against them. Rates below count
-every match; the "distinct" column counts each identical game once. Read the
-distinct interval when the two differ.
+**Match duplication.** Frozen pinned styles and the `ai-air` difficulties
+often lose before they make a decision that differs from one another, so the
+arm plays byte-identical games against them. The reports count every match
+and give a "distinct" column that counts each identical game once.
 
 Intervals are 95% Wilson score intervals. Paired tables pair matches by
 opponent, map and seed, and give a seeded bootstrap interval, an exact sign test
 and Holm-adjusted p over each arm's metrics.
 
-## Headline: contested benchmark
+## Archived: headline tables at c80c935 (six seeds, superseded)
+
+### Headline: contested benchmark
 
 ### Win rate by arm and map split (all 28 opponents)
 
@@ -213,7 +229,7 @@ opponents"), no arm's score differs from the selector's at Holm p < 0.05;
   0/1,029 contested). It does not apply to oracle arms, which see everything
   by design.
 
-## Standard benchmark
+### Standard benchmark (archived, c80c935)
 
 Same arms, the 23 opponents above, fair economy and noiseless combat; 690
 matches per arm, no draws except 2 for `llm-oracle`.
@@ -245,7 +261,7 @@ Allied and 322/345 as Soviet. In the contested run the belief selector's
 faction gap is similar (307/420 Allied against 393/420 Soviet), while the
 oracle arm's gap disappears (373/420 against 371/420).
 
-## Is perception the bottleneck? (belief against oracle)
+### Is perception the bottleneck? (belief against oracle; archived, c80c935)
 
 Same jobs, the only difference being fog-limited belief frames against full
 state. Oracle − belief win rate:
