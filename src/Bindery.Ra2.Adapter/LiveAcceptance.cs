@@ -37,7 +37,9 @@ public sealed record LiveAcceptanceRequest(
     string TelemetryProtocol = Ra2LabProfile.TelemetryProtocol,
     Uri? TunnelV2Uri = null,
     SpawnGameOptions? GameOptions = null,
-    IReadOnlyList<SpawnAiParticipant>? AiPlayers = null);
+    IReadOnlyList<SpawnAiParticipant>? AiPlayers = null,
+    // Pin the simulation seed to replay a match; null draws a fresh one.
+    int? Seed = null);
 
 public sealed record LiveClientEvidence(
     string ClientId,
@@ -85,7 +87,10 @@ public sealed record LiveAcceptanceEvidence(
     string FinalSessionPhase,
     IReadOnlyList<string> FinalEnrollmentPhases,
     LiveQualificationFlags Qualification,
-    IReadOnlyList<string> Limitations);
+    IReadOnlyList<string> Limitations,
+    // What the match was played with, so a channel record can reproduce it.
+    string? MapId = null,
+    int? Seed = null);
 
 /// <summary>
 /// Runs the real Windows process boundary after a two-client control-plane
@@ -163,7 +168,8 @@ public sealed class LiveAcceptanceRunner
             ports = await TunnelPortAllocation.RequestAsync(tunnelClient, tunnelV2, 2, cancellationToken).ConfigureAwait(false);
         }
 
-        int seed = Random.Shared.Next(1, int.MaxValue);
+        if (request.Seed is < 1) throw new ArgumentOutOfRangeException(nameof(request), "a pinned seed must be positive");
+        int seed = request.Seed ?? Random.Shared.Next(1, int.MaxValue);
         // The spawner reads GameID as an integer, so the session UUID cannot be
         // passed through verbatim; both clients derive the same number from it.
         string gameId = StableGameId(match.Session.SessionId);
@@ -239,7 +245,9 @@ public sealed class LiveAcceptanceRunner
                 "Kctl knowledge.candidate.intake authority must be verified by the served identity",
                 "oracle reads must be traced and attached to the qualification packet",
                 "human acceptance is required before global qualification"
-            ]);
+            ],
+            request.FirstLaunch.MapId,
+            seed);
         await LiveAcceptanceEvidenceWriter.WriteAsync(request.EvidenceDirectory, evidence, cancellationToken).ConfigureAwait(false);
         return evidence;
     }

@@ -43,6 +43,12 @@ The generated golden manifest is schema v2 and records the exact selected
 package-embedded spawner artifact; the standalone spawner release is not
 silently interchangeable.
 
+The on-demand broadcast channel -- back-to-back matches, a rendered client
+captured by OBS to a local MediaMTX room stream with optional Twitch output,
+and a player-safe agent seat -- is described in
+[`docs/architecture/ra2-channel.md`](docs/architecture/ra2-channel.md), with
+the streaming setup in [`deploy/ra2-channel`](deploy/ra2-channel/README.md).
+
 ## Local checks
 
 ```powershell
