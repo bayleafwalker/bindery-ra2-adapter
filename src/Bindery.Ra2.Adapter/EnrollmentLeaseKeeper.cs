@@ -10,7 +10,8 @@ namespace Bindery.Ra2.Adapter;
 /// minutes in bindery-core) and then answers its reports with 410 Gone, so a
 /// live match longer than one lease needs a heartbeat running beside it.
 /// The first heartbeat is sent at once; each next one is due a third of the
-/// way into the lease the control plane just granted. A failed heartbeat is
+/// way into the lease the control plane just granted, between
+/// <see cref="MinimumInterval"/> and <see cref="MaximumInterval"/>. A failed heartbeat is
 /// recorded, never thrown: if they fail until the lease runs out, the client's
 /// next report meets the control plane's own lost/410 handling.
 /// </summary>
@@ -18,6 +19,13 @@ internal sealed class EnrollmentLeaseKeeper : IAsyncDisposable
 {
     /// <summary>Floor on the heartbeat interval, and the retry delay after a failure.</summary>
     internal static readonly TimeSpan MinimumInterval = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Ceiling on the heartbeat interval. The remaining lease is the control plane's expires_at read against
+    /// this machine's clock, so a clock running behind the control plane's would overstate it; the ceiling keeps
+    /// heartbeats well inside bindery-core's two-minute lease whatever the skew.
+    /// </summary>
+    internal static readonly TimeSpan MaximumInterval = TimeSpan.FromSeconds(30);
 
     private readonly Func<CancellationToken, Task<DateTimeOffset>> heartbeat;
     private readonly TimeProvider time;
@@ -76,7 +84,7 @@ internal sealed class EnrollmentLeaseKeeper : IAsyncDisposable
     internal static TimeSpan NextInterval(TimeSpan remaining)
     {
         TimeSpan third = remaining / 3;
-        return third < MinimumInterval ? MinimumInterval : third;
+        return third < MinimumInterval ? MinimumInterval : third > MaximumInterval ? MaximumInterval : third;
     }
 
     private async Task RunAsync(CancellationToken cancellationToken)

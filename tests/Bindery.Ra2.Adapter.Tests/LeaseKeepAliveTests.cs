@@ -94,9 +94,13 @@ public sealed class LeaseKeepAliveTests
     }
 
     [Fact]
-    public void The_heartbeat_interval_is_a_third_of_the_remaining_lease_with_a_floor()
+    public void The_heartbeat_interval_is_a_third_of_the_remaining_lease_with_a_floor_and_a_ceiling()
     {
-        Assert.Equal(TimeSpan.FromSeconds(40), EnrollmentLeaseKeeper.NextInterval(TimeSpan.FromMinutes(2)));
+        Assert.Equal(TimeSpan.FromSeconds(20), EnrollmentLeaseKeeper.NextInterval(TimeSpan.FromMinutes(1)));
+        // The remaining lease is the server's expires_at against this machine's clock; a guest clock running
+        // behind would overstate it, so the interval never exceeds the ceiling.
+        Assert.Equal(EnrollmentLeaseKeeper.MaximumInterval, EnrollmentLeaseKeeper.NextInterval(TimeSpan.FromMinutes(2)));
+        Assert.Equal(EnrollmentLeaseKeeper.MaximumInterval, EnrollmentLeaseKeeper.NextInterval(TimeSpan.FromHours(1)));
         Assert.Equal(EnrollmentLeaseKeeper.MinimumInterval, EnrollmentLeaseKeeper.NextInterval(TimeSpan.FromSeconds(3)));
         Assert.Equal(EnrollmentLeaseKeeper.MinimumInterval, EnrollmentLeaseKeeper.NextInterval(TimeSpan.FromSeconds(-30)));
     }
