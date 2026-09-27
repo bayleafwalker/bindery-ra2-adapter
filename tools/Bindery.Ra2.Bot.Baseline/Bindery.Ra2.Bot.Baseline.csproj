@@ -3,7 +3,7 @@
     A frozen copy of the bot's non-contract layers exactly as of commit 7f3e2c7 (the start of the strength work),
     re-namespaced to Bindery.Ra2.Bot.Baseline. The arena's pinned-playbook opponents run on it so they are a
     stationary benchmark: a change to the live planner or tactics no longer moves the opponent too. Contracts and
-    the rules database come from the live Bindery.Ra2.Bot assembly. Do not edit these sources.
+    the rules database come from the live Bindery.Ra2.Bot assembly. Do not edit these sources; the single exception is the placement tie-break in Operations/BuildPlacement.cs (2026-09-27, an operator-approved map-side fairness fix).
   -->
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>

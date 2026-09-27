@@ -35,9 +35,15 @@ internal static class BuildPlacement
                 }
             }
 
+            // The one deliberate change to this frozen copy (2026-09-27, operator-approved): ties go to the cell
+            // farther from the map centre, as in the live stack. The lowest-X rule put an east base's buildings in
+            // front of it, and the arena always starts the opponent east, so every frozen pinned style played with a
+            // map-side handicap (river-crossing mirror matches: west 48 of 48). This is simulator fairness, not strategy.
+            double centreX = width / 2.0, centreY = height / 2.0;
+            double FromCentre(Cell c) => ((c.X - centreX) * (c.X - centreX)) + ((c.Y - centreY) * (c.Y - centreY));
             IEnumerable<Cell> ordered = bias is { } b
-                ? candidates.OrderBy(c => c.DistanceTo(b)).ThenBy(c => c.X).ThenBy(c => c.Y)
-                : candidates.OrderBy(c => c.X).ThenBy(c => c.Y);
+                ? candidates.OrderBy(c => c.DistanceTo(b)).ThenByDescending(FromCentre).ThenBy(c => c.X).ThenBy(c => c.Y)
+                : candidates.OrderByDescending(FromCentre).ThenBy(c => c.X).ThenBy(c => c.Y);
 
             foreach (Cell candidate in ordered)
             {
