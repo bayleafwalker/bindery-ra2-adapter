@@ -239,9 +239,42 @@ separate project, so the adapter itself takes no API dependency.
 - It authenticates the usual SDK way (`ANTHROPIC_API_KEY` or an
   `ant auth login` profile). Every plan is a billed API call.
 
-**Not implemented:** the game-side command channel. `IPlayerCommandSink` is the
-boundary a per-player ra2yrcpp command path would implement. Nothing in this
-repository can issue orders into the game yet.
+### Live ra2yrcpp transport
+
+`src/Bindery.Ra2.Adapter.Ra2yrcpp` talks to the fork's service directly. It
+is a separate project so the core library keeps no generated code: it
+vendors four `.proto` files from ra2yrproto (recorded in
+`UPSTREAM-REVISIONS.yaml`) and generates C# with protoc at build time.
+**None of it has run against a live game yet**; every test uses an
+in-process fake of the service.
+
+- `Ra2yrcppClient`: a WebSocket to port 14521, one binary protobuf message
+  per frame. A command goes out as `CLIENT_COMMAND` and its result comes back
+  from `POLL_BLOCKING` on the connection's own queue. An `ERROR` result or
+  response throws `Ra2yrcppCommandException` with the fork's message. One
+  command is in flight at a time, and a timeout closes the connection.
+- `Ra2yrcppTelemetrySource`: polls `GetGameState` and emits the existing
+  `ra2.*` events from snapshot changes. `house` is `House.name`, joined
+  through `Object.pointer_house`. `winner` comes from `House.is_winner`. The
+  snapshot has no per-object visibility, so object, credit and power events
+  carry only `visible_to: [owner]`, and the filter withholds them from every
+  other seat. A source bound to a seat house leaves other houses' events out
+  entirely.
+- `Ra2yrcppCommandSink`: before every order it checks that the client's
+  `current_player` house is the seat's house. A different house refuses the
+  seat for good. It drops object addresses that the latest snapshot does not
+  show as the house's, and it maps `PlayerCommandKinds` to `UnitOrder`,
+  `ProduceOrder` and `PlaceBuilding`. The fork's observer refusal arrives as
+  a failed command in the trace.
+- `DeployMcvRoutineController`: the first routine that issues orders. It
+  deploys the house's opening MCV once, and `IdleRoutineController` stays the
+  default.
+- Channel tool: `liveTelemetry` reads one client's service instead of a
+  recording, and `agentSeat` puts the rules playbook controller in one player
+  seat with live commands into that player's client
+  ([`docs/channel-settings.example.json`](../channel-settings.example.json)
+  shows both). With neither key set, the tool runs today's two-client path
+  unchanged.
 
 ## Build order
 
@@ -250,26 +283,31 @@ repository can issue orders into the game yet.
 | 1. Prove the channel | `tools/Bindery.Ra2.Adapter.Channel` runs `ChannelRunner` → `LiveAcceptanceMatchLauncher` → `LiveAcceptanceRunner`, with OBS and MediaMTX ([`docs/channel-settings.example.json`](../channel-settings.example.json)) | Several consecutive lab matches on the room stream |
 | 2. Automate continuity | Cut on `started`, holding scene, drain, failure back-off, output release, OBS scene and audio preflight, per-match evidence folders, audio-level watch, overlay | A lab check that each clone's resources are released |
 | 3. Add the observer | Optional third client end to end: enrollment, tunnel port, spectator INI, lifecycle, evidence | A lab run proving the observer joins reliably and gives the view you want |
-| 4. Add agent play | Seat, filter, trace, playbook controller (triggers, background planner, rule baseline), launcher wiring, winner from telemetry, controller declaration, trace upload, NDJSON telemetry recordings, experiment report | The fork's live reader, bridge ownership and visibility fields, the native command transport, and a routine controller that issues real orders |
+| 4. Add agent play | Seat, filter, trace, playbook controller (triggers, background planner, rule baseline), launcher wiring, winner from telemetry, controller declaration, trace upload, NDJSON telemetry recordings, experiment report; live ra2yrcpp client, telemetry source, fail-closed command sink, MCV-deploy routine, `liveTelemetry`/`agentSeat` settings (fake-service tests only) | A lab run against the fork: the house names match player names, the MCV deploys, and the winner arrives. Per-house visibility, stable entity IDs, and routines beyond the opening |
 | 5. Expand games | Loop, broadcast and record are game-neutral behind `IChannelMatchLauncher` | Per-game launcher, filter and command sink |
 
 ## Prospective work outside this repository
 
 These items are built against seams in this repository but need work
-elsewhere. None of them is implemented here.
+elsewhere, or a lab run, before they count as done.
 
-- **Live telemetry reader.** The ra2yrcpp fork owns protobuf/TCP framing.
-  This repository reads **recordings**: `NdjsonTelemetrySource` follows a
-  file of raw observations, one per line, as they are written
-  (`NdjsonTelemetryFormat` defines the line). The channel tool's
-  `telemetryRecording` setting points it at one file per match. Anything
-  that decodes the live stream can write that file. A direct TCP reader
-  belongs with the fork's decoder.
-- **Ownership and visibility.** The filter and tracker read `house`,
-  `visible_to` and `winner` from payloads. The bridge must emit these (or the
-  field names must be configured to match what it emits). Per-house
-  visibility needs the engine's own shroud and fog state; the full spectator
-  view must never be relabelled as a player's view.
+- **Live telemetry: lab run.** `Ra2yrcppTelemetrySource` is built (see
+  "Live ra2yrcpp transport") but has only met a fake service. The first lab
+  run must answer these questions:
+  - Is `House.name` the player name that the seat is configured with?
+  - Are `Special` and `Neutral` the only non-player houses? The observer's
+    house may also appear as a player.
+  - Does a 500 ms `GetGameState` poll keep up without slowing the game?
+  - Does the service's `allowedHostsRegex` admit the channel host?
+
+  Recordings (`NdjsonTelemetrySource`, `telemetryRecording`) still work as
+  before.
+- **Ownership and visibility.** The live source emits `house`, `winner` and
+  `visible_to: [owner]` only. Per-house visibility of other houses' objects
+  needs the engine's own shroud and fog state, which the snapshot lacks
+  (only `Cell.shrouded` for the local client). The full spectator view must
+  never be relabelled as a player's view, so until the fork emits that
+  state, a seat sees only its own house and public events.
 - **Command sink.** A per-player command path in
   [bayleafwalker/ra2yrcpp](https://github.com/bayleafwalker/ra2yrcpp),
   bound to one house and refusing orders for any other. The adapter side
@@ -286,9 +324,11 @@ elsewhere. None of them is implemented here.
     spectator-grade. An agent must never hold the connection itself, only
     this adapter's filtered seat.
   - Stable entity IDs need new ra2yrproto fields (`AbstractClass::UniqueID`;
-    see the fork's `docs/bindery-seat-boundary.md`). Until then, a sink
-    should drop any stored address that is missing from the latest snapshot.
-  - The native command transport is still to come.
+    see the fork's `docs/bindery-seat-boundary.md`). Until then,
+    `Ra2yrcppCommandSink` drops any address that the latest snapshot does
+    not show as the house's. A recycled address can still pass that check.
+  - The adapter side is built (`Ra2yrcppCommandSink`). It has not yet sent
+    an order to a live game.
 - **Camera for several matches.** With more than one match running, choose
   which one is on air. The loop plays one match at a time today; extra matches
   would be separate unbroadcast runners.
@@ -307,7 +347,8 @@ elsewhere. None of them is implemented here.
 
 Remove the public flag file to stop publishing. Use `NoBroadcastProduction` to
 stop capture. Leave `AgentSeat` unset and pass no seat factory to disable the
-agent. The private RA2 match path (`LiveAcceptanceRunner`, the
+agent; in the channel tool, omit `agentSeat` (and `liveTelemetry` to go back
+to recordings). The private RA2 match path (`LiveAcceptanceRunner`, the
 `cncnet-private` tunnel and the golden clones) is unchanged by all of this. The
 only change to it is the optional seed pin and the seed and map recorded in its
 evidence.
