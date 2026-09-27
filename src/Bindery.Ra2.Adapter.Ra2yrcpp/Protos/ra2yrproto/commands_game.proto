@@ -1,8 +1,7 @@
-// Vendored unmodified, apart from this header, from shmocz/ra2yrproto
-// 0ad72455bcdcf5626d0e17c3311ea82556da2ad3 (ra2yrproto/commands_game.proto; GPL-3.0,
-// see that repository's LICENSE), the protocol submodule of
-// bayleafwalker/ra2yrcpp 1370cb692b76425e02646b4a122aba40d7122fff.
-// Recorded in UPSTREAM-REVISIONS.yaml; re-vendor rather than edit.
+// Vendored unmodified, apart from this header, from bayleafwalker/ra2yrproto
+// a7708edf7f69bb8a1b922e7ae628bc88118e81a7 (ra2yrproto/commands_game.proto; GPL-3.0,
+// see that repository's LICENSE): shmocz/ra2yrproto 0ad7245 plus stable
+// object IDs. Recorded in UPSTREAM-REVISIONS.yaml; re-vendor rather than edit.
 syntax = "proto3";
 
 package ra2yrproto.commands;
@@ -14,6 +13,12 @@ message UnitOrder {
   ra2yrproto.ra2yr.UnitAction action = 2;
   uint32 target_object = 3;
   ra2yrproto.ra2yr.Coordinates coordinates = 4;
+  // Optional stale-address guard. If non-empty, must have the same length as
+  // object_addresses; element i is the Object.unique_id the client saw at
+  // object_addresses[i]. The order is rejected if any object's ID differs.
+  repeated uint32 object_unique_ids = 5;
+  // Optional Object.unique_id of target_object. 0 = not checked.
+  uint32 target_unique_id = 6;
 }
 
 message ProduceOrder {

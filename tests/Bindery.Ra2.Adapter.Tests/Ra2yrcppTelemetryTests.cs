@@ -26,8 +26,8 @@ internal static class Snapshots
     public static House House(string name, uint self, int money = 10000, bool current = false, bool defeated = false, bool winner = false, bool gameOver = false) =>
         new() { Name = name, Self = self, Money = money, CurrentPlayer = current, Defeated = defeated, IsWinner = winner, IsGameOver = gameOver, PowerOutput = 0, PowerDrain = 0 };
 
-    public static Ra2Yrproto.Ra2Yr.Object Unit(uint address, uint owner, uint type, AbstractType kind = AbstractType.Unit, bool limbo = false) =>
-        new() { PointerSelf = address, PointerHouse = owner, PointerTechnotypeclass = type, ObjectType = kind, InLimbo = limbo, Coordinates = new Coordinates { X = 100, Y = 200, Z = 0 } };
+    public static Ra2Yrproto.Ra2Yr.Object Unit(uint address, uint owner, uint type, AbstractType kind = AbstractType.Unit, bool limbo = false, uint uniqueId = 0) =>
+        new() { PointerSelf = address, PointerHouse = owner, PointerTechnotypeclass = type, ObjectType = kind, InLimbo = limbo, UniqueId = uniqueId, Coordinates = new Coordinates { X = 100, Y = 200, Z = 0 } };
 
     public static GameState State(uint frame, IEnumerable<House> houses, IEnumerable<Ra2Yrproto.Ra2Yr.Object> objects, LoadStage stage = LoadStage.StageIngame)
     {
@@ -115,6 +115,21 @@ public sealed class Ra2yrcppTelemetryTests
         Assert.Equal("Americans", Text(ended, "winner"));
         Assert.True(diff.Ended);
         Assert.Empty(diff.Next(Snapshots.State(6, over, []), start.AddSeconds(14)));
+    }
+
+    [Fact]
+    public void StableIdsTravelWithObjectEventsAndARecycledAddressIsANewObject()
+    {
+        Ra2yrcppSnapshotDiff diff = Diff();
+        IReadOnlyList<Ra2yrcppEvent> first = diff.Next(Snapshots.State(1, Snapshots.Opening(), [Snapshots.Unit(0xA1, Snapshots.Americans, Snapshots.Amcv, uniqueId: 7001), Snapshots.Unit(0xA3, Snapshots.Americans, Snapshots.Htnk)]), start);
+        Assert.Equal((uint?)7001u, Assert.Single(first, e => e.EventType == Ra2TelemetryEventTypes.UnitCreated && Text(e, "type") == "AMCV").Payload.TryGetProperty("unique_id", out JsonElement id0) ? id0.GetUInt32() : (uint?)null);
+        // An older fork build sends no ID, and none is invented.
+        Assert.False(Assert.Single(first, e => e.EventType == Ra2TelemetryEventTypes.UnitCreated && Text(e, "type") == "HTNK").Payload.TryGetProperty("unique_id", out _));
+
+        // Same address, same owner and type, new ID: the old MCV died and the address was reused.
+        IReadOnlyList<Ra2yrcppEvent> next = diff.Next(Snapshots.State(2, Snapshots.Opening(), [Snapshots.Unit(0xA1, Snapshots.Americans, Snapshots.Amcv, uniqueId: 7050), Snapshots.Unit(0xA3, Snapshots.Americans, Snapshots.Htnk)]), start.AddSeconds(1));
+        Assert.Equal((uint?)7001u, Assert.Single(next, static e => e.EventType == Ra2TelemetryEventTypes.UnitDestroyed).Payload.TryGetProperty("unique_id", out JsonElement id1) ? id1.GetUInt32() : (uint?)null);
+        Assert.Equal((uint?)7050u, Assert.Single(next, static e => e.EventType == Ra2TelemetryEventTypes.UnitCreated).Payload.TryGetProperty("unique_id", out JsonElement id2) ? id2.GetUInt32() : (uint?)null);
     }
 
     [Fact]

@@ -10,5 +10,6 @@ see UPSTREAM-REVISIONS.yaml. No upstream source is copied into this repository
 until a license/provenance review records the exact imported files. The
 ra2yrproto protocol definitions under
 src/Bindery.Ra2.Adapter.Ra2yrcpp/Protos are such an import (GPL-3.0,
-shmocz/ra2yrproto), recorded there with their commit and hashes.
+bayleafwalker/ra2yrproto, a fork of shmocz/ra2yrproto), recorded there with
+their commit and hashes.
 

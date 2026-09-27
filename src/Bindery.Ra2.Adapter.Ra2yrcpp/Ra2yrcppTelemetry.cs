@@ -27,8 +27,10 @@ public sealed record Ra2yrcppEvent(string EventType, JsonElement Payload);
 /// power events are not emitted at all; match lifecycle, joins and defeats
 /// are public either way.
 ///
-/// Objects are keyed by address, owner and type, so a change of owner (mind
-/// control) or a recycled address reads as one object gone and another new.
+/// Objects are keyed by address, owner, type and stable ID
+/// (<c>Object.unique_id</c>, emitted as <c>unique_id</c> when the fork sends
+/// one), so a change of owner (mind control) or a recycled address reads as
+/// one object gone and another new.
 /// Objects in limbo -- a finished building still in its factory, a unit in a
 /// transport -- are off the map and count as absent. Credits are sampled on
 /// change and at least every heartbeat, so a flat economy still shows.
@@ -38,7 +40,7 @@ public sealed class Ra2yrcppSnapshotDiff
     private readonly HashSet<string> nonPlayer;
     private readonly TimeSpan heartbeat;
     private readonly Dictionary<uint, string> typeNames = [];
-    private readonly Dictionary<(uint Address, uint Owner, uint Type), TrackedObject> objects = [];
+    private readonly Dictionary<(uint Address, uint Owner, uint Type, uint UniqueId), TrackedObject> objects = [];
     private readonly Dictionary<string, (long Credits, DateTimeOffset At)> credits = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (int Output, int Drain)> power = new(StringComparer.Ordinal);
     private readonly HashSet<string> defeated = new(StringComparer.Ordinal);
@@ -84,12 +86,12 @@ public sealed class Ra2yrcppSnapshotDiff
         foreach (House house in Players(state).Where(h => h.Defeated && defeated.Add(h.Name)))
             events.Add(new(Ra2TelemetryEventTypes.PlayerDefeated, Payload(new JsonObject { ["house"] = house.Name })));
 
-        Dictionary<(uint, uint, uint), TrackedObject> current = [];
+        Dictionary<(uint, uint, uint, uint), TrackedObject> current = [];
         foreach (Ra2Yrproto.Ra2Yr.Object item in state.Objects)
         {
             // An object whose owner is not a known house cannot be attributed, so it is not reported.
             if (item.InLimbo || !owners.TryGetValue(item.PointerHouse, out string? owner)) continue;
-            current[(item.PointerSelf, item.PointerHouse, item.PointerTechnotypeclass)] = new TrackedObject(item, owner, typeNames.GetValueOrDefault(item.PointerTechnotypeclass));
+            current[(item.PointerSelf, item.PointerHouse, item.PointerTechnotypeclass, item.UniqueId)] = new TrackedObject(item, owner, typeNames.GetValueOrDefault(item.PointerTechnotypeclass));
         }
         foreach ((var key, TrackedObject gone) in objects.Where(pair => !current.ContainsKey(pair.Key)).OrderBy(static pair => pair.Key.Address))
         {
@@ -142,6 +144,8 @@ public sealed class Ra2yrcppSnapshotDiff
             ["kind"] = item.Object.ObjectType.ToString().ToLowerInvariant(),
         };
         if (item.Type is { } type) payload["type"] = type;
+        // Older fork builds send no stable ID; none is invented.
+        if (item.Object.UniqueId != 0) payload["unique_id"] = item.Object.UniqueId;
         if (item.Object.Coordinates is { } at)
         {
             payload["x"] = at.X;

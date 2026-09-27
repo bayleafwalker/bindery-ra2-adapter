@@ -183,6 +183,23 @@ public sealed class PlaybookTests
         PlayerCommand deploy = Assert.Single(commands);
         Assert.Equal(PlayerCommandKinds.Deploy, deploy.Kind);
         Assert.Equal([161u], deploy.Arguments.GetProperty("objects").EnumerateArray().Select(static o => o.GetUInt32()));
+        Assert.False(deploy.Arguments.TryGetProperty("unique_ids", out _));
+    }
+
+    [Fact]
+    public void TheMcvRoutinePinsTheMcvsStableIdWhenTheStreamHasOne()
+    {
+        DeployMcvRoutineController routine = new();
+        PlayerView view = new("Americans");
+        RawObservation started = At(0, Ra2TelemetryEventTypes.MatchStarted, "{}");
+        RawObservation mcv = At(0, Ra2TelemetryEventTypes.UnitCreated, "{\"house\":\"Americans\",\"type\":\"AMCV\",\"object\":161,\"unique_id\":7001}");
+        view.Apply(started);
+        view.Apply(mcv);
+
+        PlayerCommand deploy = Assert.Single(routine.Decide(Playbook.Empty, view, mcv));
+
+        Assert.True(deploy.Arguments.TryGetProperty("unique_ids", out JsonElement ids));
+        Assert.Equal([7001u], ids.EnumerateArray().Select(static o => o.GetUInt32()));
     }
 
     [Fact]

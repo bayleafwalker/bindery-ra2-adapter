@@ -60,6 +60,34 @@ public sealed class Ra2yrcppCommandSinkTests
         UnitOrder order = Assert.IsType<UnitOrder>(Assert.Single(game.Orders));
         Assert.Equal(UnitAction.Deploy, order.Action);
         Assert.Equal([0xA1u], order.ObjectAddresses);
+        // This snapshot, like an older fork build's, has no stable IDs to guard with.
+        Assert.Empty(order.ObjectUniqueIds);
+    }
+
+    [Fact]
+    public async Task OrdersCarryTheSnapshotsStableIdsAndDropObjectsWhoseIdChanged()
+    {
+        FakeGame game = new()
+        {
+            State = Snapshots.State(1, Snapshots.Opening(),
+            [
+                Snapshots.Unit(0xA1, Snapshots.Americans, Snapshots.Htnk, uniqueId: 7001),
+                Snapshots.Unit(0xA2, Snapshots.Americans, Snapshots.Htnk, uniqueId: 7002),
+                Snapshots.Unit(0xB1, Snapshots.Soviets, Snapshots.Htnk, uniqueId: 8001),
+            ]),
+        };
+        await using FakeRa2yrcppServer server = new(game.Handle);
+        await using Ra2yrcppCommandSink sink = Sink(server);
+
+        // The controller saw 0xA2 as 6999: that unit is gone and the address now holds another.
+        await sink.SendAsync(Command(Ra2yrcppCommandSink.Attack, "{\"objects\":[161,162],\"unique_ids\":[7001,6999],\"target\":177}"), CancellationToken.None);
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => sink.SendAsync(Command(Ra2yrcppCommandSink.Stop, "{\"objects\":[162],\"unique_ids\":[6999]}"), CancellationToken.None));
+
+        UnitOrder order = Assert.IsType<UnitOrder>(Assert.Single(game.Orders));
+        Assert.Equal([0xA1u], order.ObjectAddresses);
+        Assert.Equal([7001u], order.ObjectUniqueIds);
+        Assert.Equal(0xB1u, order.TargetObject);
+        Assert.Equal(8001u, order.TargetUniqueId);
     }
 
     [Fact]

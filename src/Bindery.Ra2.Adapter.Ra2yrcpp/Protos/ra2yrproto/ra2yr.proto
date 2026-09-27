@@ -1,8 +1,7 @@
-// Vendored unmodified, apart from this header, from shmocz/ra2yrproto
-// 0ad72455bcdcf5626d0e17c3311ea82556da2ad3 (ra2yrproto/ra2yr.proto; GPL-3.0,
-// see that repository's LICENSE), the protocol submodule of
-// bayleafwalker/ra2yrcpp 1370cb692b76425e02646b4a122aba40d7122fff.
-// Recorded in UPSTREAM-REVISIONS.yaml; re-vendor rather than edit.
+// Vendored unmodified, apart from this header, from bayleafwalker/ra2yrproto
+// a7708edf7f69bb8a1b922e7ae628bc88118e81a7 (ra2yrproto/ra2yr.proto; GPL-3.0,
+// see that repository's LICENSE): shmocz/ra2yrproto 0ad7245 plus stable
+// object IDs. Recorded in UPSTREAM-REVISIONS.yaml; re-vendor rather than edit.
 syntax = "proto3";
 
 package ra2yrproto.ra2yr;
@@ -173,6 +172,8 @@ message Factory {
   repeated uint32 queued_objects = 4;
   bool on_hold = 5;
   bool completed = 6;
+  // AbstractClass::UniqueID of the object being produced, 0 if none.
+  uint32 object_unique_id = 7;
 }
 
 message House {
@@ -264,6 +265,9 @@ message Object {
   Mission current_mission = 18;
   bool in_limbo = 19;
   bool on_map = 20;
+  // AbstractClass::UniqueID. Unlike pointer_self, it is never reused within
+  // a scenario.
+  uint32 unique_id = 21;
 }
 
 enum LoadStage {

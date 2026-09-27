@@ -42,9 +42,10 @@ sources:
     license: GPL-3.0
     use: wire protocol reference for the live transport (WebSocket on port 14521, one binary protobuf message per frame, CLIENT_COMMAND then POLL_BLOCKING); no source copied
   - project: ra2yrproto
-    repository: https://github.com/shmocz/ra2yrproto
-    ref: submodule of ra2yrcpp-bindery-fork
-    commit: 0ad72455bcdcf5626d0e17c3311ea82556da2ad3
+    repository: https://github.com/bayleafwalker/ra2yrproto
+    ref: stable object IDs (bayleafwalker/ra2yrproto#1, merge pending)
+    commit: a7708edf7f69bb8a1b922e7ae628bc88118e81a7
+    base: shmocz/ra2yrproto 0ad72455bcdcf5626d0e17c3311ea82556da2ad3 (the submodule of ra2yrcpp-bindery-fork 1370cb6)
     license: GPL-3.0
     imported_files:
       - upstream: ra2yrproto/core.proto
@@ -52,14 +53,14 @@ sources:
         upstream_sha256: sha256:a2ff56662f0c8ab452498518a6b71fea4c6353f3743916c689dba2a2a2dafe8c
       - upstream: ra2yrproto/ra2yr.proto
         path: src/Bindery.Ra2.Adapter.Ra2yrcpp/Protos/ra2yrproto/ra2yr.proto
-        upstream_sha256: sha256:be306110967d98e02be5f9b0972a06d8b2956a3b23f10553e351a60a976d4c5e
+        upstream_sha256: sha256:1efb888588420db5d5ddd63f5d8ec68eac58a117411e9a5482aa6ed1ad863b52
       - upstream: ra2yrproto/commands_yr.proto
         path: src/Bindery.Ra2.Adapter.Ra2yrcpp/Protos/ra2yrproto/commands_yr.proto
         upstream_sha256: sha256:546f69c86ecdeb17ebdaabb805eff4477c5f78bd54dae16dd1c582e98ee94c92
       - upstream: ra2yrproto/commands_game.proto
         path: src/Bindery.Ra2.Adapter.Ra2yrcpp/Protos/ra2yrproto/commands_game.proto
-        upstream_sha256: sha256:d2de931f0c0f95b472356c46637a693b30db0fe5d74ddd91e1d5a6acf1965cd0
-    use: protocol definitions vendored unmodified apart from a provenance header; C# is generated at build time by protoc (Grpc.Tools, no gRPC services) into Bindery.Ra2.Adapter.Ra2yrcpp and never committed
+        upstream_sha256: sha256:6b7b86b58fa33d3b8b62c5bfc6a1b70dc7ab5a15ea16b2849da9b02f3a04ef4a
+    use: protocol definitions vendored unmodified apart from a provenance header; C# is generated at build time by protoc (Grpc.Tools, no gRPC services) into Bindery.Ra2.Adapter.Ra2yrcpp and never committed. The stable-ID fields (Object.unique_id, Factory.object_unique_id, UnitOrder.object_unique_ids/target_unique_id) are ignored by fork builds from before that PR, so the adapter stays compatible with them; re-pin to the merge commit once the PR lands
   - project: cncnet-docker-tunnel
     repository: https://github.com/CnCNet/cncnet-docker-tunnel
     ref: main

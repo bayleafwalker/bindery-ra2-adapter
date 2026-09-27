@@ -213,8 +213,8 @@ recorded on the match and leaves the trace on disk.
   observation time, so replaying a recording makes the same decisions.
   `RulePlaybookPlanner` is the deterministic baseline.
 - An `IRoutineController` turns the current playbook into orders on every
-  observation. `IdleRoutineController` issues none: the command vocabulary
-  waits on the fork's transport and stable entity IDs.
+  observation. `IdleRoutineController` issues none and stays the default;
+  `DeployMcvRoutineController` deploys the opening MCV (see below).
 - Triggers, drops and planner failures go into the trace as
   `controller_note` entries, next to each `playbook_revised`.
 
@@ -243,7 +243,8 @@ separate project, so the adapter itself takes no API dependency.
 
 `src/Bindery.Ra2.Adapter.Ra2yrcpp` talks to the fork's service directly. It
 is a separate project so the core library keeps no generated code: it
-vendors four `.proto` files from ra2yrproto (recorded in
+vendors four `.proto` files from bayleafwalker/ra2yrproto, with stable
+object IDs (recorded in
 `UPSTREAM-REVISIONS.yaml`) and generates C# with protoc at build time.
 **None of it has run against a live game yet**; every test uses an
 in-process fake of the service.
@@ -283,7 +284,7 @@ in-process fake of the service.
 | 1. Prove the channel | `tools/Bindery.Ra2.Adapter.Channel` runs `ChannelRunner` → `LiveAcceptanceMatchLauncher` → `LiveAcceptanceRunner`, with OBS and MediaMTX ([`docs/channel-settings.example.json`](../channel-settings.example.json)) | Several consecutive lab matches on the room stream |
 | 2. Automate continuity | Cut on `started`, holding scene, drain, failure back-off, output release, OBS scene and audio preflight, per-match evidence folders, audio-level watch, overlay | A lab check that each clone's resources are released |
 | 3. Add the observer | Optional third client end to end: enrollment, tunnel port, spectator INI, lifecycle, evidence | A lab run proving the observer joins reliably and gives the view you want |
-| 4. Add agent play | Seat, filter, trace, playbook controller (triggers, background planner, rule baseline), launcher wiring, winner from telemetry, controller declaration, trace upload, NDJSON telemetry recordings, experiment report; live ra2yrcpp client, telemetry source, fail-closed command sink, MCV-deploy routine, `liveTelemetry`/`agentSeat` settings (fake-service tests only) | A lab run against the fork: the house names match player names, the MCV deploys, and the winner arrives. Per-house visibility, stable entity IDs, and routines beyond the opening |
+| 4. Add agent play | Seat, filter, trace, playbook controller (triggers, background planner, rule baseline), launcher wiring, winner from telemetry, controller declaration, trace upload, NDJSON telemetry recordings, experiment report; live ra2yrcpp client, telemetry source, fail-closed command sink, MCV-deploy routine, `liveTelemetry`/`agentSeat` settings (fake-service tests only) | A lab run against the fork: the house names match player names, the MCV deploys, and the winner arrives. Per-house visibility, a fork build with stable IDs (ra2yrproto#1 merged), and routines beyond the opening |
 | 5. Expand games | Loop, broadcast and record are game-neutral behind `IChannelMatchLauncher` | Per-game launcher, filter and command sink |
 
 ## Prospective work outside this repository
@@ -323,10 +324,14 @@ elsewhere, or a lab run, before they count as done.
   - That list limits actions, not information: state reads are
     spectator-grade. An agent must never hold the connection itself, only
     this adapter's filtered seat.
-  - Stable entity IDs need new ra2yrproto fields (`AbstractClass::UniqueID`;
-    see the fork's `docs/bindery-seat-boundary.md`). Until then,
-    `Ra2yrcppCommandSink` drops any address that the latest snapshot does
-    not show as the house's. A recycled address can still pass that check.
+  - Stable entity IDs (`AbstractClass::UniqueID`) are in
+    bayleafwalker/ra2yrproto#1, vendored here while its merge is pending.
+    Telemetry payloads carry `unique_id`. `Ra2yrcppCommandSink` drops an
+    address that the latest snapshot does not show as the house's, or whose
+    ID differs from the one the command gave. It sends the snapshot's IDs
+    (`object_unique_ids`, `target_unique_id`), so the fork rejects an order
+    whose objects changed before it ran. Fork builds without the IDs send
+    none and ignore the fields, and there a recycled address can still pass.
   - The adapter side is built (`Ra2yrcppCommandSink`). It has not yet sent
     an order to a live game.
 - **Camera for several matches.** With more than one match running, choose

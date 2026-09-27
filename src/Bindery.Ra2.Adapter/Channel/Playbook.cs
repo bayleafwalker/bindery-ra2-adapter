@@ -14,7 +14,8 @@ public sealed record PayloadFields(
     string House = "house",
     string Credits = "credits",
     string Type = "type",
-    string Object = "object");
+    string Object = "object",
+    string UniqueId = "unique_id");
 
 /// <summary>A compact account of what one house knows, for triggers and planners.</summary>
 public sealed record PlayerViewSummary(
@@ -334,7 +335,11 @@ public sealed class DeployMcvRoutineController(IEnumerable<string>? mcvTypes = n
             || !address.TryGetUInt32(out uint mcv))
             return [];
         deployed = true;
-        return [new PlayerCommand(PlayerCommandKinds.Deploy, JsonSerializer.SerializeToElement(new { objects = new[] { mcv } }))];
+        // The stable ID, when the stream has one, lets the sink refuse the order if the address was reused.
+        JsonElement arguments = observation.Payload.TryGetProperty(view.Fields.UniqueId, out JsonElement id) && id.TryGetUInt32(out uint uniqueId)
+            ? JsonSerializer.SerializeToElement(new { objects = new[] { mcv }, unique_ids = new[] { uniqueId } })
+            : JsonSerializer.SerializeToElement(new { objects = new[] { mcv } });
+        return [new PlayerCommand(PlayerCommandKinds.Deploy, arguments)];
     }
 }
 

@@ -71,8 +71,9 @@ public sealed record PlayerCommand(string Kind, JsonElement Arguments);
 
 /// <summary>
 /// The command channel's vocabulary. Object orders name object addresses
-/// (<c>objects</c>), because stable entity IDs do not exist yet; the sink
-/// drops any the house does not own.
+/// (<c>objects</c>), optionally with the stable IDs seen for them
+/// (<c>unique_ids</c>, one per object); the sink drops any the house does not
+/// own or whose ID has changed.
 /// </summary>
 public static class PlayerCommandKinds
 {

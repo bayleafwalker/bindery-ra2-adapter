@@ -21,9 +21,15 @@ public sealed class Ra2yrcppSeatException(string message) : InvalidOperationExce
 /// refused until it has one. An observer client is refused by the fork itself
 /// (<c>order rejected: local player is an observer</c>).
 ///
-/// Stable entity IDs do not exist yet, so orders name object addresses. An
-/// address that the latest snapshot does not show as this house's is
-/// dropped; an order with none left is refused before it reaches the game.
+/// Orders name object addresses. An address that the latest snapshot does
+/// not show as this house's is dropped, and so is one whose stable ID
+/// (<c>Object.unique_id</c>) differs from the <c>unique_ids</c> the command
+/// gave for it: that object is gone and the address was reused. An order
+/// with no object left is refused before it reaches the game. The order
+/// carries the snapshot's IDs (<c>object_unique_ids</c>, and
+/// <c>target_unique_id</c> for a target) so the fork rejects it if the
+/// objects change before it runs; fork builds without stable IDs send none
+/// and ignore the fields.
 /// The fork re-checks ownership on the game thread, and an ERROR result is
 /// thrown as <see cref="Ra2yrcppCommandException"/>.
 ///
@@ -114,11 +120,19 @@ public sealed class Ra2yrcppCommandSink : IPlayerCommandSink, IAsyncDisposable
 
     private async Task Order(GameState state, House own, JsonElement arguments, UnitAction action, CancellationToken cancellationToken, Coordinates? coordinates = null, uint target = 0)
     {
-        HashSet<uint> owned = state.Objects.Where(o => o.PointerHouse == own.Self && !o.InLimbo).Select(static o => o.PointerSelf).ToHashSet();
-        uint[] addresses = Addresses(arguments).Where(owned.Contains).Distinct().ToArray();
+        Dictionary<uint, uint> owned = state.Objects.Where(o => o.PointerHouse == own.Self && !o.InLimbo).GroupBy(static o => o.PointerSelf).ToDictionary(static g => g.Key, static g => g.First().UniqueId);
+        uint[] requested = Addresses(arguments).ToArray();
+        uint[]? seen = UniqueIds(arguments, requested.Length);
+        uint[] addresses = requested
+            .Where((address, i) => owned.TryGetValue(address, out uint id) && (seen is null || seen[i] == 0 || id == 0 || seen[i] == id))
+            .Distinct()
+            .ToArray();
         if (addresses.Length == 0) throw new InvalidOperationException($"{action}: none of the objects is {House}'s in the latest snapshot");
         UnitOrder order = new() { Action = action, TargetObject = target };
         order.ObjectAddresses.AddRange(addresses);
+        uint[] ids = addresses.Select(a => owned[a]).ToArray();
+        if (ids.All(static id => id != 0)) order.ObjectUniqueIds.AddRange(ids);
+        if (target != 0 && state.Objects.FirstOrDefault(o => o.PointerSelf == target && !o.InLimbo) is { UniqueId: not 0 } targeted) order.TargetUniqueId = targeted.UniqueId;
         if (coordinates is not null) order.Coordinates = coordinates;
         await Client.RunAsync(order, cancellationToken).ConfigureAwait(false);
     }
@@ -169,6 +183,16 @@ public sealed class Ra2yrcppCommandSink : IPlayerCommandSink, IAsyncDisposable
         arguments.ValueKind == JsonValueKind.Object && arguments.TryGetProperty("objects", out JsonElement objects) && objects.ValueKind == JsonValueKind.Array
             ? objects.EnumerateArray().Select(static o => o.TryGetUInt32(out uint address) ? address : throw new ArgumentException("objects are object addresses"))
             : throw new ArgumentException("the order needs objects");
+
+    /// <summary>The stable IDs the controller saw, one per object, or null if it gave none.</summary>
+    private static uint[]? UniqueIds(JsonElement arguments, int count)
+    {
+        if (!arguments.TryGetProperty("unique_ids", out JsonElement ids) || ids.ValueKind == JsonValueKind.Null) return null;
+        uint[] values = ids.ValueKind == JsonValueKind.Array
+            ? ids.EnumerateArray().Select(static id => id.TryGetUInt32(out uint value) ? value : throw new ArgumentException("unique_ids are stable object IDs")).ToArray()
+            : throw new ArgumentException("unique_ids is a list");
+        return values.Length == count ? values : throw new ArgumentException("unique_ids needs one ID per object");
+    }
 
     private static uint Address(JsonElement arguments, string field) =>
         arguments.ValueKind == JsonValueKind.Object && arguments.TryGetProperty(field, out JsonElement value) && value.TryGetUInt32(out uint address)
