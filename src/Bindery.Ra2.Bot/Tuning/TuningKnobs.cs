@@ -48,6 +48,11 @@ public static class TuningKnobs
         new("MaxDefenses", 0, 12, true, "Static defense cap for defensive budgets."),
         new("HarassSquadSize", 2, 6, true, "Units in a harass squad."),
         new("ScoutRevisitSeconds", 20, 180, false, "A start location seen this recently is not re-scouted first."),
+        new("MinAttackForceRatio", 0.5, 2.5, false, "Own army over the upper enemy estimate an attack launch needs with no usable sighting."),
+        new("SeenAttackForceRatio", 0.0, 2.0, false, "The same launch ratio with a fresh, fully confident sighting; evidence weight slides between the two."),
+        new("EnemyPriorValuePerSecond", 4, 30, false, "Army value an unseen enemy is assumed to add per second after the opening."),
+        new("EnemyPriorMaxValue", 500, 5000, false, "Ceiling of the unseen-enemy prior."),
+        new("EnemyUncertaintyMargin", 0, 1.5, false, "Fraction the enemy estimate is raised by with no usable evidence."),
     ];
 
     public static IReadOnlyList<OptionKnob> Features { get; } =
@@ -75,6 +80,11 @@ public static class TuningKnobs
             "MaxDefenses" => options.MaxDefenses,
             "HarassSquadSize" => options.HarassSquadSize,
             "ScoutRevisitSeconds" => options.ScoutRevisitSeconds,
+            "MinAttackForceRatio" => options.MinAttackForceRatio,
+            "SeenAttackForceRatio" => options.SeenAttackForceRatio,
+            "EnemyPriorValuePerSecond" => options.EnemyPriorValuePerSecond,
+            "EnemyPriorMaxValue" => options.EnemyPriorMaxValue,
+            "EnemyUncertaintyMargin" => options.EnemyUncertaintyMargin,
             _ => throw new InvalidDataException($"Unknown operational knob '{name}'."),
         };
     }
@@ -98,6 +108,11 @@ public static class TuningKnobs
             "MaxDefenses" => options with { MaxDefenses = i },
             "HarassSquadSize" => options with { HarassSquadSize = i },
             "ScoutRevisitSeconds" => options with { ScoutRevisitSeconds = value },
+            "MinAttackForceRatio" => options with { MinAttackForceRatio = value },
+            "SeenAttackForceRatio" => options with { SeenAttackForceRatio = value },
+            "EnemyPriorValuePerSecond" => options with { EnemyPriorValuePerSecond = value },
+            "EnemyPriorMaxValue" => options with { EnemyPriorMaxValue = value },
+            "EnemyUncertaintyMargin" => options with { EnemyUncertaintyMargin = value },
             _ => throw new InvalidDataException($"Unknown operational knob '{name}'."),
         };
     }

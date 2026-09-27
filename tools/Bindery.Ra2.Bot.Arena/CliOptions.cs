@@ -22,7 +22,7 @@ public sealed record CliOptions(
     public const string Usage =
         "Usage: arena run --arms a,b --maps training|heldout|all --opponents ai-rush,ai-balanced[:easy|:medium|:hard],rush,turtle,live-rush,ai-horde,...|all|training|heldout --seeds N --out <dir> " +
         "[--oracle [both|all]] [--llm-fake | --llm-endpoint <openai-compatible base url> [--llm-model <id>]] [--max-seconds N] [--dataset <decisions.ndjson>] [--llm-latency <game seconds>] [--trace <dir>] " +
-        "[--benchmark standard|contested] [--opponent-income X] [--opponent-credits N] [--combat-noise F] [--allied-income X] [--allied-credits N] [--baseline <arm>] [--no-decisions] [--write-adoption <path>] [--personality aggressive,turtle,tech,harasser,none] [--rules <rules.json>]\n" +
+        "[--benchmark standard|contested] [--opponent-income X] [--opponent-credits N] [--combat-noise F] [--allied-income X] [--allied-credits N] [--baseline <arm>] [--no-decisions] [--write-adoption <path>] [--personality aggressive,turtle,tech,harasser,none] [--rules <rules.json>] [--knob Name=value ...]\n" +
         "       (arms: selector, bandit, llm-shadow, llm, llm+fast, distilled, llm-t0..llm-t3 or tiers, all; any with -oracle)\n" +
         "       arena replay <out>/decisions/<match>.ndjson [--out <replayed.ndjson>]\n" +
         "       arena analyze <out>/decisions/<match>.ndjson [--out <report.md>] [--narrate] [--llm-fake]";
@@ -42,6 +42,9 @@ public sealed record CliOptions(
     /// (<see cref="Bindery.Ra2.Bot.Playbooks.PlaybookRosterAdapter"/>).
     /// </summary>
     public string? RulesPath { get; init; }
+
+    /// <summary><c>--knob Name=value</c> overrides (tuning knob names), applied to arms, never to pinned or live-* opponents.</summary>
+    public IReadOnlyDictionary<string, double> ArmKnobs { get; init; } = new Dictionary<string, double>(StringComparer.Ordinal);
 
     /// <summary>Also write the run's <c>vocabulary-adoption.json</c> here (for example the embedded record in the Claude project).</summary>
     public string? WriteAdoption { get; init; }
@@ -123,6 +126,7 @@ public sealed record CliOptions(
         string? writeAdoption = null;
         List<string?> personalities = [null];
         string? rulesPath = null;
+        Dictionary<string, double> knobs = new(StringComparer.Ordinal);
 
         for (int i = 1; i < args.Count; i++)
         {
@@ -150,6 +154,22 @@ public sealed record CliOptions(
                 case "--max-seconds": maxSeconds = double.Parse(Next(args, ref i), CultureInfo.InvariantCulture); break;
                 case "--dataset": dataset = Next(args, ref i); break;
                 case "--trace": traceDir = Next(args, ref i); break;
+                case "--knob":
+                    {
+                        string spec = Next(args, ref i);
+                        int eq = spec.IndexOf('=', StringComparison.Ordinal);
+                        if (eq <= 0 || !double.TryParse(spec[(eq + 1)..], NumberStyles.Float, CultureInfo.InvariantCulture, out double value))
+                        {
+                            throw new ArgumentException($"--knob expects Name=value, got '{spec}'.");
+                        }
+                        string knob = spec[..eq];
+                        if (!Bindery.Ra2.Bot.Tuning.TuningKnobs.Operational.Any(k => k.Name == knob) && !Bindery.Ra2.Bot.Tuning.TuningKnobs.Features.Any(k => k.Name == knob))
+                        {
+                            throw new ArgumentException($"Unknown knob '{knob}'.");
+                        }
+                        knobs[knob] = value;
+                        break;
+                    }
                 case "--llm-latency": llmLatency = double.Parse(Next(args, ref i), CultureInfo.InvariantCulture); break;
                 case "--benchmark": benchmark = BenchmarkSettings.Preset(Next(args, ref i)); break;
                 case "--opponent-income": opponentIncome = double.Parse(Next(args, ref i), CultureInfo.InvariantCulture); break;
@@ -212,6 +232,7 @@ public sealed record CliOptions(
             WriteAdoption = writeAdoption,
             PersonalityList = personalities,
             RulesPath = rulesPath,
+            ArmKnobs = knobs,
             LlmEndpoint = llmFake && llmEndpoint is not null ? throw new ArgumentException("--llm-fake and --llm-endpoint are exclusive.") : llmEndpoint,
             LlmModel = llmModel,
         };

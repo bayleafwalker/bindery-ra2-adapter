@@ -64,6 +64,27 @@ namespace Bindery.Ra2.Bot.Operations;
 /// the planner uses the canonical <see cref="Arbitration.ConditionEvaluator.Holds"/>, the single
 /// definition of every metric shared with the validator and arbiter; a test may substitute a stub.
 /// </param>
+/// <param name="MinAttackForceRatio">
+/// Every fresh attack, whatever the playbook's own conditions, also needs own army value over
+/// <see cref="EnemyArmyBound.Upper"/> to reach this. A running attack is held by <see cref="AttackHoldFraction"/>
+/// and the retreat ratio, not re-gated.
+/// </param>
+/// <param name="SeenAttackForceRatio">
+/// The launch ratio when the enemy estimate rests on a fresh, fully confident sighting. The required ratio slides
+/// linearly from <see cref="MinAttackForceRatio"/> (no usable evidence) to this by <see cref="EnemyArmyBound.EvidenceWeight"/>.
+/// </param>
+/// <param name="EnemyPriorValuePerSecond">
+/// Army value an unseen enemy is assumed to add per second after <see cref="EnemyPriorStartSeconds"/>. From the
+/// 75th percentile of running-peak opponent army value on training maps against training opponents (0 until
+/// ~75 s, 1300 at 180 s); held-out maps and opponents were not used.
+/// </param>
+/// <param name="EnemyPriorStartSeconds">Match time before which the prior is 0 (openings field no army).</param>
+/// <param name="EnemyPriorMaxValue">Ceiling of the prior: the same training p75 levels off at 1600 from ~210 s.</param>
+/// <param name="EnemyEvidenceSeconds">Age of the newest enemy sighting at which the sighting no longer counts.</param>
+/// <param name="EnemyUncertaintyMargin">
+/// Fraction the enemy estimate is raised by with no usable evidence (scaled by the missing evidence weight),
+/// so the gate reads a lower confidence bound on the force ratio.
+/// </param>
 public sealed record OperationalOptions(
     string ControllerId = "ops",
     double DefaultHarvesterTargetPerRefinery = 3.0,
@@ -94,7 +115,14 @@ public sealed record OperationalOptions(
     double PlacementRetrySeconds = 3,
     double RejectedPlacementMemorySeconds = 120,
     bool ProductionChargedWhileBuilding = true,
-    double UnknownQueueReorderSeconds = 5)
+    double UnknownQueueReorderSeconds = 5,
+    double MinAttackForceRatio = 1.2,
+    double SeenAttackForceRatio = 0.8,
+    double EnemyPriorValuePerSecond = 12,
+    double EnemyPriorStartSeconds = 75,
+    double EnemyPriorMaxValue = 1600,
+    double EnemyEvidenceSeconds = 60,
+    double EnemyUncertaintyMargin = 0.5)
 {
     /// <summary>The evaluator actually used: <see cref="ConditionEvaluator"/> when set, else the default.</summary>
     public Func<Condition, StrategicFeatures, bool> Evaluator => ConditionEvaluator ?? Arbitration.ConditionEvaluator.Holds;

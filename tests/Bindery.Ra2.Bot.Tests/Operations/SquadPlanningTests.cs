@@ -150,4 +150,88 @@ public sealed class SquadPlanningTests
         Assert.Equal(ObjectiveKind.DefendRegion, squad.Objective);
         Assert.Equal(Mid, squad.TargetRegion);
     }
+
+    /// <summary>Army value <paramref name="own"/> against an enemy estimate of <paramref name="seen"/> resting on
+    /// evidence of the given confidence and age.</summary>
+    private static StrategicFeatures Facing(BeliefSnapshot belief, double own, double seen, double confidence, double newestAgeSeconds)
+    {
+        StrategicFeatures features = Fixture.Features(belief);
+        return features with
+        {
+            Army = new ArmyFeatures(Trend.Flat(own), new Dictionary<UnitRole, double>(), [], Trend.Flat(0), Trend.Flat(0)),
+            Enemy = features.Enemy with
+            {
+                EstimatedArmyValue = Trend.Flat(seen),
+                ArmyValueConfidence = confidence,
+                NewestObservationAgeSeconds = newestAgeSeconds,
+            },
+        };
+    }
+
+    private static ObjectiveKind FirstOrder(double seconds, StrategicFeatures features) =>
+        Assert.Single(Planner().Plan(Belief(seconds), features, Intent(new Objective(ObjectiveKind.AttackRegion, Fixture.Front, null, 1)), new FakeLeaseManager()).Squads).Objective;
+
+    [Fact]
+    public void An_unseen_enemy_is_not_assumed_to_have_nothing_once_the_opening_is_over()
+    {
+        // 200 s in, nothing scouted: the prior (12/s after 75 s = 1500, x1.5 unscouted margin) outweighs a 1500 army.
+        Assert.Equal(ObjectiveKind.DefendRegion, FirstOrder(200, Facing(Belief(200), own: 1500, seen: 0, confidence: 0, newestAgeSeconds: 200)));
+    }
+
+    [Fact]
+    public void In_the_opening_an_unseen_enemy_does_not_hold_the_army_back()
+    {
+        Assert.Equal(ObjectiveKind.AttackRegion, FirstOrder(60, Facing(Belief(60), own: 1500, seen: 0, confidence: 0, newestAgeSeconds: 60)));
+    }
+
+    [Fact]
+    public void A_freshly_scouted_weak_enemy_is_attacked_even_late()
+    {
+        Assert.Equal(ObjectiveKind.AttackRegion, FirstOrder(200, Facing(Belief(200), own: 1500, seen: 500, confidence: 1, newestAgeSeconds: 0)));
+    }
+
+    [Fact]
+    public void A_freshly_scouted_stronger_enemy_is_not_attacked_on_own_army_value_alone()
+    {
+        Assert.Equal(ObjectiveKind.DefendRegion, FirstOrder(60, Facing(Belief(60), own: 1500, seen: 2000, confidence: 1, newestAgeSeconds: 0)));
+    }
+
+    [Fact]
+    public void Stale_sightings_fade_back_toward_the_prior()
+    {
+        // Seen weak 60 s ago: the sighting no longer counts, so the late-game prior applies again.
+        Assert.Equal(ObjectiveKind.DefendRegion, FirstOrder(200, Facing(Belief(200), own: 1500, seen: 500, confidence: 1, newestAgeSeconds: 60)));
+    }
+
+    private static BeliefSnapshot WithEnemyBase(double seconds, double baseSeenSecondsAgo) =>
+        Belief(seconds) with
+        {
+            Enemies =
+            [
+                new EnemyContact(new EntityId(900), new PlayerId(1), "cy", UnitRole.Production, EntityKind.Building, new Cell(50, 50), Fixture.Front,
+                    GameTime.FromSeconds(10), 1.0, 3000, 1.0, false),
+            ],
+            RegionLastSeen = new Dictionary<RegionId, GameTime> { [Fixture.Front] = GameTime.FromSeconds(seconds - baseSeenSecondsAgo) },
+        };
+
+    [Fact]
+    public void A_freshly_scouted_enemy_base_with_no_army_in_it_counts_as_evidence()
+    {
+        // No army contact at all, but the enemy base region was looked at 5 s ago: the late prior no longer applies.
+        BeliefSnapshot belief = WithEnemyBase(200, baseSeenSecondsAgo: 5);
+        StrategicFeatures features = Facing(belief, own: 1500, seen: 0, confidence: 0, newestAgeSeconds: 190);
+        SquadOrder squad = Assert.Single(Planner().Plan(belief, features, Intent(new Objective(ObjectiveKind.AttackRegion, Fixture.Front, null, 1)), new FakeLeaseManager()).Squads);
+
+        Assert.Equal(ObjectiveKind.AttackRegion, squad.Objective);
+    }
+
+    [Fact]
+    public void A_long_unvisited_enemy_base_is_no_evidence()
+    {
+        BeliefSnapshot belief = WithEnemyBase(200, baseSeenSecondsAgo: 120);
+        StrategicFeatures features = Facing(belief, own: 1500, seen: 0, confidence: 0, newestAgeSeconds: 190);
+        SquadOrder squad = Assert.Single(Planner().Plan(belief, features, Intent(new Objective(ObjectiveKind.AttackRegion, Fixture.Front, null, 1)), new FakeLeaseManager()).Squads);
+
+        Assert.Equal(ObjectiveKind.DefendRegion, squad.Objective);
+    }
 }

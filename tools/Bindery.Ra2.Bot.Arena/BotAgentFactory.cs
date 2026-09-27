@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Globalization;
 using Bindery.Ra2.Bot.Arbitration;
+using Bindery.Ra2.Bot.Features;
+using Bindery.Ra2.Bot.Operations;
 using Bindery.Ra2.Bot.Claude;
 using Bindery.Ra2.Bot.Runtime;
 using Bindery.Ra2.Bot.Sim.Opponents;
@@ -24,6 +27,9 @@ public sealed class ArenaRunContext
 
     /// <summary>The model id sent to <see cref="LlmEndpoint"/>.</summary>
     public string LlmModel { get; }
+
+    /// <summary>Tuning-knob overrides for arms (never pinned or live-* opponents), from <c>--knob</c>.</summary>
+    public IReadOnlyDictionary<string, double> ArmKnobs { get; init; } = new Dictionary<string, double>(StringComparer.Ordinal);
 
     public bool LlmFake { get; }
 
@@ -282,7 +288,20 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
             onFinish = null;
             labels.Add("replay");
         }
-        BotRuntime runtime = StandardBot.Create(rules, playbooks, primary, fallback, shadow, log, options);
+        OperationalOptions? operations = null;
+        FeatureOptions? features = null;
+        if (!OpponentStyles.ContainsKey(name) && context.ArmKnobs.Count > 0)
+        {
+            operations = Tuning.TunedParameterSet.Active.ApplyTo(new OperationalOptions());
+            features = Tuning.TunedParameterSet.Active.ApplyTo(new FeatureOptions());
+            foreach ((string knob, double value) in context.ArmKnobs.OrderBy(static k => k.Key, StringComparer.Ordinal))
+            {
+                if (Tuning.TuningKnobs.Operational.Any(k => k.Name == knob)) operations = Tuning.TuningKnobs.Set(operations, knob, value);
+                else features = Tuning.TuningKnobs.Set(features, knob, value);
+                labels.Add(string.Create(CultureInfo.InvariantCulture, $"knob:{knob}={value}"));
+            }
+        }
+        BotRuntime runtime = StandardBot.Create(rules, playbooks, primary, fallback, shadow, log, options, operations, features);
         foreach (ClaudeStrategist strategist in claude)
         {
             strategist.ProposalFailed += (_, failure) =>

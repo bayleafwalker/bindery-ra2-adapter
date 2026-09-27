@@ -172,7 +172,12 @@ public sealed partial class OperationalPlanner
             double army = features.Army.ArmyValue.Current;
             double minArmy = intent.PlaybookParameters.TryGetValue("attackArmyValue", out double av) ? av : options.MinAttackArmyValue;
             bool conditions = intent.AttackConditions.All(c => options.Evaluator(c, features));
-            bool ready = wanted && (attacking ? army >= minArmy * options.AttackHoldFraction : conditions && army >= minArmy);
+            // Every launch is enemy-aware, whatever the playbook's own conditions read (several read own army only).
+            double baseSeenAge = EnemyBaseSeenAgeSeconds(belief);
+            double forceRatio = EnemyArmyBound.LowerForceRatio(army, features.Enemy, baseSeenAge, belief.Time.Seconds, options);
+            double requiredRatio = EnemyArmyBound.RequiredForceRatio(features.Enemy, baseSeenAge, options);
+            bool enemyAllows = forceRatio >= requiredRatio;
+            bool ready = wanted && (attacking ? army >= minArmy * options.AttackHoldFraction : conditions && enemyAllows && army >= minArmy);
             if (ready)
             {
                 RegionId target = ResolveAttackTarget(belief, graph, home, attack?.Region);
@@ -186,7 +191,7 @@ public sealed partial class OperationalPlanner
                 // With no attack coming, the army waits where the strategist asked it to defend (else at home).
                 RegionId staging = wanted ? StagingRegion(belief, features, intent, graph, home, attack?.Region) : defendObjective?.Region ?? home;
                 Fill(GetOrCreate(DefendSquad, ObjectiveKind.DefendRegion, staging, engage: true), pool);
-                if (wanted) notes.Add(string.Create(CultureInfo.InvariantCulture, $"squads: staging at {staging} (army {army:0}/{minArmy:0}, conditions {(conditions ? "hold" : "not met")})"));
+                if (wanted) notes.Add(string.Create(CultureInfo.InvariantCulture, $"squads: staging at {staging} (army {army:0}/{minArmy:0}, conditions {(conditions ? "hold" : "not met")}, force ratio {Math.Min(forceRatio, 99):0.00}/{requiredRatio:0.00})"));
             }
         }
 
@@ -408,6 +413,14 @@ public sealed partial class OperationalPlanner
         attackTarget = next ?? objective ?? home;
         return attackTarget.Value;
     }
+
+    /// <summary>Seconds since any region holding a known enemy building was last seen; infinity when none is known.</summary>
+    private static double EnemyBaseSeenAgeSeconds(BeliefSnapshot belief) =>
+        belief.Enemies
+            .Where(static c => !c.ConfirmedDestroyed && c.Kind == EntityKind.Building)
+            .Select(c => belief.RegionLastSeen.TryGetValue(c.LastSeenRegion, out GameTime seen) ? belief.Time.SecondsSince(seen) : double.PositiveInfinity)
+            .DefaultIfEmpty(double.PositiveInfinity)
+            .Min();
 
     private static RegionId? KnownEnemyBaseRegion(BeliefSnapshot belief, RegionGraph graph, RegionId home) =>
         belief.Enemies
