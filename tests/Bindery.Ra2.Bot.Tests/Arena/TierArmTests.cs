@@ -45,6 +45,21 @@ public sealed class TierArmTests
     }
 
     [Fact]
+    public void Shadow_tier_arms_play_the_selector_and_shadow_a_claude_strategist_at_their_tier()
+    {
+        CliOptions options = CliOptions.Parse(["run", "--arms", "llm-shadow-t3"]);
+        ArmSpec spec = Assert.Single(options.ArmSpecs());
+        Assert.True(spec.UsesLlm);
+
+        BotAgentFactory factory = new(RulesDatabase.LoadEmbeddedFixture(), PlaybookLibrary.LoadDefault(), new ArenaRunContext(llmFake: true, llmLatencySeconds: null));
+        using IArenaAgent agent = factory.Create(spec, new PlayerId(0), Faction.Allied, Bindery.Ra2.Bot.Sim.SimMaps.TwinValley.Map, 1);
+
+        ClaudeStrategist claude = Assert.Single(((BotArenaAgent)agent).ClaudeStrategists);
+        Assert.Equal(VocabularyTier.Full, claude.Options.Vocabulary);
+        Assert.Contains("shadow-vocabulary:Full", agent.Stats.Labels);
+    }
+
+    [Fact]
     public void Fake_evidence_never_adopts_a_tier_even_when_it_wins()
     {
         VocabularyAdoption adoption = Program.TierAdoption(Matches(), live: false, "2026-09-26");

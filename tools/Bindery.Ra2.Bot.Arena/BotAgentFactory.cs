@@ -148,8 +148,20 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
         ["llm-t3"] = VocabularyTier.Full,
     };
 
-    /// <summary>True for an arm name the arena can run (a <see cref="Arms"/> entry or a <see cref="TierArms"/> entry).</summary>
-    public static bool IsArm(string name) => Arms.Contains(name) || TierArms.ContainsKey(name);
+    /// <summary>
+    /// One <c>llm-shadow</c> arm per vocabulary tier: the selector plays and the LLM proposes at the tier in shadow, so a
+    /// wider vocabulary can be measured (validity, latency, agreement) without it deciding a match.
+    /// </summary>
+    public static IReadOnlyDictionary<string, VocabularyTier> ShadowTierArms { get; } = new SortedDictionary<string, VocabularyTier>(StringComparer.Ordinal)
+    {
+        ["llm-shadow-t0"] = VocabularyTier.PlaybookOnly,
+        ["llm-shadow-t1"] = VocabularyTier.Parameters,
+        ["llm-shadow-t2"] = VocabularyTier.ObjectivesAndRegions,
+        ["llm-shadow-t3"] = VocabularyTier.Full,
+    };
+
+    /// <summary>True for an arm name the arena can run (a <see cref="Arms"/>, <see cref="TierArms"/> or <see cref="ShadowTierArms"/> entry).</summary>
+    public static bool IsArm(string name) => Arms.Contains(name) || TierArms.ContainsKey(name) || ShadowTierArms.ContainsKey(name);
 
     /// <summary>
     /// Every opponent name <c>--opponents all</c> expands to: the independent scripted AI styles at hard difficulty
@@ -257,6 +269,11 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
                     break;
                 case "llm":
                     primary = Llm(StrategistMode.Strategic, claude, labels);
+                    break;
+                case var shadowArm when ShadowTierArms.TryGetValue(shadowArm, out VocabularyTier shadowTier):
+                    primary = new PlaybookSelector();
+                    shadow = Llm(StrategistMode.Strategic, claude, labels, shadowTier);
+                    labels.Add($"shadow-vocabulary:{shadowTier}");
                     break;
                 case var tierArm when TierArms.TryGetValue(tierArm, out VocabularyTier tier):
                     primary = Llm(StrategistMode.Strategic, claude, labels, tier);

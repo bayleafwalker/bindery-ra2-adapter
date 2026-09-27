@@ -17,7 +17,7 @@ public sealed record ArmSpec(string Name, bool Oracle, bool LlmFake)
     public override string ToString() => (Oracle ? $"{Name}-oracle" : Name) + (Personality is null ? string.Empty : $"@{Personality}");
 
     /// <summary>Arms that call the LLM: the LLM arms, and <c>distilled</c>, which escalates unusual states to it.</summary>
-    public bool UsesLlm => Name is "llm" or "llm-shadow" or "llm+fast" or "distilled" || BotAgentFactory.TierArms.ContainsKey(Name);
+    public bool UsesLlm => Name is "llm" or "llm-shadow" or "llm+fast" or "distilled" || BotAgentFactory.TierArms.ContainsKey(Name) || BotAgentFactory.ShadowTierArms.ContainsKey(Name);
 }
 
 /// <summary>Per-agent counters the arena turns into the report's metrics; filled from the bot's metrics and decision log.</summary>

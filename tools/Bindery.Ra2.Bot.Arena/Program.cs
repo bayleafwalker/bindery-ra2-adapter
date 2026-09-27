@@ -103,7 +103,7 @@ public static class Program
         BotAgentFactory factory = new(rules, playbooks, context);
         foreach (ArmSpec arm in options.ArmSpecs())
         {
-            if (!BotAgentFactory.IsArm(arm.Name)) throw new ArgumentException($"Unknown arm '{arm.Name}'. Arms: {string.Join(", ", BotAgentFactory.Arms.Concat(BotAgentFactory.TierArms.Keys))} (any with a -oracle suffix).");
+            if (!BotAgentFactory.IsArm(arm.Name)) throw new ArgumentException($"Unknown arm '{arm.Name}'. Arms: {string.Join(", ", BotAgentFactory.Arms.Concat(BotAgentFactory.TierArms.Keys).Concat(BotAgentFactory.ShadowTierArms.Keys))} (any with a -oracle suffix).");
         }
         foreach (string opponent in options.Opponents)
         {
