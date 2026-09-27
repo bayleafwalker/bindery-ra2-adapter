@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text.Json;
 using Bindery.Ra2.Adapter;
 using Bindery.Ra2.Adapter.Channel;
+using Bindery.Ra2.Adapter.Ra2yrcpp;
 
 if (args.Length == 2 && args[0] == "report")
 {
@@ -47,6 +48,7 @@ try
         await File.ReadAllTextAsync(args[0]),
         new JsonSerializerOptions(JsonSerializerDefaults.Web))
         ?? throw new InvalidOperationException("settings file was empty");
+    settings.Validate();
     LiveAcceptanceSettings live = settings.Live;
     Uri serviceUri = new(live.ServiceUri, UriKind.Absolute);
     // Same connection policy as the acceptance harness: matches are long and
@@ -93,9 +95,19 @@ try
         Console.WriteLine($"match {context.MatchIndex}: session_idempotency_key={match.SessionIdempotencyKey} evidence={directory}");
         return match.ToRequest(directory, settings.Seed);
     },
-    new LiveChannelMatchOptions(Telemetry: settings.TelemetryFor, Overlay: settings.Obs?.OverlayTextInput is { Length: > 0 } ? obs : null));
-    if (string.IsNullOrWhiteSpace(settings.TelemetryRecording))
+    new LiveChannelMatchOptions(
+        Telemetry: settings.TelemetryFor,
+        // A fresh controller and connection per match, into the agent
+        // client's own service; the launcher disposes the seat, and with it
+        // the connection, when the match ends.
+        AgentSeat: settings.AgentSeat is null ? null : launch => settings.AgentSeat.CreateSeat(launch).Seat,
+        Overlay: settings.Obs?.OverlayTextInput is { Length: > 0 } ? obs : null));
+    if (settings.LiveTelemetry is { } liveTelemetry)
+        Console.WriteLine($"telemetry: live ra2yrcpp at {liveTelemetry.Endpoint}");
+    else if (string.IsNullOrWhiteSpace(settings.TelemetryRecording))
         Console.WriteLine("telemetry: none attached; match records will carry no winner");
+    if (settings.AgentSeat is { } agent)
+        Console.WriteLine($"agent seat: house={agent.House} client={agent.ClientInstanceId} routine={agent.Routine}");
 
     ChannelRequest request = settings.ToRequest(live);
     NdjsonChannelRecordSink records = new(channelDirectory);
@@ -166,8 +178,38 @@ internal sealed class ChannelToolSettings
     /// </summary>
     public string TelemetryRecording { get; init; } = string.Empty;
 
+    /// <summary>
+    /// Live telemetry from a client's ra2yrcpp service, instead of a
+    /// recording. Omit to keep the recording (or no telemetry).
+    /// </summary>
+    public Ra2yrcppLiveTelemetrySettings? LiveTelemetry { get; init; }
+
+    /// <summary>
+    /// Put the rules playbook controller in one player seat, with live
+    /// commands into that player's client. Needs telemetry. Omit for two
+    /// players as launched, today's proven path.
+    /// </summary>
+    public Ra2yrcppAgentSeatSettings? AgentSeat { get; init; }
+
+    public void Validate()
+    {
+        Ra2yrcppChannelSettings.Validate(LiveTelemetry, TelemetryRecording, AgentSeat);
+        if (AgentSeat is null) return;
+        LiveClientLaunch? launch = string.Equals(AgentSeat.ClientInstanceId, Live.FirstClientInstanceId, StringComparison.Ordinal) ? Live.FirstLaunch
+            : string.Equals(AgentSeat.ClientInstanceId, Live.SecondClientInstanceId, StringComparison.Ordinal) ? Live.SecondLaunch
+            : null;
+        if (launch is null) throw new ArgumentException($"agentSeat.clientInstanceId {AgentSeat.ClientInstanceId} is not one of the two players");
+        if (!string.Equals(launch.PlayerName, AgentSeat.House, StringComparison.Ordinal))
+            throw new ArgumentException($"agentSeat.house must be that client's playerName, {launch.PlayerName}");
+        if (string.IsNullOrWhiteSpace(launch.CommandEndpoint))
+            throw new ArgumentException("the agent client's launch needs commandEndpoint, its own ra2yrcpp service");
+        Ra2yrcppClient.UriFor(Ra2YrcppEndpoint.Parse(launch.CommandEndpoint));
+    }
+
     public IRa2TelemetrySource? TelemetryFor(ChannelMatchContext context) =>
-        string.IsNullOrWhiteSpace(TelemetryRecording)
+        LiveTelemetry is not null
+            ? LiveTelemetry.Create()
+            : string.IsNullOrWhiteSpace(TelemetryRecording)
             ? null
             : new NdjsonTelemetrySource(
                 TelemetryRecording
@@ -193,6 +235,7 @@ internal sealed class ChannelToolSettings
             new CaptureSource(captureId, captureClass),
             new BroadcastPlan(destinations, new BroadcastScenes(MatchScene, HoldingScene), PublishPublicly),
             MaximumMatches,
+            AgentSeat?.ToAssignment(),
             HoldingDuration: TimeSpan.FromSeconds(HoldingSeconds));
     }
 }

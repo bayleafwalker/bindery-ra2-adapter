@@ -12,5 +12,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Bindery.Ra2.Adapter/Bindery.Ra2.Adapter.csproj" />
+    <ProjectReference Include="../../src/Bindery.Ra2.Adapter.Ra2yrcpp/Bindery.Ra2.Adapter.Ra2yrcpp.csproj" />
   </ItemGroup>
 </Project>

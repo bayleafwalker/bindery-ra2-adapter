@@ -58,6 +58,7 @@ dotnet build tools/Bindery.Ra2.Adapter.LiveAcceptance/Bindery.Ra2.Adapter.LiveAc
 dotnet build tools/Bindery.Ra2.Adapter.ControlPlaneGate/Bindery.Ra2.Adapter.ControlPlaneGate.csproj --configuration Release
 dotnet build tools/Bindery.Ra2.Adapter.Channel/Bindery.Ra2.Adapter.Channel.csproj --configuration Release
 dotnet build src/Bindery.Ra2.Adapter.Planner.Claude/Bindery.Ra2.Adapter.Planner.Claude.csproj --configuration Release
+dotnet build src/Bindery.Ra2.Adapter.Ra2yrcpp/Bindery.Ra2.Adapter.Ra2yrcpp.csproj --configuration Release
 ```
 
 The channel tool plays the live match back to back and drives OBS:
@@ -67,7 +68,11 @@ dotnet run --project tools/Bindery.Ra2.Adapter.Channel -- C:/private/channel-set
 ```
 
 Start from [`docs/channel-settings.example.json`](docs/channel-settings.example.json).
-Omit `obs` to run the match loop without broadcasting. Both the channel and
+Omit `obs` to run the match loop without broadcasting. Omit `agentSeat` and
+`liveTelemetry` for the proven two-client path; `telemetryRecording` (a path
+with `{channel}` and `{match}`) follows an NDJSON recording instead of the
+live ra2yrcpp service. The live transport and agent seat have only been
+tested against a fake service, not a live game. Both the channel and
 live-acceptance tools accept an optional spectator client (`observerIdentity`,
 `observerClientInstanceId`, `observerLaunch`, `observerHost`).
 

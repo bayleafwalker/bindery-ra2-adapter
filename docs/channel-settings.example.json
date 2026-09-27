@@ -20,7 +20,16 @@
   "twitchUri": "rtmp://live.twitch.tv/app",
   "twitchStreamKeyEnvironmentVariable": "TWITCH_STREAM_KEY",
   "publishPublicly": false,
-  "telemetryRecording": "C:/Temp/bindery-ra2-channel/{channel}/telemetry/match-{match}.ndjson",
+  "liveTelemetry": {
+    "endpoint": "192.168.122.11:14521",
+    "pollMilliseconds": 500
+  },
+  "agentSeat": {
+    "house": "player-b",
+    "clientInstanceId": "<stable-machine-b-instance>",
+    "routine": "deploy_mcv",
+    "controllerVersion": "0.1.0"
+  },
   "live": {
     "serviceUri": "https://control-plane.example.invalid",
     "firstIdentity": {
@@ -73,7 +82,8 @@
         "-SPAWN",
         "-CD",
         "-LOG"
-      ]
+      ],
+      "commandEndpoint": "192.168.122.10:14521"
     },
     "evidenceDirectory": "C:/Temp/bindery-ra2-channel",
     "region": "eu-north",
