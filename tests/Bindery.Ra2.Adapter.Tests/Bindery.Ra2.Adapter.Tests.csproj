@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Bindery.Ra2.Adapter/Bindery.Ra2.Adapter.csproj" />
+    <ProjectReference Include="../../src/Bindery.Ra2.Bot/Bindery.Ra2.Bot.csproj" />
     <ProjectReference Include="../../src/Bindery.Ra2.Adapter.Planner.Claude/Bindery.Ra2.Adapter.Planner.Claude.csproj" />
     <ProjectReference Include="../../src/Bindery.Ra2.Adapter.Ra2yrcpp/Bindery.Ra2.Adapter.Ra2yrcpp.csproj" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />

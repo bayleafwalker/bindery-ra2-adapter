@@ -5,5 +5,8 @@
     <RootNamespace>Bindery.Ra2.Adapter</RootNamespace>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Bindery.Ra2.Bot/Bindery.Ra2.Bot.csproj" />
+  </ItemGroup>
 </Project>
 

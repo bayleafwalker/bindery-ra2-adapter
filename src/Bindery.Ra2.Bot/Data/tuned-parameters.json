@@ -1,0 +1,174 @@
+{
+  "schemaVersion": 1,
+  "adopted": false,
+  "playbooks": {
+    "allied-boom": {
+      "expandAtSeconds": 141.730478
+    },
+    "allied-grizzly-timing": {
+      "attackArmyValue": 1534.035804
+    },
+    "allied-ifv-mix": {
+      "harvesterTarget": 3.182152
+    },
+    "allied-prism-turtle": {
+      "expandAtSeconds": 185.036529
+    },
+    "generic-expand": {
+      "expandAtSeconds": 152.243198
+    },
+    "soviet-apoc-tech": {
+      "expandAtSeconds": 139.679193
+    },
+    "soviet-flak-mix": {
+      "harvesterTarget": 3.007515
+    },
+    "soviet-rhino-rush": {
+      "attackArmyValue": 1822.199693
+    },
+    "soviet-turtle": {
+      "expandAtSeconds": 178.479815
+    }
+  },
+  "operational": {
+    "AttackHoldFraction": 0.614683,
+    "DefaultExpandAtSeconds": 177.276284,
+    "DefaultHarvesterTargetPerRefinery": 2.941522,
+    "DefaultRetreatBelowForceRatio": 0.803765,
+    "ExtraProductionCredits": 1508,
+    "HarassSquadSize": 3,
+    "MaxDefenses": 9,
+    "MaxProductionBuildings": 4,
+    "MaxRefineries": 5,
+    "MinAttackArmyValue": 1843.216397,
+    "PowerBuffer": 72,
+    "ScoutRevisitSeconds": 136.361727
+  },
+  "features": {
+    "ArmyValueSwingThreshold": 0.288782,
+    "SlowestTypicalSpeed": 3.679068,
+    "ThreatSearchCells": 21.627546
+  },
+  "provenance": {
+    "tool": "tools/Bindery.Ra2.Bot.Tune search",
+    "algorithm": "sep-CMA-ES (mu/mu_w, lambda) lambda=12 mu=6 sigma0=0.2, unit-cube reflection, SplitMix64",
+    "mode": "benchmark",
+    "generations": 24,
+    "population": 12,
+    "parents": 6,
+    "rngSeed": 1,
+    "matchSeeds": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54
+    ],
+    "opponents": [
+      "ai-rush",
+      "ai-balanced",
+      "ai-turtle",
+      "ai-air",
+      "rush",
+      "turtle",
+      "tech",
+      "harass",
+      "balanced",
+      "bot:default",
+      "bot:champion"
+    ],
+    "maps": [
+      "twin-valley",
+      "river-crossing",
+      "island-bridges"
+    ],
+    "tradeWeight": 0.1,
+    "matchesPlayed": 22770,
+    "defaultTrainingFitness": 0.9972431831802174,
+    "tunedTrainingFitness": 0.9920714783405101,
+    "date": "2026-09-26",
+    "sourceCommit": "2322ab8"
+  },
+  "validation": {
+    "maps": [
+      "open-steppe",
+      "fortress-choke"
+    ],
+    "opponents": [
+      "ai-rush",
+      "ai-balanced",
+      "ai-turtle",
+      "ai-air",
+      "rush",
+      "turtle",
+      "tech",
+      "harass",
+      "balanced"
+    ],
+    "seeds": 20,
+    "matches": 360,
+    "defaultWins": 360,
+    "tunedWins": 360,
+    "defaultFitness": 1.0975396963227604,
+    "tunedFitness": 1.0976265254091182,
+    "pairedFitnessDifference": 8.68290863579165E-05,
+    "pairedLow": -0.000141809920179323,
+    "pairedHigh": 0.000315468092895156,
+    "headToHeadWins": 40,
+    "headToHeadMatches": 80,
+    "controlWins": 40,
+    "controlMatches": 80,
+    "rule": "Adopt only if, on held-out maps: (1) the tuned bot wins at least as many benchmark matches as the untuned bot; (2) the paired per-match fitness difference (tuned - untuned, same opponent/map/seed) has a 95% interval entirely above 0; and (3) in head-to-head play against the untuned bot the tuned bot wins at least as often as the untuned bot does against itself (the seat-bias control).",
+    "adopted": false,
+    "date": "2026-09-26"
+  }
+}

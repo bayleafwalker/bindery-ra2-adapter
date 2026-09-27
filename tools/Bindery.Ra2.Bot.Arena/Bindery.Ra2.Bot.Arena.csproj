@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>Bindery.Ra2.Bot.Arena</AssemblyName>
+    <RootNamespace>Bindery.Ra2.Bot.Arena</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!-- Decision logs and their hashes must not depend on the machine locale. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Bindery.Ra2.Bot/Bindery.Ra2.Bot.csproj" />
+    <ProjectReference Include="../../src/Bindery.Ra2.Bot.Sim/Bindery.Ra2.Bot.Sim.csproj" />
+    <ProjectReference Include="../../src/Bindery.Ra2.Bot.Claude/Bindery.Ra2.Bot.Claude.csproj" />
+    <ProjectReference Include="../Bindery.Ra2.Bot.Baseline/Bindery.Ra2.Bot.Baseline.csproj" />
+  </ItemGroup>
+</Project>
