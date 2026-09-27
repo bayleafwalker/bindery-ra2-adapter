@@ -19,7 +19,7 @@ public sealed record OptionKnob(string Name, double Min, double Max, bool Intege
 /// would let the search drift it at random and publish the drift as a "tuned" value.
 /// </summary>
 /// <remarks>
-/// Deliberately excluded: <c>ReinforceSquadTargetSize</c> (declared, read by nothing), controller ids, lease
+/// Deliberately excluded: controller ids, lease
 /// timings and placement search geometry (mechanics, not strategy), and the feature history/event windows
 /// the spec fixes (15 s swing window, 60 s scouting window).
 /// </remarks>
@@ -47,6 +47,7 @@ public static class TuningKnobs
         new("MaxRefineries", 1, 6, true, "Refinery cap (also capped by ore regions)."),
         new("MaxDefenses", 0, 12, true, "Static defense cap for defensive budgets."),
         new("HarassSquadSize", 2, 6, true, "Units in a harass squad."),
+        new("ReinforceSquadTargetSize", 1, 8, true, "Units built during an attack that gather before joining it together."),
         new("ScoutRevisitSeconds", 20, 180, false, "A start location seen this recently is not re-scouted first."),
         new("MinAttackForceRatio", 0.5, 2.5, false, "Own army over the upper enemy estimate an attack launch needs with no usable sighting."),
         new("SeenAttackForceRatio", 0.0, 2.0, false, "The same launch ratio with a fresh, fully confident sighting; evidence weight slides between the two."),
@@ -79,6 +80,7 @@ public static class TuningKnobs
             "MaxRefineries" => options.MaxRefineries,
             "MaxDefenses" => options.MaxDefenses,
             "HarassSquadSize" => options.HarassSquadSize,
+            "ReinforceSquadTargetSize" => options.ReinforceSquadTargetSize,
             "ScoutRevisitSeconds" => options.ScoutRevisitSeconds,
             "MinAttackForceRatio" => options.MinAttackForceRatio,
             "SeenAttackForceRatio" => options.SeenAttackForceRatio,
@@ -107,6 +109,7 @@ public static class TuningKnobs
             "MaxRefineries" => options with { MaxRefineries = i },
             "MaxDefenses" => options with { MaxDefenses = i },
             "HarassSquadSize" => options with { HarassSquadSize = i },
+            "ReinforceSquadTargetSize" => options with { ReinforceSquadTargetSize = i },
             "ScoutRevisitSeconds" => options with { ScoutRevisitSeconds = value },
             "MinAttackForceRatio" => options with { MinAttackForceRatio = value },
             "SeenAttackForceRatio" => options with { SeenAttackForceRatio = value },

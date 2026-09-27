@@ -22,7 +22,8 @@ namespace Bindery.Ra2.Bot.Operations;
 /// <param name="SquadLeasePriority">Priority used when acquiring unit leases for squads.</param>
 /// <param name="HarassSquadSize">Unit count for a harass squad.</param>
 /// <param name="ReinforceSquadTargetSize">
-/// A squad below this unit count is considered "under strength" and receives reinforcements.
+/// Reinforcement batch size: units built while an attack runs gather at the staging region until this many have
+/// assembled, then join the attack together.
 /// </param>
 /// <param name="BuildSearchRings">How many square rings the placement search expands outward.</param>
 /// <param name="BuildGridStep">Cell spacing between placement candidates and the clearance from existing buildings.</param>
@@ -93,7 +94,7 @@ public sealed record OperationalOptions(
     double SquadLeaseTtlSeconds = 5.0,
     int SquadLeasePriority = 10,
     int HarassSquadSize = 3,
-    int ReinforceSquadTargetSize = 4,
+    int ReinforceSquadTargetSize = 2,
     int BuildSearchRings = 16,
     int BuildGridStep = 3,
     Func<Condition, StrategicFeatures, bool>? ConditionEvaluator = null,

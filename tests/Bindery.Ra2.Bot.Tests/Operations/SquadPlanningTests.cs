@@ -33,8 +33,8 @@ public sealed class SquadPlanningTests
     private static OwnEntity Yard() =>
         new(new EntityId(100), "cy", UnitRole.Production, EntityKind.Building, new Cell(10, 10), Fixture.Home, 1.0, 3000, false);
 
-    private static OperationalPlanner Planner() =>
-        new(new FakeRulesDatabase([Fixture.Combat("tank", UnitRole.AntiArmor, QueueKind.Vehicle, 800, 6)]), new FakePlaybookLibrary([]), new OperationalOptions());
+    private static OperationalPlanner Planner(OperationalOptions? options = null) =>
+        new(new FakeRulesDatabase([Fixture.Combat("tank", UnitRole.AntiArmor, QueueKind.Vehicle, 800, 6)]), new FakePlaybookLibrary([]), options ?? new OperationalOptions());
 
     private static BeliefSnapshot Belief(double seconds = 0) =>
         Fixture.Belief(own: [Tank(1), Tank(2), Yard()], time: GameTime.FromSeconds(seconds)) with { Map = Map() };
@@ -233,5 +233,41 @@ public sealed class SquadPlanningTests
         SquadOrder squad = Assert.Single(Planner().Plan(belief, features, Intent(new Objective(ObjectiveKind.AttackRegion, Fixture.Front, null, 1)), new FakeLeaseManager()).Squads);
 
         Assert.Equal(ObjectiveKind.DefendRegion, squad.Objective);
+    }
+
+    private static BeliefSnapshot WithTanks(double seconds, int count) =>
+        Fixture.Belief(own: [.. Enumerable.Range(1, count).Select(i => Tank((uint)i)), Yard()], time: GameTime.FromSeconds(seconds)) with { Map = Map() };
+
+    private static Dictionary<string, SquadOrder> Pass(OperationalPlanner planner, FakeLeaseManager leases, BeliefSnapshot belief) =>
+        planner.Plan(belief, Ready(belief), Intent(new Objective(ObjectiveKind.AttackRegion, Fixture.Front, null, 1)), leases)
+            .Squads.ToDictionary(static s => s.SquadId, StringComparer.Ordinal);
+
+    [Fact]
+    public void Units_built_during_an_attack_gather_before_joining_it()
+    {
+        OperationalPlanner planner = Planner(new OperationalOptions { ReinforceSquadTargetSize = 4 });
+        FakeLeaseManager leases = new();
+        Assert.Equal([new EntityId(1), new EntityId(2)], Pass(planner, leases, WithTanks(0, 2))["attack"].Units);
+
+        // Two new tanks: fewer than the batch size (4), so they wait at the staging region instead of trickling out.
+        Dictionary<string, SquadOrder> next = Pass(planner, leases, WithTanks(5, 4));
+        Assert.Equal([new EntityId(1), new EntityId(2)], next["attack"].Units);
+        SquadOrder reinforce = next["reinforce"];
+        Assert.Equal([new EntityId(3), new EntityId(4)], reinforce.Units);
+        Assert.NotEqual(Fixture.Front, reinforce.TargetRegion);
+    }
+
+    [Fact]
+    public void A_full_batch_of_reinforcements_joins_the_attack()
+    {
+        OperationalPlanner planner = Planner(new OperationalOptions { ReinforceSquadTargetSize = 4 });
+        FakeLeaseManager leases = new();
+        Pass(planner, leases, WithTanks(0, 2));
+        Pass(planner, leases, WithTanks(5, 4));
+
+        Dictionary<string, SquadOrder> next = Pass(planner, leases, WithTanks(10, 6));
+        Assert.False(next.ContainsKey("reinforce"));
+        Assert.Equal(6, next["attack"].Units.Count);
+        Assert.Equal(Fixture.Front, next["attack"].TargetRegion);
     }
 }

@@ -7,7 +7,7 @@ namespace Bindery.Ra2.Bot.Operations;
 /// <summary>
 /// Squad formation and objective assignment. Membership is recomputed on every
 /// pass from the live combat units, except for the persistent scout and harass
-/// squads, and every squad has a stable id so tactical hysteresis state survives:
+/// squads and a running attack's members, and every squad has a stable id so tactical hysteresis state survives:
 /// <list type="bullet">
 /// <item><c>scout</c>: one cheap, fast unit while the intent has a
 /// <see cref="ObjectiveKind.Scout"/> objective, visiting the objective's own region and then the intent's
@@ -32,6 +32,9 @@ namespace Bindery.Ra2.Bot.Operations;
 /// <see cref="StrategicIntent.RegionsOfInterest"/> that is reachable, not the attack target and not enemy-held,
 /// else at the own building region nearest the target; with no attack wanted it waits at the DefendRegion
 /// objective's region, else at home. Defenders of a region holding own buildings never retreat.</item>
+/// <item><c>reinforce</c>: while an attack runs, units that were not in it on the previous pass wait, engaged, at the
+/// staging region until <see cref="OperationalOptions.ReinforceSquadTargetSize"/> of them have gathered, then join the
+/// attack together (or at once when no attacker survives).</item>
 /// <item><c>attack</c>: everything else once an attack is wanted (an
 /// <see cref="ObjectiveKind.AttackRegion"/> or <see cref="ObjectiveKind.DenyExpansion"/> objective, the
 /// higher-ranked one giving the target, or attack conditions on any
@@ -56,6 +59,7 @@ public sealed partial class OperationalPlanner
     private const string AttackSquad = "attack";
     private const string DefendSquad = "defend";
     private const string RetreatSquad = "retreat";
+    private const string ReinforceSquad = "reinforce";
 
     private readonly Dictionary<string, SquadState> squads = new(StringComparer.Ordinal);
     private RegionId? scoutTarget;
@@ -120,7 +124,7 @@ public sealed partial class OperationalPlanner
             harassReturning = false;
         }
 
-        foreach (string id in new[] { AttackSquad, DefendSquad, RetreatSquad }) Disband(id);
+        foreach (string id in new[] { AttackSquad, DefendSquad, RetreatSquad, ReinforceSquad }) Disband(id);
 
         Objective? retreat = intent.Objectives.Where(static o => o.Kind == ObjectiveKind.Retreat).OrderBy(static o => o.Priority).FirstOrDefault();
         double threat = ConditionEvaluator.BaseThreatRatio(features);
@@ -181,8 +185,26 @@ public sealed partial class OperationalPlanner
             if (ready)
             {
                 RegionId target = ResolveAttackTarget(belief, graph, home, attack?.Region);
+                bool continuing = attacking;
                 attacking = true;
-                Fill(GetOrCreate(AttackSquad, ObjectiveKind.AttackRegion, target, engage: true), pool);
+                SquadState attackers = GetOrCreate(AttackSquad, ObjectiveKind.AttackRegion, target, engage: true);
+                // A running attack keeps its members; units built since gather at the staging region and join in
+                // batches, instead of each walking to the front alone and dying piecemeal.
+                HashSet<EntityId> wasAttacking = continuing && previous.TryGetValue(AttackSquad, out List<EntityId>? members) ? [.. members] : [];
+                List<OwnEntity> newcomers = [.. pool.Where(u => !wasAttacking.Contains(u.Id))];
+                bool survivors = pool.Count > newcomers.Count;
+                if (survivors && newcomers.Count > 0 && newcomers.Count < options.ReinforceSquadTargetSize)
+                {
+                    pool.RemoveAll(u => !wasAttacking.Contains(u.Id));
+                    Fill(attackers, pool);
+                    RegionId staging = StagingRegion(belief, features, intent, graph, home, attack?.Region);
+                    Fill(GetOrCreate(ReinforceSquad, ObjectiveKind.DefendRegion, staging, engage: true), newcomers);
+                    notes.Add(string.Create(CultureInfo.InvariantCulture, $"squads: {newcomers.Count} reinforcements gathering at {staging} (batch {options.ReinforceSquadTargetSize})"));
+                }
+                else
+                {
+                    Fill(attackers, pool);
+                }
                 notes.Add(string.Create(CultureInfo.InvariantCulture, $"squads: attacking {target} with army value {army:0}"));
             }
             else
