@@ -25,6 +25,8 @@ jobs:
           [scriptblock]::Create((Get-Content ./ci/verify-live-qualification.ps1 -Raw)) | Out-Null
       - name: Restore adapter
         run: dotnet restore src/Bindery.Ra2.Adapter/Bindery.Ra2.Adapter.csproj
+      - name: Restore ra2yrcpp transport
+        run: dotnet restore src/Bindery.Ra2.Adapter.Ra2yrcpp/Bindery.Ra2.Adapter.Ra2yrcpp.csproj
       - name: Restore tests
         run: dotnet restore tests/Bindery.Ra2.Adapter.Tests/Bindery.Ra2.Adapter.Tests.csproj
       - name: Restore live acceptance harness
@@ -37,6 +39,8 @@ jobs:
         run: dotnet restore tools/Bindery.Ra2.Adapter.Channel/Bindery.Ra2.Adapter.Channel.csproj
       - name: Build adapter
         run: dotnet build src/Bindery.Ra2.Adapter/Bindery.Ra2.Adapter.csproj --configuration Release --no-restore
+      - name: Build ra2yrcpp transport
+        run: dotnet build src/Bindery.Ra2.Adapter.Ra2yrcpp/Bindery.Ra2.Adapter.Ra2yrcpp.csproj --configuration Release --no-restore
       - name: Build live acceptance harness
         run: dotnet build tools/Bindery.Ra2.Adapter.LiveAcceptance/Bindery.Ra2.Adapter.LiveAcceptance.csproj --configuration Release --no-restore
       - name: Build appliance manifest tool

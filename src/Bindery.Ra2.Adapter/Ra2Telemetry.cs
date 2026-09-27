@@ -48,9 +48,10 @@ public sealed record Ra2TelemetryCapture(
     string? RecordingPath);
 
 /// <summary>
-/// Deliberate seam for the native ra2yrcpp fork. The protobuf/TCP framing and
-/// generated messages belong to that native component, so this repository does
-/// not invent a second decoder or vendor its generated code.
+/// Deliberate seam for the native ra2yrcpp fork. This core library carries no
+/// protobuf framing or generated messages; the live WebSocket client and its
+/// generated code live in <c>Bindery.Ra2.Adapter.Ra2yrcpp</c>, which
+/// implements this interface.
 /// </summary>
 public interface IRa2TelemetrySource
 {

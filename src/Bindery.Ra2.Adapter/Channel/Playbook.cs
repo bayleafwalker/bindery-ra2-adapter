@@ -13,7 +13,9 @@ namespace Bindery.Ra2.Adapter.Channel;
 public sealed record PayloadFields(
     string House = "house",
     string Credits = "credits",
-    string Type = "type");
+    string Type = "type",
+    string Object = "object",
+    string UniqueId = "unique_id");
 
 /// <summary>A compact account of what one house knows, for triggers and planners.</summary>
 public sealed record PlayerViewSummary(
@@ -293,13 +295,52 @@ public interface IRoutineController
 }
 
 /// <summary>
-/// Issues nothing. The command vocabulary depends on the fork's command
-/// transport and stable entity IDs, which do not exist yet; until then a
-/// seat can plan and trace but not act.
+/// Issues nothing: the seat plans and traces but does not act. The default,
+/// and what every seat without a live command sink should use.
 /// </summary>
 public sealed class IdleRoutineController : IRoutineController
 {
     public IReadOnlyList<PlayerCommand> Decide(Playbook playbook, PlayerView view, RawObservation observation) => [];
+}
+
+/// <summary>
+/// The first real routine: once the match has started, deploy the house's
+/// own opening MCV, the first one its view reports, exactly once.
+/// </summary>
+/// <remarks>
+/// The MCV is found from the filtered stream (<c>ra2.unit.created</c> for the
+/// seat's own house, with the unit's <see cref="PayloadFields.Object"/>
+/// address), which the live source emits for every starting unit in the
+/// first in-game snapshot. The defaults are the Yuri's Revenge MCV type IDs
+/// as the rules name them; verify against the ruleset in use. A deploy the
+/// game rejects is traced as a failed command and not retried.
+/// </remarks>
+public sealed class DeployMcvRoutineController(IEnumerable<string>? mcvTypes = null) : IRoutineController
+{
+    private bool deployed;
+
+    public IReadOnlyCollection<string> McvTypes { get; } = new HashSet<string>(mcvTypes ?? ["AMCV", "SMCV", "PCV"], StringComparer.OrdinalIgnoreCase);
+
+    public IReadOnlyList<PlayerCommand> Decide(Playbook playbook, PlayerView view, RawObservation observation)
+    {
+        ArgumentNullException.ThrowIfNull(view);
+        ArgumentNullException.ThrowIfNull(observation);
+        if (deployed
+            || view.StartedAt is null
+            || observation.EventType != Ra2TelemetryEventTypes.UnitCreated
+            || !view.IsOwn(observation)
+            || view.TypeOf(observation) is not { } type
+            || !McvTypes.Contains(type)
+            || !observation.Payload.TryGetProperty(view.Fields.Object, out JsonElement address)
+            || !address.TryGetUInt32(out uint mcv))
+            return [];
+        deployed = true;
+        // The stable ID, when the stream has one, lets the sink refuse the order if the address was reused.
+        JsonElement arguments = observation.Payload.TryGetProperty(view.Fields.UniqueId, out JsonElement id) && id.TryGetUInt32(out uint uniqueId)
+            ? JsonSerializer.SerializeToElement(new { objects = new[] { mcv }, unique_ids = new[] { uniqueId } })
+            : JsonSerializer.SerializeToElement(new { objects = new[] { mcv } });
+        return [new PlayerCommand(PlayerCommandKinds.Deploy, arguments)];
+    }
 }
 
 /// <summary>

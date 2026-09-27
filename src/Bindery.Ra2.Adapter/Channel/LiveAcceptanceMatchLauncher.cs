@@ -16,10 +16,12 @@ public delegate Task<LiveAcceptanceEvidence> LiveMatchRun(
 /// <param name="AgentSeat">
 /// The controller for <see cref="ChannelMatchContext.AgentSeat"/>. Required
 /// when the channel assigns an agent seat, and needs <paramref name="Telemetry"/>.
+/// It is given the agent client's own launch, so its commands can only go to
+/// that client.
 /// </param>
 public sealed record LiveChannelMatchOptions(
     Func<ChannelMatchContext, IRa2TelemetrySource?>? Telemetry = null,
-    Func<ChannelMatchContext, AgentSeat?>? AgentSeat = null,
+    Func<AgentSeatLaunch, AgentSeat?>? AgentSeat = null,
     TimeSpan? TelemetryDrain = null,
     IOverlaySink? Overlay = null,
     TimeSpan? OverlayInterval = null)
@@ -30,6 +32,9 @@ public sealed record LiveChannelMatchOptions(
     /// <summary>How long to keep reading after the clients exit, for the final events to arrive.</summary>
     public TimeSpan EffectiveTelemetryDrain => TelemetryDrain ?? TimeSpan.FromSeconds(5);
 }
+
+/// <summary>The agent's seat in one match: the assignment and the launch of the player client it takes.</summary>
+public sealed record AgentSeatLaunch(ChannelMatchContext Context, AgentSeatAssignment Assignment, LiveClientLaunch Launch);
 
 /// <summary>
 /// Plays each channel match through the existing <see cref="LiveAcceptanceRunner"/>.
@@ -77,7 +82,7 @@ public sealed class LiveAcceptanceMatchLauncher : IChannelMatchLauncher
         if (assignment is not null) request = DeclareController(request, assignment);
 
         IRa2TelemetrySource? telemetry = options.Telemetry?.Invoke(context);
-        AgentSeat? seat = assignment is null ? null : options.AgentSeat?.Invoke(context);
+        AgentSeat? seat = assignment is null ? null : options.AgentSeat?.Invoke(new AgentSeatLaunch(context, assignment, AgentLaunch(request, assignment)));
         if (assignment is not null)
         {
             if (seat is null) throw new InvalidOperationException($"the channel assigns agent house {assignment.House} but no agent seat was provided");
@@ -185,10 +190,24 @@ public sealed class LiveAcceptanceMatchLauncher : IChannelMatchLauncher
         ];
         if (!clients.Any(c => string.Equals(c.Instance, context.Capture.ClientInstanceId, StringComparison.Ordinal) && c.Class == context.Capture.ClientClass))
             throw new InvalidOperationException($"capture client {context.Capture.ClientInstanceId} ({context.Capture.ClientClass}) is not a client of this match");
-        if (context.AgentSeat is { } agent
-            && !clients.Any(c => string.Equals(c.Instance, agent.ClientInstanceId, StringComparison.Ordinal) && c.Class == ClientClass.Player))
+        if (context.AgentSeat is not { } agent) return;
+        if (!clients.Any(c => string.Equals(c.Instance, agent.ClientInstanceId, StringComparison.Ordinal) && c.Class == ClientClass.Player))
             throw new InvalidOperationException($"agent seat client {agent.ClientInstanceId} is not a player of this match");
+        // The game names a house by its player's name, and the seat's filter
+        // and sink trust that name. It must be the agent client's own, and no
+        // other client may share it (in any case), or the enemy reads as "own".
+        LiveClientLaunch launch = AgentLaunch(request, agent);
+        if (!string.Equals(launch.PlayerName, agent.House, StringComparison.Ordinal))
+            throw new InvalidOperationException($"agent seat house {agent.House} is not the player name {launch.PlayerName} of client {agent.ClientInstanceId}");
+        string[] names = [request.FirstLaunch.PlayerName, request.SecondLaunch.PlayerName, .. request.Observer is null ? [] : new[] { request.Observer.Launch.PlayerName }];
+        if (names.Distinct(StringComparer.OrdinalIgnoreCase).Count() != names.Length)
+            throw new InvalidOperationException("an agent seat needs every client in the match to have a distinct player name");
     }
+
+    internal static LiveClientLaunch AgentLaunch(LiveAcceptanceRequest request, AgentSeatAssignment assignment) =>
+        string.Equals(request.First.ClientInstanceId, assignment.ClientInstanceId, StringComparison.Ordinal) ? request.FirstLaunch
+        : string.Equals(request.Second.ClientInstanceId, assignment.ClientInstanceId, StringComparison.Ordinal) ? request.SecondLaunch
+        : throw new InvalidOperationException($"agent seat client {assignment.ClientInstanceId} is not a player of this match");
 
     /// <summary>The agent's player client declares the agent; the other seat's declaration is left as the caller set it.</summary>
     internal static LiveAcceptanceRequest DeclareController(LiveAcceptanceRequest request, AgentSeatAssignment assignment)
@@ -246,6 +265,11 @@ public sealed class LiveAcceptanceMatchLauncher : IChannelMatchLauncher
         {
             lock (issues) issues.Add($"agent seat: {exception.GetType().Name}: {exception.Message}");
             return null;
+        }
+        finally
+        {
+            // The seat was made for this match; its command connection ends with it.
+            await seat.DisposeAsync().ConfigureAwait(false);
         }
     }
 

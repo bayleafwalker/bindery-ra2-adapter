@@ -1,0 +1,32 @@
+// Vendored unmodified, apart from this header, from bayleafwalker/ra2yrproto
+// a7708edf7f69bb8a1b922e7ae628bc88118e81a7 (ra2yrproto/commands_game.proto; GPL-3.0,
+// see that repository's LICENSE): shmocz/ra2yrproto 0ad7245 plus stable
+// object IDs. Recorded in UPSTREAM-REVISIONS.yaml; re-vendor rather than edit.
+syntax = "proto3";
+
+package ra2yrproto.commands;
+
+import "ra2yrproto/ra2yr.proto";
+
+message UnitOrder {
+  repeated uint32 object_addresses = 1;
+  ra2yrproto.ra2yr.UnitAction action = 2;
+  uint32 target_object = 3;
+  ra2yrproto.ra2yr.Coordinates coordinates = 4;
+  // Optional stale-address guard. If non-empty, must have the same length as
+  // object_addresses; element i is the Object.unique_id the client saw at
+  // object_addresses[i]. The order is rejected if any object's ID differs.
+  repeated uint32 object_unique_ids = 5;
+  // Optional Object.unique_id of target_object. 0 = not checked.
+  uint32 target_unique_id = 6;
+}
+
+message ProduceOrder {
+  ra2yrproto.ra2yr.ObjectTypeClass object_type = 1;
+  ra2yrproto.ra2yr.ProduceAction action = 2;
+}
+
+message PlaceBuilding {
+  ra2yrproto.ra2yr.Object building = 1;
+  ra2yrproto.ra2yr.Coordinates coordinates = 2;
+}

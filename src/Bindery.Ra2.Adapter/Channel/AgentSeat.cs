@@ -70,6 +70,30 @@ public sealed class PlayerObservationFilter
 public sealed record PlayerCommand(string Kind, JsonElement Arguments);
 
 /// <summary>
+/// The command channel's vocabulary. Object orders name object addresses
+/// (<c>objects</c>), optionally with the stable IDs seen for them
+/// (<c>unique_ids</c>, one per object); the sink drops any the house does not
+/// own or whose ID has changed.
+/// </summary>
+public static class PlayerCommandKinds
+{
+    /// <summary><c>{objects}</c>: deploy, e.g. an MCV into a construction yard.</summary>
+    public const string Deploy = "deploy";
+    /// <summary><c>{objects}</c></summary>
+    public const string Stop = "stop";
+    /// <summary><c>{objects, x, y, z?}</c></summary>
+    public const string Move = "move";
+    /// <summary><c>{objects, x, y, z?}</c></summary>
+    public const string AttackMove = "attack_move";
+    /// <summary><c>{objects, target}</c></summary>
+    public const string Attack = "attack";
+    /// <summary><c>{type, action?: begin|hold|cancel}</c></summary>
+    public const string Produce = "produce";
+    /// <summary><c>{object, x, y, z?}</c>: a finished building from one of the house's factories.</summary>
+    public const string PlaceBuilding = "place_building";
+}
+
+/// <summary>
 /// A change of plan, made at a meaningful moment -- new threat, stalled
 /// economy, tech transition -- rather than every frame.
 /// </summary>
@@ -106,6 +130,13 @@ public interface IPlayerCommandSink
     Task SendAsync(PlayerCommand command, CancellationToken cancellationToken);
 }
 
+/// <summary>
+/// The order reached the game's command queue, or may have, but its result
+/// never came back (a timeout). It may still execute: it is neither sent
+/// nor failed.
+/// </summary>
+public sealed class CommandOutcomeUnknownException(string message, Exception? innerException = null) : Exception(message, innerException);
+
 public enum DecisionTraceKind
 {
     SeatOpened,
@@ -114,6 +145,8 @@ public enum DecisionTraceKind
     CommandSent,
     CommandFailed,
     SeatClosed,
+    /// <summary>An order that may or may not have executed; see <see cref="CommandOutcomeUnknownException"/>.</summary>
+    CommandOutcomeUnknown,
 }
 
 public sealed record DecisionTraceEntry(
@@ -135,14 +168,15 @@ public sealed record AgentSeatSummary(
     long CommandsSent,
     long CommandsFailed,
     IReadOnlyList<PlaybookRevision> Revisions,
-    string TracePath);
+    string TracePath,
+    long CommandsOutcomeUnknown = 0);
 
 /// <summary>
 /// Runs one controller in one player seat for one match: filtered
 /// observations in, commands out, every decision appended to an NDJSON trace
 /// that sits beside the match record.
 /// </summary>
-public sealed class AgentSeat
+public sealed class AgentSeat : IAsyncDisposable
 {
     public const string TraceFileName = "decision-trace.ndjson";
 
@@ -170,13 +204,22 @@ public sealed class AgentSeat
 
     public string House => filter.House;
 
+    /// <summary>
+    /// A seat is made for one match and owns its command sink: disposing
+    /// the seat disposes the sink if it holds a connection.
+    /// </summary>
+    public async ValueTask DisposeAsync()
+    {
+        if (commands is IAsyncDisposable disposable) await disposable.DisposeAsync().ConfigureAwait(false);
+    }
+
     public async Task<AgentSeatSummary> RunAsync(IRa2TelemetrySource source, string traceDirectory, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentException.ThrowIfNullOrWhiteSpace(traceDirectory);
         Directory.CreateDirectory(traceDirectory);
         string tracePath = Path.Combine(traceDirectory, TraceFileName);
-        long admitted = 0, withheld = 0, sent = 0, failed = 0;
+        long admitted = 0, withheld = 0, sent = 0, failed = 0, unknown = 0;
         List<PlaybookRevision> revisions = [];
 
         await using StreamWriter trace = new(tracePath, append: false);
@@ -208,6 +251,12 @@ public sealed class AgentSeat
                         sent++;
                         await WriteAsync(trace, DecisionTraceKind.CommandSent, observation.EventId, command.Kind, command.Arguments, cancellationToken).ConfigureAwait(false);
                     }
+                    catch (CommandOutcomeUnknownException exception)
+                    {
+                        // Neither sent nor failed: the game may still carry it out.
+                        unknown++;
+                        await WriteAsync(trace, DecisionTraceKind.CommandOutcomeUnknown, observation.EventId, $"{command.Kind}: {exception.Message}", command.Arguments, cancellationToken).ConfigureAwait(false);
+                    }
                     catch (Exception exception) when (exception is not OperationCanceledException)
                     {
                         // One rejected order is a decision worth keeping, not a reason to leave the seat.
@@ -231,7 +280,7 @@ public sealed class AgentSeat
         {
             await WriteAsync(trace, DecisionTraceKind.SeatClosed, null, $"{closeReason}; admitted {admitted}, withheld {withheld}", null, CancellationToken.None).ConfigureAwait(false);
         }
-        return new AgentSeatSummary(filter.House, controller.ControllerId, controller.ControllerVersion, admitted, withheld, sent, failed, revisions, tracePath);
+        return new AgentSeatSummary(filter.House, controller.ControllerId, controller.ControllerVersion, admitted, withheld, sent, failed, revisions, tracePath, unknown);
     }
 
     private async Task WriteAsync(StreamWriter trace, DecisionTraceKind kind, string? sourceEventId, string detail, JsonElement? data, CancellationToken cancellationToken)
