@@ -266,7 +266,9 @@ in-process fake of the service.
   seat for good. It drops object addresses that the latest snapshot does not
   show as the house's, and it maps `PlayerCommandKinds` to `UnitOrder`,
   `ProduceOrder` and `PlaceBuilding`. The fork's observer refusal arrives as
-  a failed command in the trace.
+  a failed command in the trace. An order whose result never comes back
+  (a timeout after it was sent) is traced as `command_outcome_unknown`, not
+  failed, because the fork may already have queued it.
 - `DeployMcvRoutineController`: the first routine that issues orders. It
   deploys the house's opening MCV once, and `IdleRoutineController` stays the
   default.

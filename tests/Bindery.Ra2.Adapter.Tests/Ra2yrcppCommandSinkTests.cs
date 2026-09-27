@@ -202,6 +202,41 @@ public sealed class Ra2yrcppCommandSinkTests
         Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5));
     }
 
+    [Fact]
+    public async Task AnOrderWhoseResultNeverComesBackHasAnUnknownOutcomeNotAFailure()
+    {
+        FakeGame game = new();
+        await using FakeRa2yrcppServer server = new(command => command.Is(UnitOrder.Descriptor) ? QueueOnly(game, command) : game.Handle(command));
+        await using Ra2yrcppCommandSink sink = new("Americans", new Ra2YrcppEndpoint(server.Uri.Host, server.Uri.Port), new Ra2yrcppClientOptions(CommandTimeout: TimeSpan.FromMilliseconds(300), PollTimeout: TimeSpan.FromMilliseconds(50)));
+        string directory = Path.Combine(Path.GetTempPath(), "bindery-sink-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string recording = Path.Combine(directory, "telemetry.ndjson");
+            await File.WriteAllTextAsync(recording, NdjsonTelemetryFormat.Serialize(new RawObservation("e1", "c1", 1, Ra2TelemetryEventTypes.MatchStarted, Ra2LabProfile.AdapterId, Ra2LabProfile.AdapterVersion, DateTimeOffset.UnixEpoch, JsonDocument.Parse("{}").RootElement.Clone(), "sha256:raw")) + "\n");
+            AgentSeat seat = new(new OneCommandController(Command(Ra2yrcppCommandSink.Deploy, "{\"objects\":[161]}")), sink, new PlayerObservationFilter("Americans"));
+
+            AgentSeatSummary summary = await seat.RunAsync(new NdjsonTelemetrySource(recording), directory);
+
+            // The fork queued it; it may still run on the next frame.
+            Assert.Single(game.Orders);
+            Assert.Equal(0, summary.CommandsFailed);
+            Assert.Equal(0, summary.CommandsSent);
+            Assert.Equal(1, summary.CommandsOutcomeUnknown);
+            Assert.Contains("\"kind\":\"command_outcome_unknown\"", await File.ReadAllTextAsync(summary.TracePath), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static Ra2Yrproto.CommandResult? QueueOnly(FakeGame game, Google.Protobuf.WellKnownTypes.Any command)
+    {
+        game.Orders.Enqueue(command.Unpack<UnitOrder>());
+        return null;
+    }
+
     private sealed class OneCommandController(PlayerCommand command) : IPlayerController
     {
         public string ControllerId => "test/one-command";

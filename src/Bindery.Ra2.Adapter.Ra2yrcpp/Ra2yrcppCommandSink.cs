@@ -31,7 +31,10 @@ public sealed class Ra2yrcppSeatException(string message) : InvalidOperationExce
 /// objects change before it runs; fork builds without stable IDs send none
 /// and ignore the fields.
 /// The fork re-checks ownership on the game thread, and an ERROR result is
-/// thrown as <see cref="Ra2yrcppCommandException"/>.
+/// thrown as <see cref="Ra2yrcppCommandException"/>. An order whose result
+/// is lost (a timeout or a dropped connection after it was sent) throws
+/// <see cref="CommandOutcomeUnknownException"/>: the fork may already have
+/// queued it.
 ///
 /// The vocabulary is <see cref="PlayerCommandKinds"/>; an unknown kind is
 /// refused.
@@ -107,7 +110,7 @@ public sealed class Ra2yrcppCommandSink : IPlayerCommandSink, IAsyncDisposable
                     uint building = Address(arguments, "object");
                     if (!state.Factories.Any(f => f.Owner == own.Self && f.Object == building && f.Completed))
                         throw new InvalidOperationException($"place_building: {building:x} is not a finished building in a factory of {House}");
-                    await Client.RunAsync(new Ra2Yrproto.Commands.PlaceBuilding { Building = new Ra2Yrproto.Ra2Yr.Object { PointerSelf = building }, Coordinates = Coordinates(arguments) }, cancellationToken).ConfigureAwait(false);
+                    await SubmitAsync(new Ra2Yrproto.Commands.PlaceBuilding { Building = new Ra2Yrproto.Ra2Yr.Object { PointerSelf = building }, Coordinates = Coordinates(arguments) }, cancellationToken).ConfigureAwait(false);
                     break;
                 default:
                     throw new ArgumentException($"unknown command kind {command.Kind}");
@@ -120,6 +123,23 @@ public sealed class Ra2yrcppCommandSink : IPlayerCommandSink, IAsyncDisposable
     }
 
     private Ra2yrcppClient Client => client ?? throw new InvalidOperationException("the seat is not connected");
+
+    /// <summary>
+    /// Sends an order. Once it may have reached the fork's queue, a lost
+    /// result is not a failure: the order can still run on the next frame.
+    /// </summary>
+    private async Task SubmitAsync<T>(T order, CancellationToken cancellationToken)
+        where T : Google.Protobuf.IMessage<T>, new()
+    {
+        try
+        {
+            await Client.RunAsync(order, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is TimeoutException or System.Net.WebSockets.WebSocketException)
+        {
+            throw new CommandOutcomeUnknownException($"{order.Descriptor.Name} may still execute: {exception.Message}", exception);
+        }
+    }
 
     private async Task Order(GameState state, House own, JsonElement arguments, UnitAction action, CancellationToken cancellationToken, Coordinates? coordinates = null, uint target = 0)
     {
@@ -137,7 +157,7 @@ public sealed class Ra2yrcppCommandSink : IPlayerCommandSink, IAsyncDisposable
         if (ids.All(static id => id != 0)) order.ObjectUniqueIds.AddRange(ids);
         if (target != 0 && state.Objects.FirstOrDefault(o => o.PointerSelf == target && !o.InLimbo) is { UniqueId: not 0 } targeted) order.TargetUniqueId = targeted.UniqueId;
         if (coordinates is not null) order.Coordinates = coordinates;
-        await Client.RunAsync(order, cancellationToken).ConfigureAwait(false);
+        await SubmitAsync(order, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task ProduceAsync(JsonElement arguments, CancellationToken cancellationToken)
@@ -159,7 +179,7 @@ public sealed class Ra2yrcppCommandSink : IPlayerCommandSink, IAsyncDisposable
             foreach (ObjectTypeClass type in read.Data?.InitialGameState?.ObjectTypes ?? []) types.TryAdd(type.Name, type);
         }
         if (!types.TryGetValue(name, out ObjectTypeClass? found)) throw new ArgumentException($"unknown object type {name}");
-        await Client.RunAsync(new ProduceOrder { ObjectType = found, Action = action }, cancellationToken).ConfigureAwait(false);
+        await SubmitAsync(new ProduceOrder { ObjectType = found, Action = action }, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<(GameState State, House Own)> LocalHouseAsync(CancellationToken cancellationToken)
