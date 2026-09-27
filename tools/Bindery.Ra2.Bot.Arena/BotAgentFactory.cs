@@ -11,11 +11,19 @@ namespace Bindery.Ra2.Bot.Arena;
 /// <summary>State shared by every match of one arena run: learners, datasets and LLM availability.</summary>
 public sealed class ArenaRunContext
 {
-    public ArenaRunContext(bool llmFake, double? llmLatencySeconds)
+    public ArenaRunContext(bool llmFake, double? llmLatencySeconds, string? llmEndpoint = null, string llmModel = "worker-fast")
     {
         LlmFake = llmFake;
         LlmLatencySeconds = llmLatencySeconds;
+        LlmEndpoint = llmEndpoint;
+        LlmModel = llmModel;
     }
+
+    /// <summary>An OpenAI-compatible base URL the LLM arms call instead of Anthropic; null uses the Anthropic SDK.</summary>
+    public string? LlmEndpoint { get; }
+
+    /// <summary>The model id sent to <see cref="LlmEndpoint"/>.</summary>
+    public string LlmModel { get; }
 
     public bool LlmFake { get; }
 
@@ -62,11 +70,16 @@ public sealed class ArenaRunContext
         lock (gate) LlmSkipReason ??= reason;
     }
 
-    /// <summary>A message client for an LLM arm: the fake with <c>--llm-fake</c>, else the SDK client (env key or ant profile).</summary>
+    /// <summary>
+    /// A message client for an LLM arm: the fake with <c>--llm-fake</c>, an OpenAI-compatible client with
+    /// <c>--llm-endpoint</c>, else the SDK client (env key or ant profile).
+    /// </summary>
     public IMessageClient? CreateClient()
     {
         if (LlmFake) return new FakeMessageClient();
         if (LlmSkipReason is not null) return null;
+        if (LlmEndpoint is not null)
+            return new OpenAiCompatibleMessageClient(new Uri(LlmEndpoint), LlmModel, Environment.GetEnvironmentVariable("BINDERY_BOT_LLM_API_KEY"));
         try
         {
             return new AnthropicMessageClient();
@@ -309,6 +322,9 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
         IMessageClient client = context.CreateClient() ?? new UnavailableClient(context.LlmSkipReason ?? "skipped: no credential");
         ClaudeStrategistOptions options = mode == StrategistMode.Refine ? ClaudeStrategistOptions.ForRefine() : new ClaudeStrategistOptions();
         if (tier is { } t) options = options with { Vocabulary = t };
+        // An OpenAI-compatible endpoint serves one configured model for both roles; the arm reports that model, not
+        // the Claude default, so no summary can credit a local model's play to Claude.
+        if (context.LlmEndpoint is not null && !context.LlmFake) options = options with { Model = context.LlmModel };
         ClaudeStrategist strategist = new(client, options);
         claude.Add(strategist);
         return strategist;
@@ -322,6 +338,8 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
     private void Label(List<string> labels)
     {
         if (context.LlmFake && !labels.Contains("llm-fake")) labels.Add("llm-fake");
+        // Results from a non-Anthropic model must say so wherever an arm's name appears.
+        if (context.LlmEndpoint is not null && !labels.Contains($"llm-openai:{context.LlmModel}")) labels.Add($"llm-openai:{context.LlmModel}");
     }
 
     /// <summary>Stands in when no credential resolved: every call fails as unauthorized.</summary>

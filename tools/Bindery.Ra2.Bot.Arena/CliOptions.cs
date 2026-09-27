@@ -21,7 +21,7 @@ public sealed record CliOptions(
 
     public const string Usage =
         "Usage: arena run --arms a,b --maps training|heldout|all --opponents ai-rush,ai-balanced[:easy|:medium|:hard],rush,turtle,live-rush,ai-horde,...|all|training|heldout --seeds N --out <dir> " +
-        "[--oracle [both|all]] [--llm-fake] [--max-seconds N] [--dataset <decisions.ndjson>] [--llm-latency <game seconds>] [--trace <dir>] " +
+        "[--oracle [both|all]] [--llm-fake | --llm-endpoint <openai-compatible base url> [--llm-model <id>]] [--max-seconds N] [--dataset <decisions.ndjson>] [--llm-latency <game seconds>] [--trace <dir>] " +
         "[--benchmark standard|contested] [--opponent-income X] [--opponent-credits N] [--combat-noise F] [--allied-income X] [--allied-credits N] [--baseline <arm>] [--no-decisions] [--write-adoption <path>] [--personality aggressive,turtle,tech,harasser,none] [--rules <rules.json>]\n" +
         "       (arms: selector, bandit, llm-shadow, llm, llm+fast, distilled, llm-t0..llm-t3 or tiers, all; any with -oracle)\n" +
         "       arena replay <out>/decisions/<match>.ndjson [--out <replayed.ndjson>]\n" +
@@ -51,6 +51,16 @@ public sealed record CliOptions(
 
     /// <summary><c>none</c> (belief frames unless an arm is named <c>*-oracle</c>), <c>all</c> (the legacy <c>--oracle</c>) or <c>both</c>.</summary>
     public string OracleMode { get; init; } = "none";
+
+    /// <summary>
+    /// With <c>--llm-endpoint</c>, LLM arms call this OpenAI-compatible base URL (e.g. the local llama-swap at
+    /// <c>http://127.0.0.1:8020/v1</c>) instead of the Anthropic API; the key, if any, comes from
+    /// <c>BINDERY_BOT_LLM_API_KEY</c>.
+    /// </summary>
+    public string? LlmEndpoint { get; init; }
+
+    /// <summary>The model id sent to <see cref="LlmEndpoint"/> (<c>--llm-model</c>, default <c>worker-fast</c>).</summary>
+    public string LlmModel { get; init; } = "worker-fast";
 
     /// <summary>Suffix that makes an arm name an oracle arm (<c>selector-oracle</c>).</summary>
     public const string OracleSuffix = "-oracle";
@@ -96,6 +106,8 @@ public sealed record CliOptions(
         bool oracle = false;
         string oracleMode = "none";
         bool llmFake = false;
+        string? llmEndpoint = null;
+        string llmModel = "worker-fast";
         double maxSeconds = DefaultMaxSeconds;
         string? dataset = null;
         double? llmLatency = null;
@@ -133,6 +145,8 @@ public sealed record CliOptions(
                     oracle = oracleMode == "all";
                     break;
                 case "--llm-fake": llmFake = true; break;
+                case "--llm-endpoint": llmEndpoint = Next(args, ref i); break;
+                case "--llm-model": llmModel = Next(args, ref i); break;
                 case "--max-seconds": maxSeconds = double.Parse(Next(args, ref i), CultureInfo.InvariantCulture); break;
                 case "--dataset": dataset = Next(args, ref i); break;
                 case "--trace": traceDir = Next(args, ref i); break;
@@ -198,6 +212,8 @@ public sealed record CliOptions(
             WriteAdoption = writeAdoption,
             PersonalityList = personalities,
             RulesPath = rulesPath,
+            LlmEndpoint = llmFake && llmEndpoint is not null ? throw new ArgumentException("--llm-fake and --llm-endpoint are exclusive.") : llmEndpoint,
+            LlmModel = llmModel,
         };
     }
 
