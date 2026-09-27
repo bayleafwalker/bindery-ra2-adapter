@@ -19,7 +19,7 @@ public sealed class RegionGraphPathTests
         [
             L(0, 1), L(0, 2), L(1, 3), L(2, 3), L(3, 4), L(3, 5), L(4, 6), L(5, 6),
         ];
-        return new MapInfo("diamond", 100, 100, regions, reversedLinks ? [.. links.Reverse()] : links, []);
+        return new MapInfo("diamond", 100, 100, regions, reversedLinks ? [.. Enumerable.Reverse(links)] : links, []);
 
         static RegionLink L(int a, int b) => new(new RegionId(a), new RegionId(b), 10, true, false);
     }
