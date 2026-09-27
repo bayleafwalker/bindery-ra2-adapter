@@ -22,6 +22,42 @@ public sealed record LiveClientLaunch(
     // Seat and colour default per client below; -1 means "not chosen".
     string SpawnerLogName = "syringe.log");
 
+/// <summary>
+/// An optional third client that joins as a spectator and supplies the
+/// neutral broadcast view. It enrolls as an <see cref="ClientClass.Observer"/>,
+/// so the session's participant policy must admit one observer.
+/// </summary>
+public sealed record LiveObserverClient(
+    MatchClientDefinition Definition,
+    LiveClientLaunch Launch,
+    string EnrollmentIdempotencyKey);
+
+/// <summary>One lifecycle report as it happened, for callers that react to a running match.</summary>
+public sealed record LiveLifecycleNotice(string ClientInstanceId, ClientClass ClientClass, LifecycleKind Kind);
+
+/// <summary>A file to upload into one client's capture after the match, such as a decision trace.</summary>
+public sealed record LiveArtifact(string ClientInstanceId, string MediaType, string Path);
+
+/// <summary>What happened to one artifact: its manifest, or why it was not stored.</summary>
+public sealed record LiveArtifactEvidence(
+    string ClientInstanceId,
+    string MediaType,
+    string Path,
+    string? ContentHash,
+    long? Bytes,
+    string? CaptureId,
+    string? Failure);
+
+/// <summary>Callers' hooks into a running match. Both are bystanders: their failures never fail the run.</summary>
+/// <param name="OnLifecycle">Told about each lifecycle report as it is sent.</param>
+/// <param name="CollectArtifacts">
+/// Called once every client has exited, before the evidence is written. The
+/// files it returns are uploaded into their clients' captures.
+/// </param>
+public sealed record LiveRunHooks(
+    Func<LiveLifecycleNotice, CancellationToken, Task>? OnLifecycle = null,
+    Func<CancellationToken, Task<IReadOnlyList<LiveArtifact>>>? CollectArtifacts = null);
+
 public sealed record LiveAcceptanceRequest(
     SessionCreationRequest Session,
     MatchClientDefinition First,
@@ -37,7 +73,10 @@ public sealed record LiveAcceptanceRequest(
     string TelemetryProtocol = Ra2LabProfile.TelemetryProtocol,
     Uri? TunnelV2Uri = null,
     SpawnGameOptions? GameOptions = null,
-    IReadOnlyList<SpawnAiParticipant>? AiPlayers = null);
+    IReadOnlyList<SpawnAiParticipant>? AiPlayers = null,
+    // Pin the simulation seed to replay a match; null draws a fresh one.
+    int? Seed = null,
+    LiveObserverClient? Observer = null);
 
 public sealed record LiveClientEvidence(
     string ClientId,
@@ -49,7 +88,9 @@ public sealed record LiveClientEvidence(
     IReadOnlyList<string> Reports,
     int? ProcessExitCode,
     string? Failure,
-    IReadOnlyList<RunObservation>? Observations = null);
+    IReadOnlyList<RunObservation>? Observations = null,
+    // "player" or "observer"; null in evidence written before observers existed.
+    string? ClientClass = null);
 
 public sealed record LiveRelayEvidence(
     string ProviderId,
@@ -85,7 +126,14 @@ public sealed record LiveAcceptanceEvidence(
     string FinalSessionPhase,
     IReadOnlyList<string> FinalEnrollmentPhases,
     LiveQualificationFlags Qualification,
-    IReadOnlyList<string> Limitations);
+    IReadOnlyList<string> Limitations,
+    // What the match was played with, so a channel record can reproduce it.
+    string? MapId = null,
+    int? Seed = null,
+    // Null when no observer ran. True when it failed or did not depart cleanly;
+    // a degraded observer is a worse witness, not a failed match.
+    bool? ObserverDegraded = null,
+    IReadOnlyList<LiveArtifactEvidence>? Artifacts = null);
 
 /// <summary>
 /// Runs the real Windows process boundary after a two-client control-plane
@@ -101,6 +149,7 @@ public sealed class LiveAcceptanceRunner
     private readonly BinderyAdapterClient controlPlane;
     private readonly ILiveClientHost firstHost;
     private readonly ILiveClientHost secondHost;
+    private readonly ILiveClientHost? observerHost;
 
     /// <summary>Both clients on the machine running the orchestrator.</summary>
     public LiveAcceptanceRunner(ILiveMatchDriver matchDriver, BinderyAdapterClient controlPlane, ISpawnerBoundary spawner)
@@ -113,30 +162,72 @@ public sealed class LiveAcceptanceRunner
     /// cloned guests as docs/golden-appliance.md requires.
     /// </summary>
     public LiveAcceptanceRunner(ILiveMatchDriver matchDriver, BinderyAdapterClient controlPlane, ILiveClientHost firstHost, ILiveClientHost secondHost)
+        : this(matchDriver, controlPlane, firstHost, secondHost, null)
+    {
+    }
+
+    /// <summary>
+    /// Two players and, optionally, the host of a spectator client. A request
+    /// with an <see cref="LiveAcceptanceRequest.Observer"/> needs this host.
+    /// </summary>
+    public LiveAcceptanceRunner(ILiveMatchDriver matchDriver, BinderyAdapterClient controlPlane, ILiveClientHost firstHost, ILiveClientHost secondHost, ILiveClientHost? observerHost)
     {
         this.matchDriver = matchDriver ?? throw new ArgumentNullException(nameof(matchDriver));
         this.controlPlane = controlPlane ?? throw new ArgumentNullException(nameof(controlPlane));
         this.firstHost = firstHost ?? throw new ArgumentNullException(nameof(firstHost));
         this.secondHost = secondHost ?? throw new ArgumentNullException(nameof(secondHost));
+        this.observerHost = observerHost;
     }
 
-    public async Task<LiveAcceptanceEvidence> RunAsync(LiveAcceptanceRequest request, CancellationToken cancellationToken = default)
+    public Task<LiveAcceptanceEvidence> RunAsync(LiveAcceptanceRequest request, CancellationToken cancellationToken = default) =>
+        RunAsync(request, (LiveRunHooks?)null, cancellationToken);
+
+    /// <param name="onLifecycle">
+    /// Told about each lifecycle report as it is sent -- for example to cut a
+    /// broadcast to the match when a client reports <c>started</c>. It is a
+    /// bystander: an exception from it is swallowed and never affects the run.
+    /// </param>
+    public Task<LiveAcceptanceEvidence> RunAsync(
+        LiveAcceptanceRequest request,
+        Func<LiveLifecycleNotice, CancellationToken, Task>? onLifecycle,
+        CancellationToken cancellationToken = default) =>
+        RunAsync(request, new LiveRunHooks(onLifecycle), cancellationToken);
+
+    public async Task<LiveAcceptanceEvidence> RunAsync(
+        LiveAcceptanceRequest request,
+        LiveRunHooks? hooks,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        Func<LiveLifecycleNotice, CancellationToken, Task>? onLifecycle = hooks?.OnLifecycle;
+        LiveObserverClient? observerRequest = request.Observer;
+        if (observerRequest is not null && observerHost is null)
+            throw new ArgumentException("an observer client needs an observer host");
         // Only a client that runs on this machine needs this machine to be
         // Windows; a client driven through a launch agent runs on its own guest.
-        if ((firstHost is LocalLiveClientHost || secondHost is LocalLiveClientHost) && !OperatingSystem.IsWindows())
+        if ((firstHost is LocalLiveClientHost || secondHost is LocalLiveClientHost || (observerRequest is not null && observerHost is LocalLiveClientHost)) && !OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("live RA2/YR acceptance is Windows-only for locally hosted clients");
         ValidateLaunchArguments(request.FirstLaunch);
         ValidateLaunchArguments(request.SecondLaunch);
+        if (observerRequest is not null) ValidateObserver(request, observerRequest);
         // Two trees on one machine must not share a directory. Two separate
         // guests may legitimately use the same path, because the appliance is
         // cloned -- there the divergence is the machine, not the path.
         if (string.Equals(firstHost.Description, secondHost.Description, StringComparison.Ordinal)
             && string.Equals(request.FirstLaunch.WorkingDirectory.TrimEnd('\\', '/'), request.SecondLaunch.WorkingDirectory.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("live clients sharing one host must use distinct runtime working directories");
+        if (observerRequest is not null)
+        {
+            foreach ((ILiveClientHost host, LiveClientLaunch launch) in new[] { (firstHost, request.FirstLaunch), (secondHost, request.SecondLaunch) })
+            {
+                if (string.Equals(host.Description, observerHost!.Description, StringComparison.Ordinal)
+                    && string.Equals(launch.WorkingDirectory.TrimEnd('\\', '/'), observerRequest.Launch.WorkingDirectory.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase))
+                    throw new ArgumentException("the observer cannot share a runtime working directory with a player on the same host");
+            }
+        }
         await firstHost.ValidateAsync(request.FirstLaunch, cancellationToken).ConfigureAwait(false);
         await secondHost.ValidateAsync(request.SecondLaunch, cancellationToken).ConfigureAwait(false);
+        if (observerRequest is not null) await observerHost!.ValidateAsync(observerRequest.Launch, cancellationToken).ConfigureAwait(false);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.EvidenceDirectory);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.GoldenApplianceId);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.TelemetryEndpoint);
@@ -151,6 +242,11 @@ public sealed class LiveAcceptanceRunner
             request.FirstEnrollmentIdempotencyKey,
             request.SecondEnrollmentIdempotencyKey,
             cancellationToken).ConfigureAwait(false);
+        // The spectator joins the same session after both players, so a
+        // session that cannot admit it fails here, before any game launches.
+        PreparedLiveClient? observer = observerRequest is null
+            ? null
+            : await matchDriver.EnrollObserverAsync(match.Session, observerRequest.Definition, observerRequest.EnrollmentIdempotencyKey, cancellationToken).ConfigureAwait(false);
 
         // One tunnel port per participant. The spawner reaches every peer as
         // 0.0.0.0 on its allocated port, so without these there is nothing to
@@ -160,10 +256,11 @@ public sealed class LiveAcceptanceRunner
         IReadOnlyList<int> ports;
         using (HttpClient tunnelClient = new() { Timeout = TimeSpan.FromSeconds(15) })
         {
-            ports = await TunnelPortAllocation.RequestAsync(tunnelClient, tunnelV2, 2, cancellationToken).ConfigureAwait(false);
+            ports = await TunnelPortAllocation.RequestAsync(tunnelClient, tunnelV2, observer is null ? 2 : 3, cancellationToken).ConfigureAwait(false);
         }
 
-        int seed = Random.Shared.Next(1, int.MaxValue);
+        if (request.Seed is < 1) throw new ArgumentOutOfRangeException(nameof(request), "a pinned seed must be positive");
+        int seed = request.Seed ?? Random.Shared.Next(1, int.MaxValue);
         // The spawner reads GameID as an integer, so the session UUID cannot be
         // passed through verbatim; both clients derive the same number from it.
         string gameId = StableGameId(match.Session.SessionId);
@@ -182,8 +279,16 @@ public sealed class LiveAcceptanceRunner
         SpawnParticipant secondParticipant = new(request.SecondLaunch.PlayerName, ports[1], request.SecondLaunch.Side, secondColor, secondSeat, request.SecondLaunch.IsSpectator);
         // The orchestrator's own client hosts: it is the machine that already
         // owns session creation, so hosting there needs no extra coordination.
-        // Global player order: identical on both clients, first client first.
-        SpawnParticipant[] globalOrder = [firstParticipant, secondParticipant];
+        // A spectator has no house and no starting location; it is written
+        // with IsSpectator=Yes and no [SpawnLocations] entry.
+        SpawnParticipant? observerParticipant = observerRequest is null
+            ? null
+            : new(observerRequest.Launch.PlayerName, ports[2], observerRequest.Launch.Side, observerRequest.Launch.Color, -1, IsSpectator: true);
+        // Global player order: identical on every client, first client first,
+        // the spectator last.
+        SpawnParticipant[] globalOrder = observerParticipant is null
+            ? [firstParticipant, secondParticipant]
+            : [firstParticipant, secondParticipant, observerParticipant];
         // The spawner reads the scenario from a copy of the map named
         // spawnmap.ini, which is what the real client writes. Pointing
         // Scenario at the .map file left the engine unable to read the map's
@@ -192,28 +297,58 @@ public sealed class LiveAcceptanceRunner
         // AI houses, if the scenario asks for any. Their seats follow the human
         // seats, so a two-client match with two AI needs a four-seat map.
         IReadOnlyList<SpawnAiParticipant> aiPlayers = request.AiPlayers ?? [];
-        SpawnMatchPlan firstPlan = new(scenario, gameId, seed, true, firstParticipant, [secondParticipant], globalOrder, aiPlayers, relay.RelayHost!, relay.RelayPort!.Value, request.GameOptions);
-        SpawnMatchPlan secondPlan = new(scenario, gameId, seed, false, secondParticipant, [firstParticipant], globalOrder, aiPlayers, relay.RelayHost!, relay.RelayPort!.Value, request.GameOptions);
+        SpawnParticipant[] firstOthers = observerParticipant is null ? [secondParticipant] : [secondParticipant, observerParticipant];
+        SpawnParticipant[] secondOthers = observerParticipant is null ? [firstParticipant] : [firstParticipant, observerParticipant];
+        SpawnMatchPlan firstPlan = new(scenario, gameId, seed, true, firstParticipant, firstOthers, globalOrder, aiPlayers, relay.RelayHost!, relay.RelayPort!.Value, request.GameOptions);
+        SpawnMatchPlan secondPlan = new(scenario, gameId, seed, false, secondParticipant, secondOthers, globalOrder, aiPlayers, relay.RelayHost!, relay.RelayPort!.Value, request.GameOptions);
 
         string firstIni = await WriteSpawnIniAsync(request.EvidenceDirectory, "client-a", firstPlan, cancellationToken).ConfigureAwait(false);
         string secondIni = await WriteSpawnIniAsync(request.EvidenceDirectory, "client-b", secondPlan, cancellationToken).ConfigureAwait(false);
-        Task<LiveClientRun> firstRun = RunClientAsync(firstHost, match.First, request.FirstLaunch, firstIni, request.GoldenApplianceId, cancellationToken);
-        Task<LiveClientRun> secondRun = RunClientAsync(secondHost, match.Second, request.SecondLaunch, secondIni, request.GoldenApplianceId, cancellationToken);
-        LiveClientRun[] runs = await Task.WhenAll(firstRun, secondRun).ConfigureAwait(false);
+        List<Task<LiveClientRun>> clientRuns =
+        [
+            RunClientAsync(firstHost, match.First, request.FirstLaunch, firstIni, request.GoldenApplianceId, onLifecycle, cancellationToken),
+            RunClientAsync(secondHost, match.Second, request.SecondLaunch, secondIni, request.GoldenApplianceId, onLifecycle, cancellationToken),
+        ];
+        if (observer is not null)
+        {
+            SpawnMatchPlan observerPlan = new(scenario, gameId, seed, false, observerParticipant!, [firstParticipant, secondParticipant], globalOrder, aiPlayers, relay.RelayHost!, relay.RelayPort!.Value, request.GameOptions);
+            string observerIni = await WriteSpawnIniAsync(request.EvidenceDirectory, "observer", observerPlan, cancellationToken).ConfigureAwait(false);
+            clientRuns.Add(RunClientAsync(observerHost!, observer, observerRequest!.Launch, observerIni, request.GoldenApplianceId, onLifecycle, cancellationToken));
+        }
+        LiveClientRun[] runs = await Task.WhenAll(clientRuns).ConfigureAwait(false);
+        PreparedLiveClient[] prepared = observer is null ? [match.First, match.Second] : [match.First, match.Second, observer];
+        IReadOnlyList<LiveArtifactEvidence>? artifacts = hooks?.CollectArtifacts is null
+            ? null
+            : await UploadArtifactsAsync(hooks.CollectArtifacts, prepared, cancellationToken).ConfigureAwait(false);
 
         SessionStatus finalSession = await controlPlane.GetSessionAsync(match.Session.SessionId, cancellationToken).ConfigureAwait(false);
         EnrollmentStatus finalFirst = await controlPlane.GetEnrollmentAsync(match.First.Enrollment.ClientId, cancellationToken).ConfigureAwait(false);
         EnrollmentStatus finalSecond = await controlPlane.GetEnrollmentAsync(match.Second.Enrollment.ClientId, cancellationToken).ConfigureAwait(false);
+        EnrollmentStatus? finalObserver = observer is null
+            ? null
+            : await controlPlane.GetEnrollmentAsync(observer.Enrollment.ClientId, cancellationToken).ConfigureAwait(false);
         // A Failed report must veto completeness even when the exit code is 0:
         // Syringe is a debugger and exits 0 after the game it hosted crashes.
-        bool lifecycleComplete = runs.All(static run => run.ProcessExitCode == 0
-                && run.Reports.Contains(LifecycleKind.Ready)
-                && run.Reports.Contains(LifecycleKind.Started)
-                && run.Reports.Contains(LifecycleKind.Exited)
-                && !run.Reports.Contains(LifecycleKind.Failed))
+        // Completeness is the players' match. The observer is judged apart:
+        // as in the control plane, a degraded observer is a worse witness,
+        // not a failed match.
+        bool lifecycleComplete = runs.Take(2).All(CleanRun)
             && finalSession.Phase == SessionPhase.Ended
             && finalFirst.Phase == EnrollmentPhase.Departed
             && finalSecond.Phase == EnrollmentPhase.Departed;
+        bool? observerDegraded = observer is null
+            ? null
+            : !(CleanRun(runs[2]) && finalObserver!.Phase == EnrollmentPhase.Departed);
+        List<string> limitations =
+        [
+            "relay traffic observation must be supplied from the relay/control-plane telemetry path",
+            "debugger exception lines are first-chance events, not failures; only a desync dump is treated as notable",
+            "Kctl knowledge.candidate.intake authority must be verified by the served identity",
+            "oracle reads must be traced and attached to the qualification packet",
+            "human acceptance is required before global qualification"
+        ];
+        if (observerDegraded == true)
+            limitations.Add($"observer degraded: {runs[2].Evidence.Failure ?? $"final enrollment phase {finalObserver!.Phase.ToString().ToLowerInvariant()}"}; lifecycle completeness is judged on the players");
 
         LiveAcceptanceEvidence evidence = new(
             EvidenceSchemaVersion,
@@ -231,20 +366,25 @@ public sealed class LiveAcceptanceRunner
             new LiveTelemetryEvidence(request.TelemetryProtocol, request.TelemetryEndpoint, false, null),
             runs.Select(static run => run.Evidence).ToArray(),
             finalSession.Phase.ToString().ToLowerInvariant(),
-            [finalFirst.Phase.ToString().ToLowerInvariant(), finalSecond.Phase.ToString().ToLowerInvariant()],
+            new[] { finalFirst, finalSecond, finalObserver }.OfType<EnrollmentStatus>().Select(static e => e.Phase.ToString().ToLowerInvariant()).ToArray(),
             new LiveQualificationFlags(lifecycleComplete, false, false, false, false, false),
-            [
-                "relay traffic observation must be supplied from the relay/control-plane telemetry path",
-                "debugger exception lines are first-chance events, not failures; only a desync dump is treated as notable",
-                "Kctl knowledge.candidate.intake authority must be verified by the served identity",
-                "oracle reads must be traced and attached to the qualification packet",
-                "human acceptance is required before global qualification"
-            ]);
+            limitations,
+            request.FirstLaunch.MapId,
+            seed,
+            observerDegraded,
+            artifacts);
         await LiveAcceptanceEvidenceWriter.WriteAsync(request.EvidenceDirectory, evidence, cancellationToken).ConfigureAwait(false);
         return evidence;
     }
 
-    private async Task<LiveClientRun> RunClientAsync(ILiveClientHost host, PreparedLiveClient client, LiveClientLaunch launch, string spawnIniPath, string goldenApplianceId, CancellationToken cancellationToken)
+    private async Task<LiveClientRun> RunClientAsync(
+        ILiveClientHost host,
+        PreparedLiveClient client,
+        LiveClientLaunch launch,
+        string spawnIniPath,
+        string goldenApplianceId,
+        Func<LiveLifecycleNotice, CancellationToken, Task>? onLifecycle,
+        CancellationToken cancellationToken)
     {
         ConcurrentQueue<LifecycleKind> reports = new();
         bool spawnIniInstalled = false;
@@ -287,6 +427,7 @@ public sealed class LiveAcceptanceRunner
                         await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
                         await controlPlane.ReportAsync(client.Configuration, report, cancellationToken).ConfigureAwait(false);
                     }
+                    await NotifyAsync(onLifecycle, new LiveLifecycleNotice(client.Definition.ClientInstanceId, client.Definition.ClientClass, report.Kind), cancellationToken).ConfigureAwait(false);
                 },
                 cancellationToken).ConfigureAwait(false);
             string gameHash = await host.Sha256Async(launch.GameExecutable, cancellationToken).ConfigureAwait(false);
@@ -362,7 +503,8 @@ public sealed class LiveAcceptanceRunner
         reports.Distinct().Select(LifecycleKindName).ToArray(),
         exitCode,
         failure,
-        observations);
+        observations,
+        client.Definition.ClientClass == ClientClass.Observer ? "observer" : "player");
 
     private static string LifecycleKindName(LifecycleKind kind) => kind switch
     {
@@ -398,6 +540,92 @@ public sealed class LiveAcceptanceRunner
         if (string.IsNullOrWhiteSpace(relay.RelayHost) || relay.RelayPort is null)
             throw new InvalidOperationException("the placement did not carry a relay endpoint");
         return new Uri($"http://{relay.RelayHost}:{relay.RelayPort.Value}");
+    }
+
+    internal async Task<IReadOnlyList<LiveArtifactEvidence>> UploadArtifactsAsync(
+        Func<CancellationToken, Task<IReadOnlyList<LiveArtifact>>> collect,
+        IReadOnlyList<PreparedLiveClient> clients,
+        CancellationToken cancellationToken)
+    {
+        IReadOnlyList<LiveArtifact> artifacts;
+        try
+        {
+            artifacts = await collect(cancellationToken).ConfigureAwait(false) ?? [];
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            return [new LiveArtifactEvidence("-", "-", "-", null, null, null, $"collecting artifacts failed: {exception.GetType().Name}: {exception.Message}")];
+        }
+        List<LiveArtifactEvidence> results = [];
+        foreach (LiveArtifact artifact in artifacts)
+        {
+            PreparedLiveClient? client = clients.FirstOrDefault(c => string.Equals(c.Definition.ClientInstanceId, artifact.ClientInstanceId, StringComparison.Ordinal));
+            CaptureStreamOffer? capture = client?.Enrollment.CaptureOffers?.FirstOrDefault();
+            string? failure = client is null
+                ? "no client of this match has that instance id"
+                : capture is null ? "the control plane offered this client no capture" : null;
+            if (failure is not null)
+            {
+                results.Add(new LiveArtifactEvidence(artifact.ClientInstanceId, artifact.MediaType, artifact.Path, null, null, capture?.CaptureId, failure));
+                continue;
+            }
+            try
+            {
+                byte[] content = await File.ReadAllBytesAsync(artifact.Path, cancellationToken).ConfigureAwait(false);
+                CaptureObjectManifest manifest = await controlPlane.StoreCaptureObjectAsync(client!.Enrollment.ClientLeaseToken, capture!, artifact.MediaType, content, cancellationToken).ConfigureAwait(false);
+                results.Add(new LiveArtifactEvidence(artifact.ClientInstanceId, manifest.MediaType, artifact.Path, manifest.ContentHash, manifest.Bytes, manifest.CaptureId, null));
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or HttpRequestException or ArgumentException or InvalidOperationException)
+            {
+                // The artifact is still on disk; losing its upload must not
+                // cost the match its evidence.
+                results.Add(new LiveArtifactEvidence(artifact.ClientInstanceId, artifact.MediaType, artifact.Path, null, null, capture!.CaptureId, $"{exception.GetType().Name}: {exception.Message}"));
+            }
+        }
+        return results;
+    }
+
+    private static bool CleanRun(LiveClientRun run) => run.ProcessExitCode == 0
+        && run.Reports.Contains(LifecycleKind.Ready)
+        && run.Reports.Contains(LifecycleKind.Started)
+        && run.Reports.Contains(LifecycleKind.Exited)
+        && !run.Reports.Contains(LifecycleKind.Failed);
+
+    private static async Task NotifyAsync(Func<LiveLifecycleNotice, CancellationToken, Task>? onLifecycle, LiveLifecycleNotice notice, CancellationToken cancellationToken)
+    {
+        if (onLifecycle is null) return;
+        try
+        {
+            await onLifecycle(notice, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            // A broadcast cue must never cost a match its lifecycle.
+        }
+    }
+
+    internal static void ValidateObserver(LiveAcceptanceRequest request, LiveObserverClient observer)
+    {
+        ArgumentNullException.ThrowIfNull(observer.Definition);
+        ValidateLaunchArguments(observer.Launch);
+        ArgumentException.ThrowIfNullOrWhiteSpace(observer.EnrollmentIdempotencyKey);
+        if (observer.Definition.ClientClass != ClientClass.Observer)
+            throw new ArgumentException("the observer client must enroll as an observer");
+        if (!observer.Launch.IsSpectator)
+            throw new ArgumentException("the observer client must launch as a spectator; it has no house");
+        if (request.FirstLaunch.IsSpectator || request.SecondLaunch.IsSpectator)
+            throw new ArgumentException("with an observer client both players must have houses");
+        if (!string.Equals(observer.Launch.MapId, request.FirstLaunch.MapId, StringComparison.Ordinal))
+            throw new ArgumentException("the observer must load the players' map");
+        string[] instances = [request.First.ClientInstanceId, request.Second.ClientInstanceId, observer.Definition.ClientInstanceId];
+        if (instances.Distinct(StringComparer.Ordinal).Count() != instances.Length)
+            throw new ArgumentException("the observer needs its own client instance");
+        string[] accounts = [request.First.Identity.AccountId, request.Second.Identity.AccountId, observer.Definition.Identity.AccountId];
+        if (accounts.Distinct(StringComparer.Ordinal).Count() != accounts.Length)
+            throw new ArgumentException("the observer needs its own account identity");
+        string[] keys = [request.FirstEnrollmentIdempotencyKey, request.SecondEnrollmentIdempotencyKey, observer.EnrollmentIdempotencyKey];
+        if (keys.Distinct(StringComparer.Ordinal).Count() != keys.Length)
+            throw new ArgumentException("the observer needs its own enrollment idempotency key");
     }
 
     // Argument shape only. Whether the paths exist is the owning host's

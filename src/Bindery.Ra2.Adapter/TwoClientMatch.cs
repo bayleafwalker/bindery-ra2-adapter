@@ -7,7 +7,9 @@ public sealed record MatchClientDefinition(
     ClientClass ClientClass,
     AdapterIdentity Adapter,
     CompatibilityHashes Compatibility,
-    IReadOnlyList<RegionProbe>? RegionProbes = null);
+    IReadOnlyList<RegionProbe>? RegionProbes = null,
+    // Who drives this seat; declared at enrollment. Players only.
+    ControllerDeclaration? Controller = null);
 
 public sealed record PreparedMatchClient(
     MatchClientDefinition Definition,
@@ -54,6 +56,16 @@ public interface ILiveMatchDriver
         string sessionIdempotencyKey,
         string firstEnrollmentIdempotencyKey,
         string secondEnrollmentIdempotencyKey,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Enrolls a spectator into a prepared session. The coordinator enforces
+    /// the session's observer limit; the placement is the players' placement.
+    /// </summary>
+    Task<PreparedLiveClient> EnrollObserverAsync(
+        SessionCredentials session,
+        MatchClientDefinition observer,
+        string enrollmentIdempotencyKey,
         CancellationToken cancellationToken = default);
 }
 
@@ -145,6 +157,40 @@ public sealed class TwoClientMatchDriver : ILiveMatchDriver
         return PreparedLiveMatch.FromNative(match);
     }
 
+    /// <summary>
+    /// The native fixture has no spectator path: an observer would need its
+    /// own relay connection, and the fixture exists to test the two-player
+    /// relay contract.
+    /// </summary>
+    public Task<PreparedLiveClient> EnrollObserverAsync(
+        SessionCredentials session,
+        MatchClientDefinition observer,
+        string enrollmentIdempotencyKey,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("the native relay fixture does not enroll observers; use the cncnet-private driver");
+
+    internal async Task<PreparedLiveClient> EnrollObserverAsync(
+        SessionCredentials session,
+        MatchClientDefinition observer,
+        RelayProvider expectedProvider,
+        string enrollmentIdempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentNullException.ThrowIfNull(observer);
+        ArgumentNullException.ThrowIfNull(observer.Identity);
+        ArgumentException.ThrowIfNullOrWhiteSpace(enrollmentIdempotencyKey);
+        if (observer.ClientClass != ClientClass.Observer) throw new InvalidOperationException("an observer enrollment requires the observer client class");
+        if (session.Placement is null) throw new InvalidOperationException("an observer joins a session that already has a placement");
+        if (!string.Equals(session.Placement.RelayProviderId, RelaySelection.ProviderName(expectedProvider), StringComparison.Ordinal))
+            throw new InvalidOperationException($"observer enrollment requires the {RelaySelection.ProviderName(expectedProvider)} relay provider");
+        EnrollmentCredentials enrollment = await controlPlane.EnrollAsync(
+            ToEnrollmentRequest(observer, session),
+            enrollmentIdempotencyKey,
+            cancellationToken).ConfigureAwait(false);
+        return new PreparedLiveClient(observer, enrollment, ToConfiguration(observer, session, enrollment, expectedProvider), session.Placement);
+    }
+
     internal async Task<PreparedEnrollmentPair> PrepareEnrollmentsAsync(
         SessionCreationRequest sessionRequest,
         MatchClientDefinition first,
@@ -191,7 +237,8 @@ public sealed class TwoClientMatchDriver : ILiveMatchDriver
         definition.ClientClass,
         definition.Adapter,
         definition.Compatibility,
-        definition.RegionProbes);
+        definition.RegionProbes,
+        definition.Controller);
 
     private AdapterConfiguration ToConfiguration(MatchClientDefinition definition, SessionCredentials session, EnrollmentCredentials enrollment, RelayProvider provider)
     {

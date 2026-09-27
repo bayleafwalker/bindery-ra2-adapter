@@ -1,0 +1,28 @@
+# MediaMTX for the RA2 channel: the room stream, with an optional Twitch copy.
+#
+# OBS publishes once, over RTMP, to path "ra2". Room clients play it back:
+#   browser (WebRTC)  http://<host>:8889/ra2
+#   browser (HLS)     http://<host>:8888/ra2
+#   VLC               rtsp://<host>:8554/ra2
+# Bind these to the lab/LAN address only; nothing here is meant for the
+# public internet. The public output is Twitch, via twitch-relay.sh below.
+
+logLevel: info
+
+rtmp: yes
+rtmpAddress: :1935
+rtsp: yes
+rtspAddress: :8554
+hls: yes
+hlsAddress: :8888
+webrtc: yes
+webrtcAddress: :8889
+
+paths:
+  ra2:
+    source: publisher
+    # Runs while OBS is publishing and is stopped when it stops. The script
+    # forwards to Twitch only while the public flag file exists, so public
+    # output can be switched on and off without touching OBS or the room.
+    runOnReady: /opt/ra2-channel/twitch-relay.sh
+    runOnReadyRestart: yes

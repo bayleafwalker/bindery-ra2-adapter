@@ -33,6 +33,8 @@ jobs:
         run: dotnet restore tools/Bindery.Ra2.Adapter.ApplianceManifest/Bindery.Ra2.Adapter.ApplianceManifest.csproj
       - name: Restore control-plane gate
         run: dotnet restore tools/Bindery.Ra2.Adapter.ControlPlaneGate/Bindery.Ra2.Adapter.ControlPlaneGate.csproj
+      - name: Restore channel tool
+        run: dotnet restore tools/Bindery.Ra2.Adapter.Channel/Bindery.Ra2.Adapter.Channel.csproj
       - name: Build adapter
         run: dotnet build src/Bindery.Ra2.Adapter/Bindery.Ra2.Adapter.csproj --configuration Release --no-restore
       - name: Build live acceptance harness
@@ -41,6 +43,8 @@ jobs:
         run: dotnet build tools/Bindery.Ra2.Adapter.ApplianceManifest/Bindery.Ra2.Adapter.ApplianceManifest.csproj --configuration Release --no-restore
       - name: Build control-plane gate
         run: dotnet build tools/Bindery.Ra2.Adapter.ControlPlaneGate/Bindery.Ra2.Adapter.ControlPlaneGate.csproj --configuration Release --no-restore
+      - name: Build channel tool
+        run: dotnet build tools/Bindery.Ra2.Adapter.Channel/Bindery.Ra2.Adapter.Channel.csproj --configuration Release --no-restore
       - name: Test adapter
         run: dotnet test tests/Bindery.Ra2.Adapter.Tests/Bindery.Ra2.Adapter.Tests.csproj --configuration Release --no-restore
       - name: Restore strategic bot tests
