@@ -17,8 +17,10 @@ public sealed class Ra2yrcppCommandException(string command, string errorMessage
     public string ErrorMessage { get; } = errorMessage;
 }
 
-public sealed record Ra2yrcppClientOptions(TimeSpan? CommandTimeout = null, TimeSpan? PollTimeout = null, int MaximumMessageBytes = 64 * 1024 * 1024)
+public sealed record Ra2yrcppClientOptions(TimeSpan? CommandTimeout = null, TimeSpan? PollTimeout = null, int MaximumMessageBytes = 64 * 1024 * 1024, TimeSpan? ConnectTimeout = null)
 {
+    public TimeSpan EffectiveConnectTimeout => ConnectTimeout ?? TimeSpan.FromSeconds(5);
+
     public TimeSpan EffectiveCommandTimeout => CommandTimeout ?? TimeSpan.FromSeconds(10);
 
     public TimeSpan EffectivePollTimeout => PollTimeout ?? TimeSpan.FromSeconds(1);
@@ -58,10 +60,20 @@ public sealed class Ra2yrcppClient : IAsyncDisposable
     public static async Task<Ra2yrcppClient> ConnectAsync(Uri uri, Ra2yrcppClientOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(uri);
+        options ??= new Ra2yrcppClientOptions();
         ClientWebSocket socket = new();
+        // A service that accepts the TCP connection but never completes the
+        // upgrade must not hold the caller forever.
+        using CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(options.EffectiveConnectTimeout);
         try
         {
-            await socket.ConnectAsync(uri, cancellationToken).ConfigureAwait(false);
+            await socket.ConnectAsync(uri, deadline.Token).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
+        {
+            socket.Dispose();
+            throw new TimeoutException($"no ra2yrcpp WebSocket at {uri} within {options.EffectiveConnectTimeout.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture)} s", exception);
         }
         catch
         {
@@ -72,11 +84,13 @@ public sealed class Ra2yrcppClient : IAsyncDisposable
     }
 
     /// <summary>The service's WebSocket address for a <c>host:port</c> endpoint.</summary>
+    /// <exception cref="ArgumentException">The host is an IPv6 address: the fork's service listens on IPv4 only.</exception>
     public static Uri UriFor(Ra2YrcppEndpoint endpoint)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
-        string host = endpoint.Host.Contains(':', StringComparison.Ordinal) ? "[" + endpoint.Host + "]" : endpoint.Host;
-        return new Uri($"ws://{host}:{endpoint.Port.ToString(CultureInfo.InvariantCulture)}/");
+        if (endpoint.Host.Contains(':', StringComparison.Ordinal))
+            throw new ArgumentException($"ra2yrcpp endpoint {endpoint.Host} is IPv6; the fork's service listens on IPv4 only, so use its IPv4 address or host name", nameof(endpoint));
+        return new Uri($"ws://{endpoint.Host}:{endpoint.Port.ToString(CultureInfo.InvariantCulture)}/");
     }
 
     /// <summary>Runs a command whose result is the same message filled in, as every ra2yrcpp command's is.</summary>

@@ -48,6 +48,9 @@ internal sealed class FakeRa2yrcppServer : IAsyncDisposable
     /// <summary>Answers CLIENT_COMMAND before it is queued, as the allowlist does; null queues it.</summary>
     public Func<Any, Response?> Refuse { get; set; } = static _ => null;
 
+    /// <summary>Replaces the answer to a message with raw bytes, e.g. a corrupt frame; null answers normally.</summary>
+    public Func<Command, byte[]?> Corrupt { get; set; } = static _ => null;
+
     public ConcurrentQueue<Command> Received { get; } = new();
 
     public ConcurrentQueue<WebSocketMessageType> FrameTypes { get; } = new();
@@ -113,7 +116,7 @@ internal sealed class FakeRa2yrcppServer : IAsyncDisposable
                 Command command = Command.Parser.ParseFrom(message.ToArray());
                 Received.Enqueue(command);
                 Response response = await AnswerAsync(command, queue, pending);
-                await socket.SendAsync(response.ToByteArray(), WebSocketMessageType.Binary, true, stop.Token);
+                await socket.SendAsync(Corrupt(command) ?? response.ToByteArray(), WebSocketMessageType.Binary, true, stop.Token);
             }
         }
         catch (Exception exception) when (exception is OperationCanceledException or WebSocketException or ObjectDisposedException)

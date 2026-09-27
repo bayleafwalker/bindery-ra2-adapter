@@ -244,9 +244,13 @@ public sealed class Ra2yrcppTelemetrySource : IRa2TelemetrySource
                     events = diff.Next(state, clock.GetUtcNow());
                     failures = 0;
                 }
-                catch (Exception exception) when (exception is WebSocketException or TimeoutException or InvalidDataException or Ra2yrcppCommandException or InvalidOperationException && !cancellationToken.IsCancellationRequested)
+                catch (Exception exception) when (exception is WebSocketException or TimeoutException or IOException or Ra2yrcppCommandException or InvalidOperationException && !cancellationToken.IsCancellationRequested)
                 {
                     // Before the match the service may simply not be up yet.
+                    // IOException covers a malformed frame
+                    // (InvalidProtocolBufferException) as well as
+                    // InvalidDataException; the client has already dropped
+                    // that connection, and the next read reconnects.
                     if (diff.Started && ++failures >= options.MaximumConsecutiveFailures)
                         throw new IOException($"ra2yrcpp telemetry at {Uri} failed {failures} times in a row mid-match: {exception.Message}", exception);
                     await Task.Delay(diff.Started ? poll : retry, clock, cancellationToken).ConfigureAwait(false);

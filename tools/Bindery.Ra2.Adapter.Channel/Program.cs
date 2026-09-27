@@ -211,6 +211,7 @@ internal sealed class ChannelToolSettings
             throw new ArgumentException($"agentSeat.house must be that client's playerName, {launch.PlayerName}");
         if (string.IsNullOrWhiteSpace(launch.CommandEndpoint))
             throw new ArgumentException("the agent client's launch needs commandEndpoint, its own ra2yrcpp service");
+        Ra2yrcppClient.UriFor(Ra2YrcppEndpoint.Parse(launch.CommandEndpoint));
     }
 
     public IRa2TelemetrySource? TelemetryFor(ChannelMatchContext context) =>

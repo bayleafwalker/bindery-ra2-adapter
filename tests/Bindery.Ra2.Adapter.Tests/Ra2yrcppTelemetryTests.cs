@@ -208,6 +208,59 @@ public sealed class Ra2yrcppTelemetryTests
     }
 
     [Fact]
+    public async Task OneCorruptFrameMidMatchIsRetriedNotTheEndOfTheStream()
+    {
+        Queue<GameState> frames = new(
+        [
+            Snapshots.State(1, Snapshots.Opening(), [Snapshots.Unit(0xA1, Snapshots.Americans, Snapshots.Amcv)]),
+            Snapshots.State(2, Snapshots.Opening(), [Snapshots.Unit(0xA1, Snapshots.Americans, Snapshots.Amcv)]),
+            Snapshots.State(3,
+            [
+                Snapshots.House("Americans", Snapshots.Americans, current: true, winner: true),
+                Snapshots.House("Soviets", Snapshots.Soviets, defeated: true),
+            ], []),
+        ]);
+        GameState last = frames.Last();
+        int polls = 0;
+        await using FakeRa2yrcppServer server = new(command =>
+        {
+            if (command.Is(GetGameState.Descriptor)) return FakeRa2yrcppServer.Ok(new GetGameState { State = frames.Count > 0 ? frames.Dequeue() : last });
+            GameState initial = new();
+            initial.ObjectTypes.AddRange(Snapshots.Types);
+            return FakeRa2yrcppServer.Ok(new ReadValue { Data = new StorageValue { InitialGameState = initial } });
+        })
+        {
+            // The fourth poll's reply is a truncated protobuf message.
+            Corrupt = command => command.CommandType == Ra2Yrproto.CommandType.PollBlocking && Interlocked.Increment(ref polls) == 4 ? [0x0A, 0xFF] : null,
+        };
+        Ra2yrcppTelemetrySource source = new(new Ra2YrcppEndpoint(server.Uri.Host, server.Uri.Port), new Ra2yrcppTelemetryOptions(PollInterval: TimeSpan.FromMilliseconds(10)));
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(20));
+
+        List<RawObservation> observed = [];
+        Exception? failure = null;
+        try
+        {
+            await foreach (RawObservation observation in source.ReadAsync(timeout.Token)) observed.Add(observation);
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        Assert.Null(failure);
+        Assert.True(Volatile.Read(ref polls) >= 4);
+        Assert.Equal(Ra2TelemetryEventTypes.MatchEnded, Assert.IsType<RawObservation>(observed.LastOrDefault()).EventType);
+    }
+
+    [Fact]
+    public void AnIpv6EndpointIsRefusedBecauseTheForkListensOnIpv4Only()
+    {
+        ArgumentException error = Assert.Throws<ArgumentException>(() => Ra2yrcppClient.UriFor(Ra2YrcppEndpoint.Parse("[::1]:14521")));
+        Assert.Contains("IPv4", error.Message, StringComparison.Ordinal);
+        Assert.Throws<ArgumentException>(new Ra2yrcppLiveTelemetrySettings { Endpoint = "[fe80::1]:14521" }.Validate);
+    }
+
+    [Fact]
     public async Task TheSourceWaitsForTheServiceToComeUp()
     {
         // Nothing listens yet: the game has not loaded the DLL.

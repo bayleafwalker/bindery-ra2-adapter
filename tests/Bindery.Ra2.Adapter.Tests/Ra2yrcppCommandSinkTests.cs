@@ -186,6 +186,22 @@ public sealed class Ra2yrcppCommandSinkTests
         Assert.Equal(2048, place.Coordinates.Y);
     }
 
+    [Fact]
+    public async Task AServiceThatAcceptsButNeverAnswersTimesTheConnectOut()
+    {
+        // TCP accepts, the WebSocket upgrade never comes back.
+        using System.Net.Sockets.TcpListener silent = new(System.Net.IPAddress.Loopback, 0);
+        silent.Start();
+        int port = ((System.Net.IPEndPoint)silent.LocalEndpoint).Port;
+        await using Ra2yrcppCommandSink sink = new("Americans", new Ra2YrcppEndpoint("127.0.0.1", port), new Ra2yrcppClientOptions(ConnectTimeout: TimeSpan.FromMilliseconds(300)));
+        using CancellationTokenSource backstop = new(TimeSpan.FromSeconds(10));
+        System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
+
+        await Assert.ThrowsAsync<TimeoutException>(() => sink.SendAsync(Command(Ra2yrcppCommandSink.Deploy, "{\"objects\":[161]}"), backstop.Token));
+
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5));
+    }
+
     private sealed class OneCommandController(PlayerCommand command) : IPlayerController
     {
         public string ControllerId => "test/one-command";

@@ -17,7 +17,7 @@ public sealed class Ra2yrcppLiveTelemetrySettings
 
     public void Validate()
     {
-        Ra2YrcppEndpoint.Parse(Endpoint);
+        Ra2yrcppClient.UriFor(Ra2YrcppEndpoint.Parse(Endpoint));
         if (PollMilliseconds < 1) throw new ArgumentOutOfRangeException(nameof(PollMilliseconds), "pollMilliseconds must be positive");
     }
 
