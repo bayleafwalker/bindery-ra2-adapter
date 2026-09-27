@@ -72,6 +72,27 @@ public sealed class CncNetPrivateMatchDriver : ILiveMatchDriver
         }
     }
 
+    public async Task<PreparedLiveClient> EnrollObserverAsync(
+        SessionCredentials session,
+        MatchClientDefinition observer,
+        string enrollmentIdempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        // Same validation as the players: the observer must be pointed at the
+        // coordinator-issued private tunnel, never a substitute.
+        CncNetTunnelAttachment attachment = await tunnelBoundary.AttachAsync(
+            session.Placement ?? throw new InvalidOperationException("an observer joins a session that already has a placement"),
+            cancellationToken).ConfigureAwait(false);
+        PreparedLiveClient client = await enrollmentDriver.EnrollObserverAsync(
+            session,
+            observer,
+            RelayProvider.CncNetPrivate,
+            enrollmentIdempotencyKey,
+            cancellationToken).ConfigureAwait(false);
+        return client with { Placement = attachment.Placement };
+    }
+
     private sealed class CncNetPrivateMatch(CncNetTunnelAttachment first, CncNetTunnelAttachment second) : IAsyncDisposable
     {
         public async ValueTask DisposeAsync()
