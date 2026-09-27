@@ -23,6 +23,9 @@ public sealed class EnablerTests
         ControllerDeclaration.Agent("planner/v1", "2026.09.27+abc").Validate();
         Assert.Throws<ArgumentException>(() => ControllerDeclaration.Agent("", "1").Validate());
         Assert.Throws<ArgumentException>(() => ControllerDeclaration.Agent("has space", "1").Validate());
+        Assert.Throws<ArgumentException>(() => ControllerDeclaration.Agent("/leading-slash", "1").Validate());
+        Assert.Throws<ArgumentException>(() => ControllerDeclaration.Agent("planner", "+1").Validate());
+        Assert.Throws<ArgumentException>(() => ControllerDeclaration.Agent(new string('a', 129), "1").Validate());
         Assert.Throws<ArgumentException>(() => new ControllerDeclaration("human", "id").Validate());
         Assert.Throws<ArgumentException>(() => new ControllerDeclaration("robot").Validate());
     }

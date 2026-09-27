@@ -336,7 +336,7 @@ public sealed record ControllerDeclaration(string Kind, string? ControllerId = n
                 ArgumentException.ThrowIfNullOrWhiteSpace(ControllerId);
                 ArgumentException.ThrowIfNullOrWhiteSpace(ControllerVersion);
                 if (!IsIdentifier(ControllerId) || !IsIdentifier(ControllerVersion))
-                    throw new ArgumentException("controller id and version are 1-128 characters of [A-Za-z0-9._:@/+-]");
+                    throw new ArgumentException("controller id and version are 1-128 characters of [A-Za-z0-9._:@/+-], starting with a letter or digit");
                 break;
             case HumanKind or BuiltinAiKind:
                 if (ControllerId is not null || ControllerVersion is not null)
@@ -347,8 +347,11 @@ public sealed record ControllerDeclaration(string Kind, string? ControllerId = n
         }
     }
 
+    // Bindery Core's rule: ^[A-Za-z0-9][A-Za-z0-9._:@/+-]{0,127}$
     private static bool IsIdentifier(string value) =>
-        value.Length is >= 1 and <= 128 && value.All(static c => char.IsAsciiLetterOrDigit(c) || "._:@/+-".Contains(c));
+        value.Length is >= 1 and <= 128
+        && char.IsAsciiLetterOrDigit(value[0])
+        && value.All(static c => char.IsAsciiLetterOrDigit(c) || "._:@/+-".Contains(c));
 }
 
 internal sealed record IdentityCreateDto([property: JsonPropertyName("public_identity")] PublicIdentityDto PublicIdentity, [property: JsonPropertyName("account_token")] string AccountToken);
