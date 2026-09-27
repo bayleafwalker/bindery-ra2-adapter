@@ -132,13 +132,27 @@ public sealed class BenchmarkTests
         Assert.Contains("Warning: the faction mix is unbalanced for selector/training (2 Allied, 1 Soviet)", report, StringComparison.Ordinal);
     }
 
-    // Seeds that change nothing (the arm plays the same faction, the same decisions and the same outcome) are one
-    // game, not two samples: without combat noise seeds 1 and 3 often play out identically.
+    [Fact]
+    public void Start_sides_are_reported_and_an_uneven_side_mix_is_flagged()
+    {
+        // Seeds 1-2 start the arm west, 3-4 east, 5-6 west again: six seeds are 4 west, 2 east.
+        List<MatchRecord> matches = [.. Enumerable.Range(1, 6).Select(seed => Game("selector", "ai-rush", seed, $"g{seed}"))];
+
+        string report = ReportBuilder.Build(matches, [], [], CliOptions.Parse(["run", "--arms", "selector", "--seeds", "6"]), "test");
+
+        Assert.Contains("| As west | As east |", report, StringComparison.Ordinal);
+        Assert.Contains("Warning: the start-side mix is unbalanced for selector/training (4 west, 2 east)", report, StringComparison.Ordinal);
+    }
+
+    // Seeds that change nothing (the arm plays the same faction from the same start, the same decisions and the same
+    // outcome) are one game, not two samples: without combat noise seeds 1 and 5 (both Allied, both west) often play
+    // out identically. Seed 3 is the same faction from the other start, a different game even with an equal log hash.
     [Fact]
     public void Identical_games_on_different_seeds_count_once()
     {
-        List<MatchRecord> matches = [Game("selector", "ai-rush", 1, "same"), Game("selector", "ai-rush", 3, "same"), Game("selector", "ai-rush", 5, "other")];
+        List<MatchRecord> matches = [Game("selector", "ai-rush", 1, "same"), Game("selector", "ai-rush", 5, "same"), Game("selector", "ai-rush", 9, "other")];
 
         Assert.Equal(2, PairedReport.DistinctGames(matches).Count);
+        Assert.Equal(2, PairedReport.DistinctGames([Game("selector", "ai-rush", 1, "same"), Game("selector", "ai-rush", 3, "same")]).Count);
     }
 }

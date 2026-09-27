@@ -56,7 +56,7 @@ public static class PairedReport
         if (!m.Players.TryGetValue("arm", out PlayerMatchMetrics? arm) || arm.DecisionLogHash is null) return null;
         m.Players.TryGetValue("opponent", out PlayerMatchMetrics? opponent);
         return string.Create(CultureInfo.InvariantCulture,
-            $"{m.Arm}|{m.Map}|{arm.Faction}|{arm.DecisionLogHash}|{m.Winner}|{m.Reason}|{m.DurationSeconds:R}|{arm.FinalAssetValue}|{arm.UnitsBuilt}|{opponent?.FinalAssetValue}|{opponent?.UnitsBuilt}|{opponent?.BuildingsBuilt}");
+            $"{m.Arm}|{m.Map}|{(MatchRunner.ArmStartsEast(m.Seed) ? "east" : "west")}|{arm.Faction}|{arm.DecisionLogHash}|{m.Winner}|{m.Reason}|{m.DurationSeconds:R}|{arm.FinalAssetValue}|{arm.UnitsBuilt}|{opponent?.FinalAssetValue}|{opponent?.UnitsBuilt}|{opponent?.BuildingsBuilt}");
     }
 
     /// <summary>The matches with every repeat of an identical game (same <see cref="GameKey"/>) dropped, first by opponent name kept.</summary>

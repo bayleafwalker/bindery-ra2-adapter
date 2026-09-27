@@ -94,7 +94,8 @@ public sealed record MatchRecord(
 /// <remarks>
 /// The arm plays Allied on odd seeds and Soviet on even seeds (the opponent takes the other
 /// faction), so with an even seed count the approximate fixture's faction asymmetry does not
-/// bias an arm's results one way; with an odd count the report flags the unbalanced mix. The arm is always player 0 and starts in the map's first start region.
+/// bias an arm's results one way; with an odd count the report flags the unbalanced mix. The arm is always player 0; its
+/// start rotates with the seed (<see cref="ArmStartsEast"/>), so four consecutive seeds play each faction from each start.
 /// </remarks>
 public static class MatchRunner
 {
@@ -103,12 +104,22 @@ public static class MatchRunner
 
     public static Faction ArmFaction(int seed) => seed % 2 == 1 ? Faction.Allied : Faction.Soviet;
 
+    /// <summary>Seeds 1-2 start the arm in the map's first (west) start region, 3-4 in the second, and so on.</summary>
+    public static bool ArmStartsEast(int seed) => ((seed - 1) / 2 % 2 + 2) % 2 == 1;
+
+    /// <summary>The map as the arm plays it on this seed: start regions swapped when the arm starts east.</summary>
+    public static SimMap Oriented(SimMap map, int seed)
+    {
+        ArgumentNullException.ThrowIfNull(map);
+        return ArmStartsEast(seed) ? map with { StartRegions = [map.StartRegions[1], map.StartRegions[0], .. map.StartRegions.Skip(2)] } : map;
+    }
+
     public static MatchRecord Run(ArmSpec arm, string opponent, SimMap map, string split, int seed, double maxSeconds, IRulesDatabase rules, IArenaAgentFactory factory, Action<IReadOnlyList<DecisionRecord>>? armLog = null, TextWriter? trace = null, BenchmarkSettings? benchmark = null)
     {
         Faction armFaction = ArmFaction(seed);
         Faction opponentFaction = armFaction == Faction.Allied ? Faction.Soviet : Faction.Allied;
         SimSettings settings = (benchmark ?? BenchmarkSettings.Standard).ToSimSettings(seed, maxSeconds, ArmPlayer, armFaction, OpponentPlayer, opponentFaction, OpponentSets.IncomeHandicap(opponent));
-        SkirmishSimulation sim = new(map, rules, settings);
+        SkirmishSimulation sim = new(Oriented(map, seed), rules, settings);
 
         ObservationMode mode = arm.Oracle ? ObservationMode.Oracle : ObservationMode.Belief;
         using IArenaAgent armAgent = factory.Create(arm, ArmPlayer, armFaction, sim.Map, seed);

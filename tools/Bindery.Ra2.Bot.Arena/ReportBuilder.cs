@@ -124,11 +124,12 @@ public static class ReportBuilder
     {
         sb.AppendLine("## Win rate (arm × split)");
         sb.AppendLine();
-        sb.AppendLine("Distinct games drop repeats of an identical game (same arm faction, decision log and outcome on the same map): against a differently named opponent whose style had not diverged when the match ended, or on another seed that changed nothing; the distinct interval is the one to read. The arm plays Allied on odd seeds and Soviet on even seeds; the fixture is asymmetric, so the faction columns show the mix behind each rate.");
+        sb.AppendLine("Distinct games drop repeats of an identical game (same arm faction, decision log and outcome on the same map): against a differently named opponent whose style had not diverged when the match ended, or on another seed that changed nothing; the distinct interval is the one to read. The arm plays Allied on odd seeds and Soviet on even seeds, and starts west on seeds 1-2, 5-6, ... and east on 3-4, 7-8, ...; the fixture is asymmetric, so the faction and side columns show the mix behind each rate.");
         sb.AppendLine();
-        sb.AppendLine("| Arm | Split | Wins | Losses | Draws | Matches | Win rate | 95% interval (Wilson) | Distinct games | Distinct wins | 95% interval, distinct | As Allied | As Soviet | Eliminations won | Timeouts |");
-        sb.AppendLine("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+        sb.AppendLine("| Arm | Split | Wins | Losses | Draws | Matches | Win rate | 95% interval (Wilson) | Distinct games | Distinct wins | 95% interval, distinct | As Allied | As Soviet | As west | As east | Eliminations won | Timeouts |");
+        sb.AppendLine("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
         List<string> unbalanced = [];
+        List<string> unevenSides = [];
         foreach (var group in matches.GroupBy(m => (m.Arm, m.Split)).OrderBy(g => g.Key.Arm, StringComparer.Ordinal).ThenBy(g => g.Key.Split, StringComparer.Ordinal))
         {
             int wins = group.Count(static m => m.Winner == 0);
@@ -142,12 +143,20 @@ public static class ReportBuilder
             List<MatchRecord> allied = [.. group.Where(static m => MatchRunner.ArmFaction(m.Seed) == Faction.Allied)];
             List<MatchRecord> soviet = [.. group.Where(static m => MatchRunner.ArmFaction(m.Seed) == Faction.Soviet)];
             if (allied.Count != soviet.Count) unbalanced.Add($"{group.Key.Arm}/{group.Key.Split} ({allied.Count} Allied, {soviet.Count} Soviet)");
-            sb.AppendLine($"| {group.Key.Arm} | {group.Key.Split} | {wins} | {losses} | {draws} | {total} | {Rate(wins, total)} | {Wilson(wins, total)} | {distinct.Count} | {distinctWins} | {Wilson(distinctWins, distinct.Count)} | {allied.Count(static m => m.Winner == 0)}/{allied.Count} | {soviet.Count(static m => m.Winner == 0)}/{soviet.Count} | {elimWins} | {timeouts} |");
+            List<MatchRecord> west = [.. group.Where(static m => !MatchRunner.ArmStartsEast(m.Seed))];
+            List<MatchRecord> east = [.. group.Where(static m => MatchRunner.ArmStartsEast(m.Seed))];
+            if (west.Count != east.Count) unevenSides.Add($"{group.Key.Arm}/{group.Key.Split} ({west.Count} west, {east.Count} east)");
+            sb.AppendLine($"| {group.Key.Arm} | {group.Key.Split} | {wins} | {losses} | {draws} | {total} | {Rate(wins, total)} | {Wilson(wins, total)} | {distinct.Count} | {distinctWins} | {Wilson(distinctWins, distinct.Count)} | {allied.Count(static m => m.Winner == 0)}/{allied.Count} | {soviet.Count(static m => m.Winner == 0)}/{soviet.Count} | {west.Count(static m => m.Winner == 0)}/{west.Count} | {east.Count(static m => m.Winner == 0)}/{east.Count} | {elimWins} | {timeouts} |");
         }
         sb.AppendLine();
         if (unbalanced.Count > 0)
         {
             sb.AppendLine($"Warning: the faction mix is unbalanced for {string.Join(", ", unbalanced)} (an odd `--seeds` gives the arm Allied more often); a win rate over it mixes faction strength into the result. Use an even `--seeds`.");
+            sb.AppendLine();
+        }
+        if (unevenSides.Count > 0)
+        {
+            sb.AppendLine($"Warning: the start-side mix is unbalanced for {string.Join(", ", unevenSides)}; a map-side advantage leaks into the rate. Use a multiple of 4 for `--seeds`.");
             sb.AppendLine();
         }
     }

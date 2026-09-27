@@ -37,6 +37,7 @@ public static class LeakageProbe
         Faction opponentFaction = armFaction == Faction.Allied ? Faction.Soviet : Faction.Allied;
         SimSettings settings = new(seed, perturbAtSeconds + compareSeconds + 10,
             [new SimPlayer(MatchRunner.ArmPlayer, armFaction), new SimPlayer(MatchRunner.OpponentPlayer, opponentFaction)]);
+        map = MatchRunner.Oriented(map, seed);
         Side a = new(new SkirmishSimulation(map, rules, settings), factory, arm, opponent, armFaction, opponentFaction, seed);
         Side b = new(new SkirmishSimulation(map, rules, settings), factory, arm, opponent, armFaction, opponentFaction, seed);
         try
