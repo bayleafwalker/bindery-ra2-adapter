@@ -6,7 +6,9 @@ hierarchical RTS bot, layered by decision timescale, with at most one slow LLM
 that chooses intent. Everything real-time is deterministic.
 
 Final tournament results, limitations, and how to run the live LLM arms and the
-retail RA2 path: [`strategic-bot-results.md`](strategic-bot-results.md).
+retail RA2 path: [`strategic-bot-results.md`](strategic-bot-results.md). Its
+2026-09-27 rerun is fake-LLM-only and covers 5,520 standard plus 6,720 contested
+simulator matches; it is not evidence of live Claude or retail RA2 performance.
 
 ## Decisions
 

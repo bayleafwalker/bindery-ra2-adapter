@@ -1,23 +1,22 @@
 # Strategic bot: final tournament results
 
 Final evaluation of the hierarchical bot described in
-[`strategic-bot.md`](strategic-bot.md), run on 2026-09-26 at commit 413bb21
-(`feat/strategic-bot`).
+[`strategic-bot.md`](strategic-bot.md). The current rerun was made on
+2026-09-27 at `c80c935` (`feat/strategic-bot`).
 
 ## Read this first
 
-- **Stale since the fix-branch merge.** These numbers were produced at
-  413bb21, before the eight fix branches and their cross-area follow-ups were
-  merged (see "Fix-branch merge and cross-area follow-ups" in
-  [`strategic-bot.md`](strategic-bot.md)). Several of those changes alter what
-  a match is: fair maps, per-queue factories, gradual production payment,
-  offline powered defenses, routed harvesters, no overlapping placement, depot-only
-  repair, fog-refused attacks, and squads that attack only what they see. They
-  also change what is measured: primary-only strategy figures, cache-inclusive
-  cost, and asset value that counts paid production and values a yard at its
-  MCV. Treat every table below as the pre-merge simulator's. A rerun uses the
-  commands under Setup unchanged (still `--llm-fake`: no Claude credential
-  exists on this host). It has not been run yet.
+- **Current rerun.** The exact documented matrix completed at `c80c935`:
+  5,520 standard matches (23 opponents) and 6,720 contested matches (28
+  opponents), six seeds per cell, with `--llm-fake`. The generated reports
+  classify the standard selector rate (599/690, 0.868) and contested selector
+  rate (705/840, 0.839) as saturated across the full matrix; compare the
+  calibrated live styles and held-out opponent cells, not those aggregate
+  rates. On contested held-out maps, selector was 285/336 (0.848,
+  95% Wilson [0.806, 0.883]); the fake `llm` arm was 188/336 (0.560,
+  [0.506, 0.612]); and `distilled` was 231/336 (0.688, [0.636, 0.735]).
+  The historical tables below remain an archived pre-merge record, not the
+  current benchmark. No live-LLM result is claimed.
 
 - **Environment.** Every number here comes from the bindery region simulator
   (`src/Bindery.Ra2.Bot.Sim`), a deterministic region-graph approximation of a
