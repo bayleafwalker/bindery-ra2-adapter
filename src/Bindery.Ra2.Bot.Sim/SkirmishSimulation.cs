@@ -952,7 +952,9 @@ public sealed class SkirmishSimulation
             {
                 // A queue runs on the factories of its own kind only, and pauses while it has none (RA2).
                 int factories = CountFactories(state, queue.Kind);
-                double multiplier = factories <= 0 ? 0 : Math.Sqrt(factories) * (power.LowPower ? 0.5 : 1.0);
+                // RA2 rules name the extra-factory speed-up (MultipleFactory=); the fixture does not, and keeps sqrt(n).
+                double factorySpeed = rules.MultipleFactory is { } perExtra and > 0 ? Math.Pow(1 / perExtra, factories - 1) : Math.Sqrt(factories);
+                double multiplier = factories <= 0 ? 0 : factorySpeed * (power.LowPower ? 0.5 : 1.0);
                 if (queue.Items.Count == 0 || multiplier <= 0) continue;
                 QueueItemRuntime active = queue.Items[0];
                 if (active.AwaitingPlacement) continue;

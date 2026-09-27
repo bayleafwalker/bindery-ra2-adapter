@@ -28,7 +28,11 @@ public sealed class RulesDatabase : IRulesDatabase
         // which would make consumers that enumerate it non-deterministic.
         All = document.Units.OrderBy(static u => u.TypeId, StringComparer.Ordinal).ToList();
         effectivenessMatrix = document.Effectiveness;
+        MultipleFactory = document.MultipleFactory;
     }
+
+    /// <inheritdoc/>
+    public double? MultipleFactory { get; }
 
     /// <summary>
     /// Rejects a document that would only fail later. System.Text.Json leaves a missing collection null rather than
@@ -156,6 +160,13 @@ public sealed class RulesDatabase : IRulesDatabase
         bool canHitAircraft = a.Weapon == WeaponClass.AntiAir || a.AntiAir;
         if (d.Kind == EntityKind.Aircraft && !canHitAircraft) return 0;
         if (a.Weapon == WeaponClass.AntiAir && d.Kind != EntityKind.Aircraft) return 0;
+
+        // Imported rules carry the warhead's own Verses= row: RA2's armor order matches ArmorClass up to special_1.
+        if (a.Verses is { Count: > 0 } verses)
+        {
+            int index = (int)d.Armor;
+            return index < verses.Count ? verses[index] : 1.0;
+        }
 
         if (effectivenessMatrix.TryGetValue(a.Weapon.ToString(), out IReadOnlyDictionary<string, double>? row) &&
             row.TryGetValue(d.Armor.ToString(), out double multiplier))

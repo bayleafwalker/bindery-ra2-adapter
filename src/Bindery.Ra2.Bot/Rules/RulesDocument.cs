@@ -19,4 +19,5 @@ public sealed record RulesDocument(
     string RulesetId,
     string Provenance,
     IReadOnlyList<UnitRule> Units,
-    IReadOnlyDictionary<string, IReadOnlyDictionary<string, double>> Effectiveness);
+    IReadOnlyDictionary<string, IReadOnlyDictionary<string, double>> Effectiveness,
+    double? MultipleFactory = null);

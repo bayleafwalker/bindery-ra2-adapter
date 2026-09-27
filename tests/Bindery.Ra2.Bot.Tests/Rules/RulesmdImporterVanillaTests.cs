@@ -390,4 +390,32 @@ public sealed class RulesmdImporterVanillaTests
         Assert.Contains("bogus", Document.Provenance, StringComparison.Ordinal);
         Assert.Contains("ODDARMOR", Document.Provenance, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Effectiveness_follows_the_attackers_own_verses_row_by_defender_armor()
+    {
+        // MTNK fires AP: Verses=25%,25%,25%,90%,75%,75%,... in armor order none, flak, plate, light, medium, heavy, ...
+        RulesDatabase rules = Database(Document);
+
+        Assert.Equal(0.25, rules.Effectiveness("MTNK", "E1"), 6);   // E1 Armor=flak
+        Assert.Equal(0.90, rules.Effectiveness("MTNK", "HTK"), 6);  // HTK Armor=light
+        Assert.Equal(0.75, rules.Effectiveness("MTNK", "MTNK"), 6); // Armor=heavy
+        Assert.Equal(0, rules.Effectiveness("HTK", "MTNK"));        // a pure anti-air weapon still never hits the ground
+    }
+
+    [Fact]
+    public void Build_time_uses_general_build_speed_and_the_types_multiplier()
+    {
+        string ini = VanillaIni
+            .Replace("[General]", "[General]\nBuildSpeed=0.7\nMultipleFactory=0.8", StringComparison.Ordinal)
+            .Replace("Cost=700\n", "Cost=700\nBuildTimeMultiplier=2\n", StringComparison.Ordinal);
+        RulesDocument document = RulesmdImporter.Import(new StringReader(ini), "cafe");
+
+        // cost x BuildSpeed minutes per 1000 credits x multiplier: 700 x 0.7 x 2 / 1000 min = 58.8 s; 500 x 0.7 = 21 s.
+        Assert.Equal(58.8, document.Units.Single(static u => u.TypeId == "MTNK").BuildSeconds, 6);
+        Assert.Equal(21.0, document.Units.Single(static u => u.TypeId == "HTK").BuildSeconds, 6);
+        Assert.Equal(0.8, document.MultipleFactory);
+        Assert.Equal(0.8, Database(document).MultipleFactory);
+        Assert.Null(Document.MultipleFactory);
+    }
 }

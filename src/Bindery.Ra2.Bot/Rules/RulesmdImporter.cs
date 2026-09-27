@@ -53,11 +53,9 @@ public static class RulesmdImporter
     ];
 
     /// <summary>
-    /// Fallback weapon-class-versus-armor-class multipliers used for every
-    /// imported ruleset, since deriving true per-warhead-versus-armor
-    /// percentages from <c>Verses=</c> lists into our coarser
-    /// <see cref="ArmorClass"/> buckets is out of scope for a heuristic
-    /// importer. It is deliberately identical in shape to the hand-authored
+    /// Fallback weapon-class-versus-armor-class multipliers for imported units
+    /// whose ground weapon has no <c>Verses=</c> (units that have one carry it
+    /// in <see cref="UnitRule.Verses"/>, which takes precedence). It is deliberately identical in shape to the hand-authored
     /// fixture's matrix (<c>Data/bindery-sim-approx.json</c>) so downstream
     /// consumers see consistent behaviour regardless of ruleset source.
     /// </summary>
@@ -78,6 +76,7 @@ public static class RulesmdImporter
 
         Dictionary<string, IniSection> sections = ParseSections(ini);
         Dictionary<string, IReadOnlyList<string>> genericPrereqs = ParseGenericPrerequisites(sections);
+        double buildSpeed = sections.TryGetValue("General", out IniSection? generalSection) ? GetDouble(generalSection, "BuildSpeed", 1.0) : 1.0;
 
         List<UnitRule> units = [];
         Dictionary<string, QueueKind> factories = new(StringComparer.Ordinal);
@@ -92,7 +91,7 @@ public static class RulesmdImporter
                 // prerequisite token is upper-cased once here. A type listed twice is imported once.
                 string typeId = NormaliseId(rawTypeId);
                 if (typeId.Length == 0 || !seen.Add(typeId)) continue;
-                UnitRule? unit = BuildUnit(typeId, kind, queue, sections, genericPrereqs, country, unknownArmor);
+                UnitRule? unit = BuildUnit(typeId, kind, queue, sections, genericPrereqs, country, unknownArmor, buildSpeed);
                 if (unit is null) continue;
                 units.Add(unit);
                 if (kind == EntityKind.Building && TryProducedQueue(sections[typeId], out QueueKind produced)) factories[typeId] = produced;
@@ -106,15 +105,19 @@ public static class RulesmdImporter
         units.Sort(static (a, b) => string.CompareOrdinal(a.TypeId, b.TypeId));
 
         string provenance =
-            "Imported from an operator-supplied rulesmd.ini via RulesmdImporter. Weapon class, unit role and build " +
-            "time are heuristic estimates documented on RulesmdImporter, not a retail-accurate damage simulation.";
+            "Imported from an operator-supplied rulesmd.ini via RulesmdImporter. Effectiveness follows each ground " +
+            "weapon's warhead Verses= by defender armor; weapon class, unit role and DPS are heuristic estimates, and " +
+            "build time (BuildSpeed x BuildTimeMultiplier) assumes one factory at full power.";
         if (unknownArmor.Count > 0)
         {
             provenance += " Unrecognised Armor values, read as None: " +
                 string.Join("; ", unknownArmor.Select(static kv => $"{kv.Key} ({string.Join(", ", kv.Value)})")) + ".";
         }
 
-        return new RulesDocument($"rulesmd-sha256:{sourceSha256}", provenance, units, DefaultEffectiveness);
+        double? multipleFactory = sections.TryGetValue("General", out IniSection? general) && general.TryGet("MultipleFactory", out _)
+            ? GetDouble(general, "MultipleFactory", 1.0)
+            : null;
+        return new RulesDocument($"rulesmd-sha256:{sourceSha256}", provenance, units, DefaultEffectiveness, multipleFactory);
     }
 
     /// <summary>
@@ -134,7 +137,8 @@ public static class RulesmdImporter
         IReadOnlyDictionary<string, IniSection> sections,
         IReadOnlyDictionary<string, IReadOnlyList<string>> genericPrereqs,
         string? country,
-        SortedDictionary<string, SortedSet<string>> unknownArmor)
+        SortedDictionary<string, SortedSet<string>> unknownArmor,
+        double buildSpeed)
     {
         if (!sections.TryGetValue(typeId, out IniSection? section)) return null;
 
@@ -151,12 +155,10 @@ public static class RulesmdImporter
         QueueKind queue = naval ? QueueKind.Naval : defaultQueue;
 
         int cost = GetInt(section, "Cost", 0);
-        // BuildSeconds formula: cost / (1000 credits per 60 seconds), i.e. a
-        // full-price (1000-credit) structure takes about a minute to complete
-        // at normal game speed; clamped to a 2-second floor so free/near-free
-        // items (a starting construction yard) still report a sane duration.
-        // This is an explicitly approximate convention, not retail timing.
-        double buildSeconds = Math.Max(2.0, cost / (1000.0 / 60.0));
+        // RA2 build time: cost x [General] BuildSpeed (minutes per 1000 credits; 1.0 when absent, the old convention)
+        // x the type's BuildTimeMultiplier=, at normal game speed with one factory and full power; clamped to a
+        // 2-second floor so free/near-free items (a starting construction yard) still report a sane duration.
+        double buildSeconds = Math.Max(2.0, cost * buildSpeed * 60.0 / 1000.0 * GetDouble(section, "BuildTimeMultiplier", 1.0));
 
         int strength = Math.Max(1, GetInt(section, "Strength", 1));
         int power = GetInt(section, "Power", 0);
@@ -166,7 +168,7 @@ public static class RulesmdImporter
         bool deployable = GetBool(section, "Deploys", false) || section.TryGet("DeploysInto", out _);
 
         IReadOnlyList<IReadOnlyList<string>> prerequisites = ParsePrerequisites(section, genericPrereqs);
-        (WeaponClass weapon, double damage, double range, bool antiAirFlag) = ResolveWeapon(section, sections);
+        (WeaponClass weapon, double damage, double range, bool antiAirFlag, double[]? verses) = ResolveWeapon(section, sections);
 
         UnitRole role = InferRole(resolvedKind, section, sections, weapon, power, prerequisites.Count > 0, sight, speed);
         if (resolvedKind == EntityKind.Building && role == UnitRole.Defense) queue = QueueKind.Defense;
@@ -176,7 +178,8 @@ public static class RulesmdImporter
         return new UnitRule(
             typeId, name, factions, resolvedKind, role, queue, cost, buildSeconds, power, prerequisites, techLevel,
             strength, armor, damage, weapon, range, speed, sight, antiAirFlag, deployable,
-            Repairs: resolvedKind == EntityKind.Building && GetBool(section, "UnitRepair", false));
+            Repairs: resolvedKind == EntityKind.Building && GetBool(section, "UnitRepair", false),
+            Verses: verses is null ? null : [.. verses.Select(static v => v / 100.0)]);
     }
 
     /// <summary>
@@ -315,7 +318,7 @@ public static class RulesmdImporter
     /// set when any weapon can hit aircraft. DPS is estimated as <c>Damage * FramesPerSecond / ROF</c> (ROF is in
     /// frames, per RA2 convention); when ROF is missing or zero the raw damage value is used as a fallback.
     /// </summary>
-    private static (WeaponClass WeaponClass, double Damage, double Range, bool AntiAir) ResolveWeapon(
+    private static (WeaponClass WeaponClass, double Damage, double Range, bool AntiAir, double[]? Verses) ResolveWeapon(
         IniSection unitSection, IReadOnlyDictionary<string, IniSection> sections)
     {
         List<(IniSection Weapon, double Dps, double Range, bool Air, bool Ground)> weapons = [];
@@ -331,20 +334,20 @@ public static class RulesmdImporter
             weapons.Add((weapon, dps, GetDouble(weapon, "Range", 0), air, ground));
         }
 
-        if (weapons.Count == 0) return (WeaponClass.None, 0, 0, false);
+        if (weapons.Count == 0) return (WeaponClass.None, 0, 0, false, null);
         bool antiAir = weapons.Any(static w => w.Air);
         int groundIndex = weapons.FindIndex(static w => w.Ground);
-        if (groundIndex < 0) return (WeaponClass.AntiAir, weapons[0].Dps, weapons[0].Range, true);
+        if (groundIndex < 0) return (WeaponClass.AntiAir, weapons[0].Dps, weapons[0].Range, true, null);
         (IniSection Weapon, double Dps, double Range, bool Air, bool Ground) g = weapons[groundIndex];
 
         if (g.Weapon.TryGet("Warhead", out string warheadName) &&
             sections.TryGetValue(warheadName, out IniSection? warhead) &&
             TryParseVerses(warhead, out double[] verses))
         {
-            return (ClassifyByVerses(verses, g.Range), g.Dps, g.Range, antiAir);
+            return (ClassifyByVerses(verses, g.Range), g.Dps, g.Range, antiAir, verses);
         }
 
-        return (g.Dps > 0 ? WeaponClass.General : WeaponClass.None, g.Dps, g.Range, antiAir);
+        return (g.Dps > 0 ? WeaponClass.General : WeaponClass.None, g.Dps, g.Range, antiAir, null);
     }
 
     private static bool TryParseVerses(IniSection warhead, out double[] verses)

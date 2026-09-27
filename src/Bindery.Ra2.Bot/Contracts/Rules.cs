@@ -23,6 +23,11 @@ namespace Bindery.Ra2.Bot;
 /// building and defense queues, a barracks for infantry, and so on. Null when the rules do not say, in which case a
 /// consumer that needs factories derives them from prerequisites.
 /// </param>
+/// <param name="Verses">
+/// The ground weapon's warhead <c>Verses=</c> as fractions, in RA2 armor order (none, flak, plate, light, medium, heavy,
+/// wood, steel, concrete, special_1, special_2); when present it decides effectiveness by the defender's armor instead
+/// of the weapon-class matrix. Null for hand-authored rules.
+/// </param>
 public sealed record UnitRule(
     string TypeId,
     string Name,
@@ -45,7 +50,8 @@ public sealed record UnitRule(
     bool AntiAir,
     bool Deployable,
     bool Repairs = false,
-    IReadOnlyList<QueueKind>? Produces = null);
+    IReadOnlyList<QueueKind>? Produces = null,
+    IReadOnlyList<double>? Verses = null);
 
 public enum ArmorClass { None, Flak, Plate, Light, Medium, Heavy, Wood, Steel, Concrete, Special }
 
@@ -76,4 +82,10 @@ public interface IRulesDatabase
 
     /// <summary>Expected damage multiplier of <paramref name="attacker"/> against <paramref name="defender"/> (1 = neutral).</summary>
     double Effectiveness(string attacker, string defender);
+
+    /// <summary>
+    /// RA2's <c>[General] MultipleFactory=</c>: each factory beyond the first multiplies a queue's build time by this.
+    /// Null when the rules do not say (the hand-authored fixture), in which case the simulator keeps its own model.
+    /// </summary>
+    double? MultipleFactory => null;
 }
