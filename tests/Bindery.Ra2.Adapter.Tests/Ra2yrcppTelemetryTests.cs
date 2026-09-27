@@ -133,6 +133,40 @@ public sealed class Ra2yrcppTelemetryTests
     }
 
     [Fact]
+    public void ALosingLocalPlayerWaitsBrieflyForTheWinnerBeforeTheMatchEnds()
+    {
+        Ra2yrcppSnapshotDiff diff = new(creditsHeartbeat: TimeSpan.FromSeconds(10), winnerGrace: TimeSpan.FromSeconds(5));
+        diff.SetTypes(Snapshots.Types);
+        diff.Next(Snapshots.State(1, Snapshots.Opening(), []), start);
+
+        // This client's house lost; the game has not flagged the winner yet.
+        House[] lost = [Snapshots.House("Americans", Snapshots.Americans, current: true, defeated: true, gameOver: true), Snapshots.House("Soviets", Snapshots.Soviets)];
+        Assert.DoesNotContain(diff.Next(Snapshots.State(2, lost, []), start.AddSeconds(10)), static e => e.EventType == Ra2TelemetryEventTypes.MatchEnded);
+        Assert.True(diff.EndPending);
+        House[] decided = [lost[0], Snapshots.House("Soviets", Snapshots.Soviets, winner: true)];
+        Ra2yrcppEvent ended = Assert.Single(diff.Next(Snapshots.State(3, decided, []), start.AddSeconds(12)), static e => e.EventType == Ra2TelemetryEventTypes.MatchEnded);
+        Assert.Equal("Soviets", Text(ended, "winner"));
+    }
+
+    [Fact]
+    public void WithoutAWinnerTheMatchEndsWhenTheGraceRunsOutOrTheStreamStops()
+    {
+        House[] lost = [Snapshots.House("Americans", Snapshots.Americans, current: true, defeated: true, gameOver: true), Snapshots.House("Soviets", Snapshots.Soviets)];
+        Ra2yrcppSnapshotDiff timed = new(winnerGrace: TimeSpan.FromSeconds(5));
+        timed.Next(Snapshots.State(1, Snapshots.Opening(), []), start);
+        Assert.DoesNotContain(timed.Next(Snapshots.State(2, lost, []), start.AddSeconds(10)), static e => e.EventType == Ra2TelemetryEventTypes.MatchEnded);
+        Ra2yrcppEvent ended = Assert.Single(timed.Next(Snapshots.State(3, lost, []), start.AddSeconds(16)), static e => e.EventType == Ra2TelemetryEventTypes.MatchEnded);
+        Assert.Null(Text(ended, "winner"));
+
+        // The client closed during the grace: end with what is known.
+        Ra2yrcppSnapshotDiff closed = new(winnerGrace: TimeSpan.FromSeconds(5));
+        closed.Next(Snapshots.State(1, Snapshots.Opening(), []), start);
+        closed.Next(Snapshots.State(2, lost, []), start.AddSeconds(10));
+        Assert.Equal(Ra2TelemetryEventTypes.MatchEnded, Assert.Single(closed.Finish()).EventType);
+        Assert.True(closed.Ended);
+    }
+
+    [Fact]
     public void ASeatScopedDiffLeavesOtherHousesOutAndEverythingItEmitsPassesTheSeatFilter()
     {
         Ra2yrcppSnapshotDiff diff = Diff("Americans");

@@ -260,7 +260,14 @@ in-process fake of the service.
   snapshot has no per-object visibility, so object, credit and power events
   carry only `visible_to: [owner]`, and the filter withholds them from every
   other seat. A source bound to a seat house leaves other houses' events out
-  entirely.
+  entirely. When only the reading client's own game is over (it lost),
+  the source keeps polling for a short grace (`WinnerGrace`, 5 s) for the
+  winner before it emits `ra2.match.ended`. That makes the **observer
+  client's service the preferred telemetry endpoint**: its game is not over
+  when a player's is.
+- `GetGameState` releases the fork's single-step mode. With `single_step`
+  configured, the game advances one step per poll, so the poll cadence
+  paces the game.
 - `Ra2yrcppCommandSink`: before every order it checks that the client's
   `current_player` house is the seat's house. A different house refuses the
   seat for good. It drops object addresses that the latest snapshot does not

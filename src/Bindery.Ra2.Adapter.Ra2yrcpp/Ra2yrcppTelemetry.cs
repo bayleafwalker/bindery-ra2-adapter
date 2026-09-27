@@ -39,18 +39,22 @@ public sealed class Ra2yrcppSnapshotDiff
 {
     private readonly HashSet<string> nonPlayer;
     private readonly TimeSpan heartbeat;
+    private readonly TimeSpan grace;
+    private DateTimeOffset? overSince;
+    private uint lastFrame;
     private readonly Dictionary<uint, string> typeNames = [];
     private readonly Dictionary<(uint Address, uint Owner, uint Type, uint UniqueId), TrackedObject> objects = [];
     private readonly Dictionary<string, (long Credits, DateTimeOffset At)> credits = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (int Output, int Drain)> power = new(StringComparer.Ordinal);
     private readonly HashSet<string> defeated = new(StringComparer.Ordinal);
 
-    public Ra2yrcppSnapshotDiff(string? seatHouse = null, IEnumerable<string>? nonPlayerHouses = null, TimeSpan? creditsHeartbeat = null)
+    public Ra2yrcppSnapshotDiff(string? seatHouse = null, IEnumerable<string>? nonPlayerHouses = null, TimeSpan? creditsHeartbeat = null, TimeSpan? winnerGrace = null)
     {
         if (seatHouse is not null) ArgumentException.ThrowIfNullOrWhiteSpace(seatHouse);
         SeatHouse = seatHouse;
         nonPlayer = new HashSet<string>(nonPlayerHouses ?? ["Special", "Neutral"], StringComparer.Ordinal);
         heartbeat = creditsHeartbeat ?? TimeSpan.FromSeconds(10);
+        grace = winnerGrace ?? TimeSpan.FromSeconds(5);
     }
 
     public string? SeatHouse { get; }
@@ -60,6 +64,15 @@ public sealed class Ra2yrcppSnapshotDiff
     public bool Ended { get; private set; }
 
     public bool HasTypes => typeNames.Count > 0;
+
+    /// <summary>The game is over for this client but no winner is flagged yet: the diff is waiting out the grace.</summary>
+    public bool EndPending => overSince is not null && !Ended;
+
+    /// <summary>
+    /// Ends a match whose end is pending because the stream stopped (the
+    /// client closed) during the winner grace; nothing otherwise.
+    /// </summary>
+    public IReadOnlyList<Ra2yrcppEvent> Finish() => EndPending ? [End([])] : [];
 
     /// <summary>Type classes from <c>ReadValue</c>'s initial game state; per-frame snapshots do not repeat them.</summary>
     public void SetTypes(IEnumerable<ObjectTypeClass> types)
@@ -118,17 +131,30 @@ public sealed class Ra2yrcppSnapshotDiff
             }
         }
 
-        // The match is over when the game names a winner, the local player's
-        // game is over, or the client is leaving the game.
+        // The match is over when the game names a winner. When only this
+        // client's own game is over (it lost, or is leaving), the winner may
+        // not be flagged yet, so the diff keeps reading for the grace period
+        // before it ends the match without one.
+        lastFrame = state.CurrentFrame;
         House[] winners = Players(state).Where(static h => h.IsWinner).ToArray();
-        if (winners.Length > 0 || state.Houses.Any(static h => h.CurrentPlayer && h.IsGameOver) || state.Stage == LoadStage.StageExitGame)
+        if (winners.Length > 0)
         {
-            Ended = true;
-            JsonObject ended = new() { ["frame"] = state.CurrentFrame };
-            if (winners.Length == 1) ended["winner"] = winners[0].Name;
-            events.Add(new(Ra2TelemetryEventTypes.MatchEnded, Payload(ended)));
+            events.Add(End(winners));
+        }
+        else if (state.Houses.Any(static h => h.CurrentPlayer && h.IsGameOver) || state.Stage == LoadStage.StageExitGame)
+        {
+            overSince ??= at;
+            if (at - overSince.Value >= grace) events.Add(End([]));
         }
         return events;
+    }
+
+    private Ra2yrcppEvent End(House[] winners)
+    {
+        Ended = true;
+        JsonObject ended = new() { ["frame"] = lastFrame };
+        if (winners.Length == 1) ended["winner"] = winners[0].Name;
+        return new(Ra2TelemetryEventTypes.MatchEnded, Payload(ended));
     }
 
     private IEnumerable<House> Players(GameState state) => state.Houses.Where(h => !string.IsNullOrEmpty(h.Name) && !nonPlayer.Contains(h.Name));
@@ -168,6 +194,11 @@ public sealed class Ra2yrcppSnapshotDiff
 /// <param name="ConnectRetry">How long to wait between attempts while the service is not up; default 2 s.</param>
 /// <param name="SeatHouse">Emit only this house's object, credit and power events; null for the spectator view.</param>
 /// <param name="MaximumConsecutiveFailures">Failed reads in a row, once the match started, before the stream fails.</param>
+/// <param name="WinnerGrace">
+/// How long to keep reading for a winner once this client's own game is
+/// over; default 5 s. The observer client's service is the preferred
+/// endpoint: its game is not over when a player's is.
+/// </param>
 public sealed record Ra2yrcppTelemetryOptions(
     TimeSpan? PollInterval = null,
     TimeSpan? ConnectRetry = null,
@@ -176,7 +207,8 @@ public sealed record Ra2yrcppTelemetryOptions(
     int MaximumConsecutiveFailures = 5,
     Ra2yrcppClientOptions? Client = null,
     string? CaptureId = null,
-    IReadOnlyList<string>? NonPlayerHouses = null);
+    IReadOnlyList<string>? NonPlayerHouses = null,
+    TimeSpan? WinnerGrace = null);
 
 /// <summary>
 /// Live telemetry from a game client's ra2yrcpp service: polls
@@ -218,7 +250,7 @@ public sealed class Ra2yrcppTelemetrySource : IRa2TelemetrySource
     {
         TimeSpan poll = options.PollInterval ?? TimeSpan.FromMilliseconds(500);
         TimeSpan retry = options.ConnectRetry ?? TimeSpan.FromSeconds(2);
-        Ra2yrcppSnapshotDiff diff = new(options.SeatHouse, options.NonPlayerHouses, options.CreditsHeartbeat);
+        Ra2yrcppSnapshotDiff diff = new(options.SeatHouse, options.NonPlayerHouses, options.CreditsHeartbeat, options.WinnerGrace);
         Ra2yrcppClient? client = null;
         int failures = 0;
         ulong sequence = 0;
@@ -251,10 +283,21 @@ public sealed class Ra2yrcppTelemetrySource : IRa2TelemetrySource
                     // (InvalidProtocolBufferException) as well as
                     // InvalidDataException; the client has already dropped
                     // that connection, and the next read reconnects.
-                    if (diff.Started && ++failures >= options.MaximumConsecutiveFailures)
+                    // A client that closes while the end is pending (the
+                    // loser's game exiting) ends the match with what is known.
+                    if (diff.EndPending)
+                    {
+                        events = diff.Finish();
+                    }
+                    else if (diff.Started && ++failures >= options.MaximumConsecutiveFailures)
+                    {
                         throw new IOException($"ra2yrcpp telemetry at {Uri} failed {failures} times in a row mid-match: {exception.Message}", exception);
-                    await Task.Delay(diff.Started ? poll : retry, clock, cancellationToken).ConfigureAwait(false);
-                    continue;
+                    }
+                    else
+                    {
+                        await Task.Delay(diff.Started ? poll : retry, clock, cancellationToken).ConfigureAwait(false);
+                        continue;
+                    }
                 }
 
                 foreach (Ra2yrcppEvent e in events)
