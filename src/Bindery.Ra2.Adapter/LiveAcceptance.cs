@@ -94,7 +94,11 @@ public sealed record LiveClientEvidence(
     string? Failure,
     IReadOnlyList<RunObservation>? Observations = null,
     // "player" or "observer"; null in evidence written before observers existed.
-    string? ClientClass = null);
+    string? ClientClass = null,
+    // Lease heartbeats the runner sent for this enrollment, and the last one
+    // that failed; null in evidence written before the runner kept leases.
+    int? HeartbeatCount = null,
+    string? LastHeartbeatError = null);
 
 public sealed record LiveRelayEvidence(
     string ProviderId,
@@ -154,6 +158,7 @@ public sealed class LiveAcceptanceRunner
     private readonly ILiveClientHost firstHost;
     private readonly ILiveClientHost secondHost;
     private readonly ILiveClientHost? observerHost;
+    private readonly TimeProvider time;
 
     /// <summary>Both clients on the machine running the orchestrator.</summary>
     public LiveAcceptanceRunner(ILiveMatchDriver matchDriver, BinderyAdapterClient controlPlane, ISpawnerBoundary spawner)
@@ -175,7 +180,14 @@ public sealed class LiveAcceptanceRunner
     /// with an <see cref="LiveAcceptanceRequest.Observer"/> needs this host.
     /// </summary>
     public LiveAcceptanceRunner(ILiveMatchDriver matchDriver, BinderyAdapterClient controlPlane, ILiveClientHost firstHost, ILiveClientHost secondHost, ILiveClientHost? observerHost)
+        : this(matchDriver, controlPlane, firstHost, secondHost, observerHost, TimeProvider.System)
     {
+    }
+
+    /// <summary>As above, with the clock that paces lease heartbeats.</summary>
+    public LiveAcceptanceRunner(ILiveMatchDriver matchDriver, BinderyAdapterClient controlPlane, ILiveClientHost firstHost, ILiveClientHost secondHost, ILiveClientHost? observerHost, TimeProvider time)
+    {
+        this.time = time ?? throw new ArgumentNullException(nameof(time));
         this.matchDriver = matchDriver ?? throw new ArgumentNullException(nameof(matchDriver));
         this.controlPlane = controlPlane ?? throw new ArgumentNullException(nameof(controlPlane));
         this.firstHost = firstHost ?? throw new ArgumentNullException(nameof(firstHost));
@@ -246,11 +258,19 @@ public sealed class LiveAcceptanceRunner
             request.FirstEnrollmentIdempotencyKey,
             request.SecondEnrollmentIdempotencyKey,
             cancellationToken).ConfigureAwait(false);
+        // Every enrollment's lease runs out two minutes after enrollment
+        // unless heartbeated, so each client is kept alive from here until
+        // its terminal report; disposal stops whatever is still running.
+        await using EnrollmentLeaseKeeper firstLease = EnrollmentLeaseKeeper.Start(controlPlane, match.First.Configuration, time, cancellationToken);
+        await using EnrollmentLeaseKeeper secondLease = EnrollmentLeaseKeeper.Start(controlPlane, match.Second.Configuration, time, cancellationToken);
         // The spectator joins the same session after both players, so a
         // session that cannot admit it fails here, before any game launches.
         PreparedLiveClient? observer = observerRequest is null
             ? null
             : await matchDriver.EnrollObserverAsync(match.Session, observerRequest.Definition, observerRequest.EnrollmentIdempotencyKey, cancellationToken).ConfigureAwait(false);
+        await using EnrollmentLeaseKeeper? observerLease = observer is null
+            ? null
+            : EnrollmentLeaseKeeper.Start(controlPlane, observer.Configuration, time, cancellationToken);
 
         // One tunnel port per participant. The spawner reaches every peer as
         // 0.0.0.0 on its allocated port, so without these there is nothing to
@@ -310,14 +330,14 @@ public sealed class LiveAcceptanceRunner
         string secondIni = await WriteSpawnIniAsync(request.EvidenceDirectory, "client-b", secondPlan, cancellationToken).ConfigureAwait(false);
         List<Task<LiveClientRun>> clientRuns =
         [
-            RunClientAsync(firstHost, match.First, request.FirstLaunch, firstIni, request.GoldenApplianceId, onLifecycle, cancellationToken),
-            RunClientAsync(secondHost, match.Second, request.SecondLaunch, secondIni, request.GoldenApplianceId, onLifecycle, cancellationToken),
+            RunClientAsync(firstHost, match.First, firstLease, request.FirstLaunch, firstIni, request.GoldenApplianceId, onLifecycle, cancellationToken),
+            RunClientAsync(secondHost, match.Second, secondLease, request.SecondLaunch, secondIni, request.GoldenApplianceId, onLifecycle, cancellationToken),
         ];
         if (observer is not null)
         {
             SpawnMatchPlan observerPlan = new(scenario, gameId, seed, false, observerParticipant!, [firstParticipant, secondParticipant], globalOrder, aiPlayers, relay.RelayHost!, relay.RelayPort!.Value, request.GameOptions);
             string observerIni = await WriteSpawnIniAsync(request.EvidenceDirectory, "observer", observerPlan, cancellationToken).ConfigureAwait(false);
-            clientRuns.Add(RunClientAsync(observerHost!, observer, observerRequest!.Launch, observerIni, request.GoldenApplianceId, onLifecycle, cancellationToken));
+            clientRuns.Add(RunClientAsync(observerHost!, observer, observerLease!, observerRequest!.Launch, observerIni, request.GoldenApplianceId, onLifecycle, cancellationToken));
         }
         LiveClientRun[] runs = await Task.WhenAll(clientRuns).ConfigureAwait(false);
         PreparedLiveClient[] prepared = observer is null ? [match.First, match.Second] : [match.First, match.Second, observer];
@@ -384,6 +404,7 @@ public sealed class LiveAcceptanceRunner
     private async Task<LiveClientRun> RunClientAsync(
         ILiveClientHost host,
         PreparedLiveClient client,
+        EnrollmentLeaseKeeper lease,
         LiveClientLaunch launch,
         string spawnIniPath,
         string goldenApplianceId,
@@ -420,6 +441,10 @@ public sealed class LiveAcceptanceRunner
                 async report =>
                 {
                     reports.Enqueue(report.Kind);
+                    // The terminal report ends the enrollment: stop its
+                    // heartbeat first, so none can land after departure.
+                    if (report.Kind is LifecycleKind.Exited or LifecycleKind.Failed)
+                        await lease.StopAsync().ConfigureAwait(false);
                     // One retry: losing the final lifecycle report to a stale
                     // pooled connection would fail an otherwise good run.
                     try
@@ -434,6 +459,8 @@ public sealed class LiveAcceptanceRunner
                     await NotifyAsync(onLifecycle, new LiveLifecycleNotice(client.Definition.ClientInstanceId, client.Definition.ClientClass, report.Kind), cancellationToken).ConfigureAwait(false);
                 },
                 cancellationToken).ConfigureAwait(false);
+            // The client has exited; anything reported from here on is best effort.
+            await lease.StopAsync().ConfigureAwait(false);
             string gameHash = await host.Sha256Async(launch.GameExecutable, cancellationToken).ConfigureAwait(false);
 
             // Syringe exits 0 even when the game it hosted threw, so the exit
@@ -468,10 +495,11 @@ public sealed class LiveAcceptanceRunner
                     observations.Add(new RunObservation("control_plane_report_rejected", exception.GetType().Name, Notable: false));
                 }
             }
-            return new LiveClientRun(ToEvidence(client, launch, goldenApplianceId, gameHash, spawnIniPath, reports, exitCode, notable is null ? null : $"{notable.Kind}: {notable.Detail}", observations), reports, exitCode);
+            return new LiveClientRun(ToEvidence(client, lease, launch, goldenApplianceId, gameHash, spawnIniPath, reports, exitCode, notable is null ? null : $"{notable.Kind}: {notable.Detail}", observations), reports, exitCode);
         }
         catch (Exception exception) when (exception is InvalidOperationException or PlatformNotSupportedException or IOException or UnauthorizedAccessException or HttpRequestException or OperationCanceledException)
         {
+            await lease.StopAsync().ConfigureAwait(false);
             // A failed client still produces evidence, but its executable hash
             // may be unobtainable if the host itself is what failed.
             string gameHash;
@@ -481,7 +509,7 @@ public sealed class LiveAcceptanceRunner
             // of guessing which call failed.
             string detail = $"{exception.GetType().Name}: {exception.Message}";
             if (exception.InnerException is not null) detail += $" -- inner {exception.InnerException.GetType().Name}: {exception.InnerException.Message}";
-            return new LiveClientRun(ToEvidence(client, launch, goldenApplianceId, gameHash, spawnIniPath, reports, null, detail), reports, null);
+            return new LiveClientRun(ToEvidence(client, lease, launch, goldenApplianceId, gameHash, spawnIniPath, reports, null, detail), reports, null);
         }
         finally
         {
@@ -497,7 +525,7 @@ public sealed class LiveAcceptanceRunner
         }
     }
 
-    private static LiveClientEvidence ToEvidence(PreparedLiveClient client, LiveClientLaunch launch, string goldenApplianceId, string gameExecutableSha256, string spawnIniPath, IEnumerable<LifecycleKind> reports, int? exitCode, string? failure, IReadOnlyList<RunObservation>? observations = null) => new(
+    private static LiveClientEvidence ToEvidence(PreparedLiveClient client, EnrollmentLeaseKeeper lease, LiveClientLaunch launch, string goldenApplianceId, string gameExecutableSha256, string spawnIniPath, IEnumerable<LifecycleKind> reports, int? exitCode, string? failure, IReadOnlyList<RunObservation>? observations = null) => new(
         client.Enrollment.ClientId,
         client.Definition.Identity.AccountId,
         client.Definition.ClientInstanceId,
@@ -508,7 +536,9 @@ public sealed class LiveAcceptanceRunner
         exitCode,
         failure,
         observations,
-        client.Definition.ClientClass == ClientClass.Observer ? "observer" : "player");
+        client.Definition.ClientClass == ClientClass.Observer ? "observer" : "player",
+        lease.HeartbeatCount,
+        lease.LastError);
 
     private static string LifecycleKindName(LifecycleKind kind) => kind switch
     {
