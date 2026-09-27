@@ -68,6 +68,35 @@ sides. A telemetry, tracker or agent failure is recorded on the match and
 never turns a played match into a failed one. A channel record never upgrades the qualification flags
 in the evidence it points to.
 
+### Overlay, audio and the experiment report
+
+- **Overlay.**
+  - Set `LiveChannelMatchOptions.Overlay` (the channel tool uses
+    `obs.overlayTextInput`) and a third telemetry reader keeps a scoreboard:
+    map, clock, credits per house, defeats, the winner. It is written into an
+    OBS text source with `SetInputSettings`.
+  - Updates are throttled to one per second of observation time, except at
+    match start, joins, defeats and match end.
+  - This is the full spectator view, meant for viewers. It is never handed to
+    a player controller.
+  - A failing sink is noted once and the match plays on.
+- **Audio watch.**
+  - `ObsAudioMonitor` subscribes to obs-websocket's `InputVolumeMeters` on
+    its own connection.
+  - While each match is on air, it records the longest stretch below
+    -80 dBFS per input, and flags inputs that sent no meters at all.
+  - Silence longer than 5 s becomes `BroadcastIssue` on the match record.
+    The match is never stopped for it.
+  - The channel tool runs it when `obs.watchAudio` is set (the default) and
+    `obs.audioInputs` is not empty.
+- **Experiment report.**
+  - `Bindery.Ra2.Adapter.Channel report <channel-matches.ndjson>` groups
+    matches by map and agent controller (`id@version`, or `(no agent)`).
+  - Columns: matches, completed, agent wins, losses, undecided, mean
+    playbook revisions, distinct seeds, and traces stored in Bindery.
+  - Only completed matches count, and a completed match with no named
+    winner is undecided, never a loss.
+
 ### Continuity rules
 
 - A failed scene switch is recorded in `BroadcastIssues`, and the match keeps
@@ -162,6 +191,36 @@ It then:
 The trace's content hash goes into the channel record. A failed upload is
 recorded on the match and leaves the trace on disk.
 
+### The playbook controller
+
+`PlaybookController` is that two-speed loop:
+
+- A `PlayerView` remembers only what the seat's filter admitted: its own
+  credits trend, own units by type, own buildings, enemy sightings, and
+  defeats.
+- **Triggers** name the meaningful moments:
+  - `opening`;
+  - `new_threat`: an enemy object came into view, with a 60 s cooldown;
+  - `stalled_economy`: no credit growth across a 90 s window; it fires once
+    and re-arms after recovery;
+  - `tech_transition`: a battle lab was placed. The defaults are `GATECH`,
+    `NATECH` and `YATECH`; verify them against the ruleset in use.
+- An `IPlaybookPlanner` revises the playbook at a trigger. At most one plan
+  is in flight, and triggers inside the minimum plan interval are dropped
+  and noted rather than queued. A planner that answers synchronously applies
+  on the same observation; a slow one (a model call) stays in flight while
+  the routine layer keeps playing the old playbook. Cooldowns run on
+  observation time, so replaying a recording makes the same decisions.
+  `RulePlaybookPlanner` is the deterministic baseline.
+- An `IRoutineController` turns the current playbook into orders on every
+  observation. `IdleRoutineController` issues none: the command vocabulary
+  waits on the fork's transport and stable entity IDs.
+- Triggers, drops and planner failures go into the trace as
+  `controller_note` entries, next to each `playbook_revised`.
+
+Payload field names (`house`, `credits`, `type`) are `PayloadFields`
+defaults; set them to what the bridge emits.
+
 **Not implemented:** the game-side command channel. `IPlayerCommandSink` is the
 boundary a per-player ra2yrcpp command path would implement. Nothing in this
 repository can issue orders into the game yet.
@@ -171,9 +230,9 @@ repository can issue orders into the game yet.
 | Step | Built here | Still needs |
 | --- | --- | --- |
 | 1. Prove the channel | `tools/Bindery.Ra2.Adapter.Channel` runs `ChannelRunner` → `LiveAcceptanceMatchLauncher` → `LiveAcceptanceRunner`, with OBS and MediaMTX ([`docs/channel-settings.example.json`](../channel-settings.example.json)) | Several consecutive lab matches on the room stream |
-| 2. Automate continuity | Cut on `started`, holding scene, drain, failure back-off, output release, OBS scene and audio preflight, per-match evidence folders | A lab check that each clone's resources are released; continuous audio-level monitoring |
+| 2. Automate continuity | Cut on `started`, holding scene, drain, failure back-off, output release, OBS scene and audio preflight, per-match evidence folders, audio-level watch, overlay | A lab check that each clone's resources are released |
 | 3. Add the observer | Optional third client end to end: enrollment, tunnel port, spectator INI, lifecycle, evidence | A lab run proving the observer joins reliably and gives the view you want |
-| 4. Add agent play | Seat, filter, trace, launcher wiring, winner from telemetry, controller declaration, trace upload, NDJSON telemetry recordings | The fork's live reader, bridge ownership and visibility fields, and the native command transport (see below) |
+| 4. Add agent play | Seat, filter, trace, playbook controller (triggers, background planner, rule baseline), launcher wiring, winner from telemetry, controller declaration, trace upload, NDJSON telemetry recordings, experiment report | The fork's live reader, bridge ownership and visibility fields, the native command transport, and a routine controller that issues real orders |
 | 5. Expand games | Loop, broadcast and record are game-neutral behind `IChannelMatchLauncher` | Per-game launcher, filter and command sink |
 
 ## Prospective work outside this repository

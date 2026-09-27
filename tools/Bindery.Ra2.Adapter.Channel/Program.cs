@@ -4,9 +4,24 @@ using System.Text.Json;
 using Bindery.Ra2.Adapter;
 using Bindery.Ra2.Adapter.Channel;
 
+if (args.Length == 2 && args[0] == "report")
+{
+    // Compare controllers across every match the channel recorded.
+    try
+    {
+        Console.Write(ChannelExperimentReport.RenderTable(ChannelExperimentReport.Build(ChannelExperimentReport.Read(args[1]))));
+        return 0;
+    }
+    catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException)
+    {
+        Console.Error.WriteLine($"report failed: {exception.Message}");
+        return 1;
+    }
+}
 if (args.Length != 1)
 {
     Console.Error.WriteLine("usage: Bindery.Ra2.Adapter.Channel <channel-settings.json>");
+    Console.Error.WriteLine("       Bindery.Ra2.Adapter.Channel report <channel-matches.ndjson>");
     return 2;
 }
 
@@ -60,6 +75,15 @@ try
     await live.ValidateAsync(firstHost, secondHost, observerHost);
     LiveAcceptanceRunner liveRunner = new(driver, controlPlane, firstHost, secondHost, observerHost);
 
+    await using ObsWebSocketProduction? obs = settings.Obs is null ? null : await settings.Obs.CreateAsync();
+    IBroadcastProduction production = (IBroadcastProduction?)obs ?? new NoBroadcastProduction();
+    if (obs is null) Console.WriteLine("broadcast: disabled (no obs settings); running the match loop only");
+    // The audio watch reads OBS's meters on its own connection for as long
+    // as the channel runs.
+    await using ObsAudioMonitor? audio = settings.Obs is { WatchAudio: true, AudioInputs.Length: > 0 } ? await settings.Obs.CreateAudioMonitorAsync() : null;
+    using CancellationTokenSource audioStop = CancellationTokenSource.CreateLinkedTokenSource(stop.Token);
+    Task audioWatch = audio is null ? Task.CompletedTask : Task.Run(() => audio.RunAsync(audioStop.Token));
+
     string channelDirectory = Path.Combine(live.EvidenceDirectory, settings.ChannelId);
     LiveAcceptanceMatchLauncher launcher = new(liveRunner, context =>
     {
@@ -69,18 +93,25 @@ try
         Console.WriteLine($"match {context.MatchIndex}: session_idempotency_key={match.SessionIdempotencyKey} evidence={directory}");
         return match.ToRequest(directory, settings.Seed);
     },
-    new LiveChannelMatchOptions(Telemetry: settings.TelemetryFor));
+    new LiveChannelMatchOptions(Telemetry: settings.TelemetryFor, Overlay: settings.Obs?.OverlayTextInput is { Length: > 0 } ? obs : null));
     if (string.IsNullOrWhiteSpace(settings.TelemetryRecording))
         Console.WriteLine("telemetry: none attached; match records will carry no winner");
 
-    await using ObsWebSocketProduction? obs = settings.Obs is null ? null : await settings.Obs.CreateAsync();
-    IBroadcastProduction production = (IBroadcastProduction?)obs ?? new NoBroadcastProduction();
-    if (obs is null) Console.WriteLine("broadcast: disabled (no obs settings); running the match loop only");
-
     ChannelRequest request = settings.ToRequest(live);
     NdjsonChannelRecordSink records = new(channelDirectory);
-    runner = new ChannelRunner(launcher, production, records);
+    runner = new ChannelRunner(launcher, production, records, health: audio);
     ChannelSessionSummary summary = await runner.RunAsync(request, stop.Token);
+    audioStop.Cancel();
+    try { await audioWatch; }
+    catch (OperationCanceledException)
+    {
+        // The meters connection ends with the channel.
+    }
+    catch (Exception exception)
+    {
+        // Every match already records "sent no meters"; say why once.
+        Console.Error.WriteLine($"audio watch stopped: {exception.GetType().Name}: {exception.Message}");
+    }
 
     foreach (ChannelMatchRecord match in summary.Matches)
         Console.WriteLine($"match {match.MatchIndex}: {match.Outcome.ToString().ToLowerInvariant()} session={match.SessionId ?? "-"} seed={match.Seed?.ToString(CultureInfo.InvariantCulture) ?? "-"}{(match.Failure is null ? string.Empty : " failure=" + match.Failure)}");
@@ -177,11 +208,25 @@ internal sealed class ObsSettings
     public string[] AudioInputs { get; init; } = [];
     public Dictionary<string, string> MatchSceneByClient { get; init; } = [];
 
-    public async Task<ObsWebSocketProduction> CreateAsync()
-    {
-        string? password = !string.IsNullOrWhiteSpace(PasswordFile)
+    /// <summary>An OBS text source to write the scoreboard into; omit for no overlay.</summary>
+    public string OverlayTextInput { get; init; } = string.Empty;
+
+    /// <summary>Watch <see cref="AudioInputs"/> for silence during each match.</summary>
+    public bool WatchAudio { get; init; } = true;
+
+    public async Task<ObsWebSocketProduction> CreateAsync() =>
+        ObsWebSocketProduction.ForUri(
+            new Uri(Uri, UriKind.Absolute),
+            await PasswordAsync(),
+            MatchSceneByClient,
+            AudioInputs,
+            string.IsNullOrWhiteSpace(OverlayTextInput) ? null : OverlayTextInput);
+
+    public async Task<ObsAudioMonitor> CreateAudioMonitorAsync() =>
+        ObsAudioMonitor.ForUri(new Uri(Uri, UriKind.Absolute), await PasswordAsync(), AudioInputs);
+
+    private async Task<string?> PasswordAsync() =>
+        !string.IsNullOrWhiteSpace(PasswordFile)
             ? (await File.ReadAllTextAsync(PasswordFile)).Trim()
             : Environment.GetEnvironmentVariable(PasswordEnvironmentVariable);
-        return ObsWebSocketProduction.ForUri(new Uri(Uri, UriKind.Absolute), password, MatchSceneByClient, AudioInputs);
-    }
 }

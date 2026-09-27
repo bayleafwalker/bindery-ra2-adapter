@@ -20,8 +20,13 @@ public delegate Task<LiveAcceptanceEvidence> LiveMatchRun(
 public sealed record LiveChannelMatchOptions(
     Func<ChannelMatchContext, IRa2TelemetrySource?>? Telemetry = null,
     Func<ChannelMatchContext, AgentSeat?>? AgentSeat = null,
-    TimeSpan? TelemetryDrain = null)
+    TimeSpan? TelemetryDrain = null,
+    IOverlaySink? Overlay = null,
+    TimeSpan? OverlayInterval = null)
 {
+    /// <summary>Minimum observation time between overlay updates; headline events always update.</summary>
+    public TimeSpan EffectiveOverlayInterval => OverlayInterval ?? TimeSpan.FromSeconds(1);
+
     /// <summary>How long to keep reading after the clients exit, for the final events to arrive.</summary>
     public TimeSpan EffectiveTelemetryDrain => TelemetryDrain ?? TimeSpan.FromSeconds(5);
 }
@@ -85,6 +90,7 @@ public sealed class LiveAcceptanceMatchLauncher : IChannelMatchLauncher
         using CancellationTokenSource telemetryStop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         Task pump = Task.CompletedTask;
         Task tracking = Task.CompletedTask;
+        Task overlaying = Task.CompletedTask;
         Task<AgentSeatSummary?> seatRun = Task.FromResult<AgentSeatSummary?>(null);
         if (telemetry is not null)
         {
@@ -92,6 +98,7 @@ public sealed class LiveAcceptanceMatchLauncher : IChannelMatchLauncher
             IRa2TelemetrySource trackerBranch = fanOut.Branch();
             IRa2TelemetrySource? seatBranch = seat is null ? null : fanOut.Branch();
             tracking = TrackAsync(trackerBranch, tracker);
+            if (options.Overlay is { } overlay) overlaying = OverlayAsync(fanOut.Branch(), new MatchOverlay(context), overlay, options.EffectiveOverlayInterval, telemetryIssues, cancellationToken);
             if (seat is not null) seatRun = RunSeatAsync(seat, seatBranch!, request.EvidenceDirectory, telemetryIssues, cancellationToken);
             pump = fanOut.RunAsync(telemetryStop.Token);
         }
@@ -115,6 +122,7 @@ public sealed class LiveAcceptanceMatchLauncher : IChannelMatchLauncher
                 telemetryStop.Cancel();
                 await QuietlyAsync(pump, "telemetry source", telemetryIssues).ConfigureAwait(false);
                 await QuietlyAsync(tracking, "match tracker", telemetryIssues).ConfigureAwait(false);
+                await QuietlyAsync(overlaying, "overlay", telemetryIssues).ConfigureAwait(false);
             }
         }
 
@@ -190,6 +198,30 @@ public sealed class LiveAcceptanceMatchLauncher : IChannelMatchLauncher
         if (string.Equals(request.Second.ClientInstanceId, assignment.ClientInstanceId, StringComparison.Ordinal))
             return request with { Second = request.Second with { Controller = assignment.Controller } };
         throw new InvalidOperationException($"agent seat client {assignment.ClientInstanceId} is not a player of this match");
+    }
+
+    // The overlay is decoration: a sink that fails is noted once and the
+    // match carries on without it.
+    private static async Task OverlayAsync(IRa2TelemetrySource source, MatchOverlay overlay, IOverlaySink sink, TimeSpan interval, List<string> issues, CancellationToken cancellationToken)
+    {
+        DateTimeOffset? lastPush = null;
+        bool failed = false;
+        await foreach (RawObservation observation in source.ReadAsync().ConfigureAwait(false))
+        {
+            overlay.Observe(observation);
+            if (failed) continue;
+            if (!MatchOverlay.IsHeadline(observation) && lastPush is { } last && observation.ReceivedAt - last < interval) continue;
+            lastPush = observation.ReceivedAt;
+            try
+            {
+                await sink.UpdateAsync(overlay.State, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                failed = true;
+                lock (issues) issues.Add($"overlay: {exception.GetType().Name}: {exception.Message}; no further updates this match");
+            }
+        }
     }
 
     private static async Task TrackAsync(IRa2TelemetrySource source, MatchTelemetryTracker tracker)

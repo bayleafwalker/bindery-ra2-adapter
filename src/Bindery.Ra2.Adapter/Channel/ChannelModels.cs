@@ -142,7 +142,10 @@ public sealed record ChannelMatchRecord(
     string? ObserverIssue = null,
     // The trace's content hash in Bindery, once uploaded into the agent's capture.
     string? DecisionTraceContentHash = null,
-    ControllerDeclaration? AgentController = null);
+    ControllerDeclaration? AgentController = null,
+    string? AgentHouse = null,
+    // What the broadcast health watch saw wrong while this match was on air.
+    string? BroadcastIssue = null);
 
 /// <summary>What one channel session did, in order.</summary>
 public sealed record ChannelSessionSummary(

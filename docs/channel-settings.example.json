@@ -12,7 +12,9 @@
     "matchSceneByClient": {
       "<stable-machine-a-instance>": "ra2-client-a",
       "<stable-machine-c-instance>": "ra2-observer"
-    }
+    },
+    "overlayTextInput": "ra2-scoreboard",
+    "watchAudio": true
   },
   "localRoomUri": "rtmp://192.168.122.1:1935/ra2",
   "twitchUri": "rtmp://live.twitch.tv/app",

@@ -24,7 +24,7 @@ public interface IObsConnection : IAsyncDisposable
 /// Twitch copy is relayed from MediaMTX (see deploy/ra2-channel), so turning
 /// public output on or off never touches the capture or the room stream.
 /// </remarks>
-public sealed class ObsWebSocketProduction : IBroadcastProduction, IAsyncDisposable
+public sealed class ObsWebSocketProduction : IBroadcastProduction, IOverlaySink, IAsyncDisposable
 {
     public const int RpcVersion = 1;
 
@@ -38,6 +38,7 @@ public sealed class ObsWebSocketProduction : IBroadcastProduction, IAsyncDisposa
     private readonly string? password;
     private readonly IReadOnlyDictionary<string, string> matchSceneByClient;
     private readonly IReadOnlyList<string> requiredAudioInputs;
+    private readonly string? overlayTextInput;
     private readonly SemaphoreSlim gate = new(1, 1);
     private IObsConnection? connection;
     private BroadcastScenes scenes = new();
@@ -56,22 +57,41 @@ public sealed class ObsWebSocketProduction : IBroadcastProduction, IAsyncDisposa
         Func<CancellationToken, Task<IObsConnection>> connect,
         string? password,
         IReadOnlyDictionary<string, string>? matchSceneByClient = null,
-        IReadOnlyList<string>? requiredAudioInputs = null)
+        IReadOnlyList<string>? requiredAudioInputs = null,
+        string? overlayTextInput = null)
     {
         this.connect = connect ?? throw new ArgumentNullException(nameof(connect));
         this.password = password;
         this.matchSceneByClient = matchSceneByClient ?? new Dictionary<string, string>();
         this.requiredAudioInputs = requiredAudioInputs ?? [];
+        this.overlayTextInput = overlayTextInput;
     }
 
     public static ObsWebSocketProduction ForUri(
         Uri uri,
         string? password,
         IReadOnlyDictionary<string, string>? matchSceneByClient = null,
-        IReadOnlyList<string>? requiredAudioInputs = null)
+        IReadOnlyList<string>? requiredAudioInputs = null,
+        string? overlayTextInput = null)
     {
         ArgumentNullException.ThrowIfNull(uri);
-        return new ObsWebSocketProduction(ct => ClientWebSocketObsConnection.ConnectAsync(uri, ct), password, matchSceneByClient, requiredAudioInputs);
+        return new ObsWebSocketProduction(ct => ClientWebSocketObsConnection.ConnectAsync(uri, ct), password, matchSceneByClient, requiredAudioInputs, overlayTextInput);
+    }
+
+    /// <summary>Writes the scoreboard into the overlay text source, if one is configured.</summary>
+    public Task UpdateAsync(OverlayState state, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        if (overlayTextInput is null) return Task.CompletedTask;
+        return RequestAsync(
+            "SetInputSettings",
+            new JsonObject
+            {
+                ["inputName"] = overlayTextInput,
+                ["inputSettings"] = new JsonObject { ["text"] = OverlayText.Render(state) },
+                ["overlay"] = true,
+            },
+            cancellationToken);
     }
 
     /// <summary>
@@ -90,6 +110,17 @@ public sealed class ObsWebSocketProduction : IBroadcastProduction, IAsyncDisposa
         foreach (string scene in new[] { planned.Holding, planned.Match }.Concat(matchSceneByClient.Values).Distinct(StringComparer.Ordinal))
         {
             if (!present.Contains(scene)) problems.Add($"scene '{scene}' does not exist");
+        }
+        if (overlayTextInput is not null)
+        {
+            try
+            {
+                await RequestAsync("GetInputSettings", new JsonObject { ["inputName"] = overlayTextInput }, cancellationToken).ConfigureAwait(false);
+            }
+            catch (InvalidOperationException exception)
+            {
+                problems.Add($"overlay text input '{overlayTextInput}' is unavailable: {exception.Message}");
+            }
         }
         foreach (string input in requiredAudioInputs)
         {
@@ -191,14 +222,25 @@ public sealed class ObsWebSocketProduction : IBroadcastProduction, IAsyncDisposa
         }
     }
 
-    private async Task<IObsConnection> IdentifyAsync(CancellationToken cancellationToken)
+    private Task<IObsConnection> IdentifyAsync(CancellationToken cancellationToken) =>
+        IdentifyAsync(connect, password, 0, cancellationToken);
+
+    /// <summary>
+    /// Opens and identifies one obs-websocket session. <paramref name="eventSubscriptions"/>
+    /// is the protocol's bitmask; 0 means requests only.
+    /// </summary>
+    internal static async Task<IObsConnection> IdentifyAsync(
+        Func<CancellationToken, Task<IObsConnection>> connect,
+        string? password,
+        int eventSubscriptions,
+        CancellationToken cancellationToken)
     {
         IObsConnection open = await connect(cancellationToken).ConfigureAwait(false);
         try
         {
             JsonNode hello = Parse(await open.ReceiveAsync(cancellationToken).ConfigureAwait(false));
             if (hello["op"]?.GetValue<int>() != OpHello) throw new InvalidOperationException("OBS did not open with Hello");
-            JsonObject identify = new() { ["rpcVersion"] = RpcVersion, ["eventSubscriptions"] = 0 };
+            JsonObject identify = new() { ["rpcVersion"] = RpcVersion, ["eventSubscriptions"] = eventSubscriptions };
             JsonNode? auth = hello["d"]?["authentication"];
             if (auth is not null)
             {
@@ -220,7 +262,7 @@ public sealed class ObsWebSocketProduction : IBroadcastProduction, IAsyncDisposa
         }
     }
 
-    private static JsonNode Parse(string message) =>
+    internal static JsonNode Parse(string message) =>
         JsonNode.Parse(message) ?? throw new JsonException("OBS sent an empty message");
 }
 

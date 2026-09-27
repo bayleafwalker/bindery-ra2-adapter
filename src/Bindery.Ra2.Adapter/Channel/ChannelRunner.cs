@@ -82,6 +82,7 @@ public sealed class ChannelRunner
     private readonly IBroadcastProduction production;
     private readonly IChannelRecordSink records;
     private readonly Func<TimeSpan, CancellationToken, Task> delay;
+    private readonly IBroadcastHealth? health;
     private readonly List<ChannelPhase> phases = [];
     private readonly List<string> broadcastIssues = [];
     private int drainRequested;
@@ -90,8 +91,10 @@ public sealed class ChannelRunner
         IChannelMatchLauncher launcher,
         IBroadcastProduction production,
         IChannelRecordSink records,
-        Func<TimeSpan, CancellationToken, Task>? delay = null)
+        Func<TimeSpan, CancellationToken, Task>? delay = null,
+        IBroadcastHealth? health = null)
     {
+        this.health = health;
         this.launcher = launcher ?? throw new ArgumentNullException(nameof(launcher));
         this.production = production ?? throw new ArgumentNullException(nameof(production));
         this.records = records ?? throw new ArgumentNullException(nameof(records));
@@ -140,6 +143,7 @@ public sealed class ChannelRunner
                         async ct =>
                         {
                             Enter(ChannelPhase.OnAir);
+                            health?.BeginMatch();
                             await TryBroadcastAsync(c => production.ShowMatchAsync(request.Capture, c), $"match {index} on air", ct).ConfigureAwait(false);
                         },
                         cancellationToken).ConfigureAwait(false);
@@ -151,6 +155,7 @@ public sealed class ChannelRunner
                 }
 
                 Enter(ChannelPhase.Recording);
+                if (health?.EndMatch() is { } broadcastIssue) record = record with { BroadcastIssue = broadcastIssue };
                 await TryBroadcastAsync(ct => production.ShowHoldingAsync("match ended", ct), $"holding after match {index}", cancellationToken).ConfigureAwait(false);
                 await records.WriteAsync(record, cancellationToken).ConfigureAwait(false);
                 matches.Add(record);
@@ -245,7 +250,8 @@ public sealed class ChannelRunner
             result.TelemetryIssue,
             observerIssue,
             result.DecisionTraceContentHash,
-            context.AgentSeat?.Controller);
+            context.AgentSeat?.Controller,
+            context.AgentSeat?.House);
     }
 
     private static ChannelMatchRecord Failed(ChannelRequest request, ChannelMatchContext context, DateTimeOffset startedAt, Exception exception) => new(

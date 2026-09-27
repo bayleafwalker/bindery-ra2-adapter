@@ -24,6 +24,10 @@ the room stream.
    scene per client, pass `matchSceneByClient` to `ObsWebSocketProduction`.
 3. **Settings → Stream**: service *Custom*, server `rtmp://<mediamtx-host>:1935`,
    stream key `ra2`.
+4. Optional: add a *Text* source (e.g. `ra2-scoreboard`) to the match scene and
+   set `obs.overlayTextInput` to its name; the channel writes the scoreboard
+   into it. Name the game's audio input in `obs.audioInputs` so the preflight
+   checks it and the audio watch reports silence during matches.
 
 The capture must be of a rendered client. The ra2yrcpp stream is game data for
 the agent, the match record and overlays; it is not video.

@@ -76,7 +76,8 @@ public sealed record PlayerCommand(string Kind, JsonElement Arguments);
 public sealed record PlaybookRevision(string Trigger, string Playbook);
 
 /// <summary>What the controller decided after one observation.</summary>
-public sealed record ControllerStep(IReadOnlyList<PlayerCommand> Commands, PlaybookRevision? Revision = null)
+/// <param name="Notes">Why the controller did or did not act -- a trigger fired, a plan was dropped -- for the trace.</param>
+public sealed record ControllerStep(IReadOnlyList<PlayerCommand> Commands, PlaybookRevision? Revision = null, IReadOnlyList<string>? Notes = null)
 {
     public static ControllerStep None { get; } = new([]);
 }
@@ -108,6 +109,7 @@ public interface IPlayerCommandSink
 public enum DecisionTraceKind
 {
     SeatOpened,
+    ControllerNote,
     PlaybookRevised,
     CommandSent,
     CommandFailed,
@@ -191,6 +193,8 @@ public sealed class AgentSeat
                 }
                 admitted++;
                 ControllerStep step = await controller.ObserveAsync(observation, cancellationToken).ConfigureAwait(false) ?? ControllerStep.None;
+                foreach (string note in step.Notes ?? [])
+                    await WriteAsync(trace, DecisionTraceKind.ControllerNote, observation.EventId, note, null, cancellationToken).ConfigureAwait(false);
                 if (step.Revision is { } revision)
                 {
                     revisions.Add(revision);
