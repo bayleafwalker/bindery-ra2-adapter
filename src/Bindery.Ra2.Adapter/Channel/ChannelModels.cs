@@ -74,7 +74,7 @@ public sealed record ChannelRequest(
     AgentSeatAssignment? AgentSeat = null,
     TimeSpan? HoldingDuration = null)
 {
-    /// <summary>Consecutive failed matches after which the channel drains rather than retry.</summary>
+    /// <summary>Consecutive matches that did not complete (failed or incomplete) after which the channel drains rather than retry.</summary>
     public const int MaximumConsecutiveFailures = 2;
 
     public TimeSpan EffectiveHoldingDuration => HoldingDuration ?? TimeSpan.FromSeconds(20);
