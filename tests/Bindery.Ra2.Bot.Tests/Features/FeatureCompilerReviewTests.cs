@@ -253,6 +253,22 @@ public sealed class FeatureCompilerReviewTests
         Assert.Equal(0, f.Economy.SpendingPerMinute.Current, precision: 6);
     }
 
+    /// <summary>
+    /// A finished building waiting for placement blocks its queue (RA2, and the simulator's AwaitingPlacement): the
+    /// item behind it is not being built, even when a producer does not mark it on hold.
+    /// </summary>
+    [Fact]
+    public void Spending_AndUtilization_AreZeroWhileAFinishedBuildingBlocksTheQueue()
+    {
+        (BeliefModel belief, FeatureCompiler compiler) = New();
+        IReadOnlyList<ProductionQueueState> queues = [new ProductionQueueState(QueueKind.Vehicle, [new QueueItem("tank", 1.0, true, false), new QueueItem("tank", 0.0, false, false)], 1)];
+        compiler.Compile(belief.Apply(Frame(0, 20000, [ConYardAtHome()], queues: queues)));
+        StrategicFeatures f = compiler.Compile(belief.Apply(Frame(1, 20000, [ConYardAtHome()], queues: queues)));
+
+        Assert.Equal(0, f.Economy.SpendingPerMinute.Current, precision: 6);
+        Assert.Equal(0, f.Economy.ProductionUtilization, precision: 6);
+    }
+
     /// <summary>Runway is how long the bank lasts at the net burn; with credits rising it never runs out.</summary>
     [Fact]
     public void CashRunway_UsesNetBurn_AndIsUnboundedWhileCreditsRise()

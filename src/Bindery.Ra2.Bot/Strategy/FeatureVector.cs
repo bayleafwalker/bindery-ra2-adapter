@@ -42,7 +42,9 @@ namespace Bindery.Ra2.Bot.Strategy;
 /// </remarks>
 public static class FeatureVector
 {
-    public const string Version = "fv1";
+    // fv2: spending (and so income2k) and productionUtilization count one item per production queue, sped up
+    // by its factories, instead of one item per factory; fv1 datasets are not comparable and are skipped.
+    public const string Version = "fv2";
 
     private const double Cap = 4.0;
 

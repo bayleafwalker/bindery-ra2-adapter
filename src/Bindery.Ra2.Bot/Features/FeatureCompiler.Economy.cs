@@ -22,14 +22,21 @@ public sealed partial class FeatureCompiler
     /// Cash runway is how long the bank lasts at the net burn (spending less income); with income covering spending
     /// it is <see cref="UnknownSeconds"/>, because the bank is not running out.
     /// </summary>
+    /// <summary>
+    /// The item a queue is building: its first item not on hold, unless that item is finished and waiting for
+    /// placement, which blocks the queue (RA2, and the simulator's AwaitingPlacement) whether or not the producer
+    /// marks the items behind it on hold.
+    /// </summary>
+    private static QueueItem? Producing(ProductionQueueState queue) =>
+        queue.Items.FirstOrDefault(static i => !i.OnHold) is { Ready: false } item ? item : null;
+
     private EconomyFeatures CompileEconomy(BeliefSnapshot snapshot, out double incomePerMinute, out double spendingPerMinute)
     {
         double spendingPerSecond = 0;
         foreach (ProductionQueueState queue in snapshot.Queues)
         {
             if (queue.Factories <= 0) continue;
-            QueueItem? active = queue.Items.FirstOrDefault(static i => !i.Ready && !i.OnHold);
-            if (active is not { } item) continue;
+            if (Producing(queue) is not { } item) continue;
             if (!rules.TryGet(item.TypeId, out UnitRule rule) || rule.BuildSeconds <= 0) continue;
             double factorySpeed = ProductionRules.FactorySpeed(rules, queue.Factories) * (snapshot.Power.LowPower ? 0.5 : 1.0);
             spendingPerSecond += rule.Cost / rule.BuildSeconds * factorySpeed;
@@ -48,7 +55,7 @@ public sealed partial class FeatureCompiler
         foreach (ProductionQueueState queue in snapshot.Queues)
         {
             totalFactories += queue.Factories;
-            busyFactories += queue.Items.Any(static i => !i.Ready && !i.OnHold) ? queue.Factories : 0;
+            busyFactories += Producing(queue) is not null ? queue.Factories : 0;
         }
         double utilization = totalFactories > 0 ? (double)busyFactories / totalFactories : 0.0;
 
