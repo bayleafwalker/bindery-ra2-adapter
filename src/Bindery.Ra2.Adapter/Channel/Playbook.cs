@@ -42,6 +42,7 @@ public sealed class PlayerView
 {
     private readonly List<(DateTimeOffset At, long Credits)> credits = [];
     private readonly Dictionary<string, int> ownUnits = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> ownBuildingCounts = new(StringComparer.Ordinal);
     private readonly SortedSet<string> ownBuildings = new(StringComparer.Ordinal);
     private readonly SortedSet<string> defeated = new(StringComparer.Ordinal);
     private readonly Dictionary<string, OwnProductionItem> ownProduction = new(StringComparer.Ordinal);
@@ -116,7 +117,14 @@ public sealed class PlayerView
                 if (ownUnits.TryGetValue(type, out int count)) ownUnits[type] = Math.Max(0, count - 1);
                 break;
             case Ra2TelemetryEventTypes.BuildingPlaced when own && TypeOf(observation) is { } type:
+                ownBuildingCounts[type] = ownBuildingCounts.GetValueOrDefault(type) + 1;
                 ownBuildings.Add(type);
+                break;
+            case Ra2TelemetryEventTypes.BuildingDestroyed when own && TypeOf(observation) is { } type:
+                int remaining = Math.Max(0, ownBuildingCounts.GetValueOrDefault(type) - 1);
+                if (remaining > 0) ownBuildingCounts[type] = remaining;
+                else ownBuildingCounts.Remove(type);
+                if (remaining == 0) ownBuildings.Remove(type);
                 break;
             case Ra2TelemetryEventTypes.ProductionChanged or Ra2TelemetryEventTypes.ProductionCompleted when own && TypeOf(observation) is { } type:
                 if (ReadBool(observation.Payload, "gone"))

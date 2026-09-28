@@ -83,6 +83,20 @@ public sealed class PlaybookTests
     }
 
     [Fact]
+    public void ADestroyedOwnBuildingLeavesTheViewOnlyOnceEveryOneOfItsTypeIsGone()
+    {
+        PlayerView view = new("Americans");
+        view.Apply(At(0, Ra2TelemetryEventTypes.BuildingPlaced, "{\"house\":\"Americans\",\"type\":\"GAPOWR\"}"));
+        view.Apply(At(1, Ra2TelemetryEventTypes.BuildingPlaced, "{\"house\":\"Americans\",\"type\":\"GAPOWR\"}"));
+
+        view.Apply(At(2, Ra2TelemetryEventTypes.BuildingDestroyed, "{\"house\":\"Americans\",\"type\":\"GAPOWR\"}"));
+        Assert.Equal(["GAPOWR"], view.Summarize().OwnBuildingTypes);
+
+        view.Apply(At(3, Ra2TelemetryEventTypes.BuildingDestroyed, "{\"house\":\"Americans\",\"type\":\"GAPOWR\"}"));
+        Assert.Empty(view.Summarize().OwnBuildingTypes);
+    }
+
+    [Fact]
     public async Task ASlowPlanStaysInFlightWhileRoutineKeepsTheOldPlaybook()
     {
         GatedPlanner planner = new();

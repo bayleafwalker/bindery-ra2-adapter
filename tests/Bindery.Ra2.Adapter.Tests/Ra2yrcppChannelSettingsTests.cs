@@ -166,6 +166,30 @@ public sealed class Ra2yrcppChannelSettingsTests
         }
     }
 
+    [Fact]
+    public void TheExampleChannelSettingsAgentSeatRoutineIsAccepted()
+    {
+        using JsonDocument document = JsonDocument.Parse(File.ReadAllText(ExampleSettingsPath()));
+        Ra2yrcppAgentSeatSettings settings = JsonSerializer.Deserialize<Ra2yrcppAgentSeatSettings>(
+            document.RootElement.GetProperty("agentSeat").GetRawText(), web)!;
+
+        settings.Validate();
+
+        Assert.Equal(Ra2yrcppAgentSeatSettings.BuildOrderRoutine, settings.Routine);
+    }
+
+    private static string ExampleSettingsPath()
+    {
+        DirectoryInfo? directory = new(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            string candidate = Path.Combine(directory.FullName, "docs", "channel-settings.example.json");
+            if (File.Exists(candidate)) return candidate;
+            directory = directory.Parent;
+        }
+        throw new FileNotFoundException("docs/channel-settings.example.json not found above " + AppContext.BaseDirectory);
+    }
+
     private static string Line(ulong sequence, string type, string payload) =>
         NdjsonTelemetryFormat.Serialize(new RawObservation($"e{sequence}", "c1", sequence, type, Ra2LabProfile.AdapterId, Ra2LabProfile.AdapterVersion, DateTimeOffset.UnixEpoch.AddSeconds(sequence), JsonDocument.Parse(payload).RootElement.Clone(), "sha256:raw"));
 }

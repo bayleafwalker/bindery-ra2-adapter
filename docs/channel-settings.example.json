@@ -27,7 +27,7 @@
   "agentSeat": {
     "house": "player-b",
     "clientInstanceId": "<stable-machine-b-instance>",
-    "routine": "deploy_mcv",
+    "routine": "build_order",
     "controllerVersion": "0.1.0"
   },
   "live": {
