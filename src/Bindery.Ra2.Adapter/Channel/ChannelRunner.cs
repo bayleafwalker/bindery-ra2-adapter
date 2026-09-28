@@ -216,12 +216,16 @@ public sealed class ChannelRunner
         string? observerIssue = evidence?.ObserverDegraded == true
             ? observer?.Failure ?? "the observer did not depart cleanly"
             : null;
+        // The control plane can wind down cleanly around a game that died on
+        // frame 0; attached telemetry that saw nothing means nothing was played.
+        bool noTelemetry = result.TelemetryObserved == 0;
         ChannelMatchOutcome outcome = evidence is null
             ? ChannelMatchOutcome.Incomplete
-            : evidence.Qualification.ControlPlaneLifecycleComplete && !desync && failure is null
+            : evidence.Qualification.ControlPlaneLifecycleComplete && !desync && failure is null && !noTelemetry
                 ? ChannelMatchOutcome.Completed
                 : ChannelMatchOutcome.Incomplete;
         if (desync) failure ??= "the clients desynchronised";
+        if (noTelemetry) failure ??= "the game produced no telemetry: it exited before playing a frame";
         if (evidence is null) failure ??= "the launcher returned no evidence";
         return new ChannelMatchRecord(
             request.ChannelId,
