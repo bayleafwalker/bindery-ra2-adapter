@@ -321,6 +321,25 @@ public sealed class SkirmishSimulation
         entities.Add(entity);
     }
 
+    /// <summary>Spawns an entity at an exact cell and region, without deriving the cell from the region's centre;
+    /// for a test map that defines no regions at all (<see cref="MapInfo.RegionOf"/> would have nothing to find).</summary>
+    internal void DebugSpawnAt(PlayerId owner, string typeId, Cell position, RegionId region)
+    {
+        UnitRule rule = rules.Get(typeId);
+        SimEntity entity = new()
+        {
+            Id = new EntityId(nextProbeEntityId++),
+            Owner = owner,
+            TypeId = typeId,
+            Position = position,
+            Region = region,
+            Health = rule.Strength,
+            MaxHealth = rule.Strength,
+        };
+        entity.SnapTo(position, CentreX, CentreY);
+        entities.Add(entity);
+    }
+
     /// <summary>
     /// Spawns an entity in a region and announces it through the normal event path (a completed build and a new
     /// object, as a factory there would), so each player receives the events only as its fog allows. The probe uses
@@ -442,6 +461,9 @@ public sealed class SkirmishSimulation
 
     /// <summary>Health of a live entity, or null when there is none; for focused tests.</summary>
     internal int? DebugHealthOf(EntityId id) => entities.FirstOrDefault(e => e.Id == id && e.Alive)?.Health;
+
+    /// <summary>The region a live entity is recorded in, or null when there is none; for focused tests.</summary>
+    internal RegionId? DebugRegionOf(EntityId id) => entities.FirstOrDefault(e => e.Id == id && e.Alive)?.Region;
 
     // ----- setup helpers -----
 
@@ -984,8 +1006,10 @@ public sealed class SkirmishSimulation
                     {
                         queue.Items.RemoveAt(0);
                         Cell spawnAt = RallyPointFor(state.Id, queue.Kind);
-                        Region region = map.Map.RegionOf(spawnAt) ?? RegionById(map.StartRegions[0]);
-                        SpawnEntity(state.Id, rule.TypeId, spawnAt, region.Id);
+                        // The rally cell's own region if it has one, else the building player's own start region:
+                        // never another player's, no matter whose turn happens to hit this branch first.
+                        RegionId regionId = map.Map.RegionOf(spawnAt)?.Id ?? StartRegionOf(state.Id);
+                        SpawnEntity(state.Id, rule.TypeId, spawnAt, regionId);
                     }
                 }
             }
