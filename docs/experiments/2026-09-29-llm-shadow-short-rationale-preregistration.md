@@ -42,5 +42,5 @@ its own pre-registration (not started here).
 | N4 adaptability | >= selector 0.0875 | 0.521 (25/48) | pass |
 
 Reported only: median rationale 153 characters (558 last run); 1 of 431 over 400 (365 of 427 last run), 3 over the
-prompt's 300; 46 cite no number (11 last run) and 0 are empty, so N3's remaining misses are ungrounded, not long ones.
+prompt's 300; 46 cite no number (11 last run) and 0 are empty, so 46 of N3's 47 misses are ungrounded rather than long.
 Posture changes within N2: 0 of 235, as last time: N2 is carried by objectives, parameters, composition and regions.
