@@ -1,0 +1,29 @@
+{
+  "probes": [
+    {
+      "arm": "llm-shadow-t3",
+      "map": "twin-valley",
+      "seed": 1,
+      "perturbedAtSeconds": 90,
+      "statesMatchedBeforePerturbation": true,
+      "framesCompared": 659,
+      "differences": 0,
+      "note": "stopped at 134 s: the arm saw a legitimate difference",
+      "comparedSeconds": 43.93333333333333,
+      "fogViolations": 0
+    },
+    {
+      "arm": "llm-shadow-t3",
+      "map": "twin-valley",
+      "seed": 1,
+      "perturbedAtSeconds": 240,
+      "statesMatchedBeforePerturbation": true,
+      "framesCompared": 3,
+      "differences": 0,
+      "note": "stopped at 240 s: the arm saw a legitimate difference",
+      "comparedSeconds": 0.2,
+      "fogViolations": 0
+    }
+  ],
+  "skipped": []
+}

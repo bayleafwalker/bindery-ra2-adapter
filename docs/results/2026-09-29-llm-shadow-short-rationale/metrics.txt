@@ -1,0 +1,60 @@
+{
+  "arm": "llm-shadow-t3",
+  "matches": 24,
+  "shadowProposals": 434,
+  "validity": 0.9930875576036866,
+  "fogRejections": 0,
+  "latencyP50Seconds": 6.9050777,
+  "latencyP95Seconds": 8.3508035,
+  "variety": {
+    "shadowPlaybookEntropy": 0.569,
+    "selectorPlaybookEntropy": 0.182,
+    "shadowPlaybooks": {
+      "Allied": {
+        "allied-boom": 93,
+        "allied-ifv-mix": 93,
+        "generic-defend": 31,
+        "allied-grizzly-timing": 3,
+        "generic-expand": 8
+      },
+      "Soviet": {
+        "soviet-rhino-rush": 29,
+        "generic-defend": 7,
+        "soviet-flak-mix": 162,
+        "generic-expand": 5
+      }
+    }
+  },
+  "authorityUse": {
+    "samePlaybookPairs": 281,
+    "fullTierDiffers": 235,
+    "rate": 0.8362989323843416,
+    "byField": {
+      "playbookParameters": 252,
+      "objectives": 276,
+      "regionsOfInterest": 202,
+      "posture": 0,
+      "budget": 67,
+      "composition": 206,
+      "attackConditions": 70,
+      "abortTriggers": 19,
+      "replanTriggers": 53
+    }
+  },
+  "adaptability": {
+    "shadow": {
+      "eventAnswers": 48,
+      "planChanged": 25,
+      "rate": 0.5208333333333334
+    },
+    "selector": {
+      "eventAnswers": 80,
+      "planChanged": 7,
+      "rate": 0.0875
+    }
+  },
+  "explainability": {
+    "groundedRationales": 384,
+    "rate": 0.8909512761020881
+  }
+}

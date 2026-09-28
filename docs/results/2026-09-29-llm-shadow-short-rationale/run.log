@@ -1,0 +1,2 @@
+llm-shadow-t3: 24 matches, 17 wins; leakage probe 0/662 differing frames, 0 fog-violation frames.
+Wrote 24 match results, 2 leakage probes and report.md to docs/results/2026-09-29-llm-shadow-short-rationale/run in 3330s.

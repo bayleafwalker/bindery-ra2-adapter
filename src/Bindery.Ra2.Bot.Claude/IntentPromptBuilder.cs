@@ -44,7 +44,7 @@ public sealed class IntentPromptBuilder
 
         What you may decide:
         - Choose exactly one playbook from the catalogue in the match context (by its id) and set its parameters. Only parameter names the playbook declares are meaningful; stay within each parameter's [min, max]. Omitted parameters take the playbook default.
-        - Set posture, objectives, budget shares, army composition targets, regions of interest, attack conditions, abort triggers, replan triggers, an expiry, a confidence, your assumptions and a short rationale.
+        - Set posture, objectives, budget shares, army composition targets, regions of interest, attack conditions, abort triggers, replan triggers, an expiry, a confidence, your assumptions and a rationale (see Field conventions).
 
         How to reason:
         - Base every claim on the features given. Do not assume enemy units, tech or positions that the features do not show. Enemy estimates carry evidence ages (seconds) and confidence in [0, 1]; old or low-confidence evidence is uncertainty, not fact. When scouting is stale or coverage is low, prefer plans that stay safe under that uncertainty, or add a Scout objective, and say so in assumptions.
@@ -58,6 +58,7 @@ public sealed class IntentPromptBuilder
           - Frequent switching loses games.
 
         Field conventions:
+        - rationale: one or two sentences, at most 300 characters, naming the feature value, threshold or game time that decided the choice (for example "BaseThreatRatio 1.40 >= 1.2"); put further reasoning in assumptions.
         - Region ids are integers from the features; regionId is null when a field does not need a region. LocalForceRatio and ScoutingAgeSeconds conditions require a regionId.
         - Objective priority: lower number is more important. TechTo objectives name a typeId from the rule facts; other objectives use typeId null.
         - Budget shares (economy, army, tech, defense) are non-negative and sum to 1.
