@@ -56,5 +56,5 @@ added to `seen_ratio_analysis.py`. It does not change the decision: C1 needs p <
 
 Reported only, not decided on: H2 selector-oracle 1.0 vs 0.8 is better 21, worse 4 (sign p 0.0009; Allied 17 vs
 2), and H1 selector-oracle Allied is better 32, worse 7 (p 7e-05) while Soviet is better 8, worse 19 (p 0.052). On
-training cells the oracle arm is indifferent to the ratio (1 discordant pair of 1680); the held-out gain is the
+the T cell the oracle arm is indifferent to the ratio (1 discordant pair of 1680); the held-out gain is the
 same Allied pattern as the oracle-gap study and is not a reason to change the default from held-out data.
