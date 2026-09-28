@@ -40,6 +40,23 @@ computable; `fake-counter-v2` is a scripted policy, so it says nothing about the
 ## Amendment (2026-09-27, before any model run)
 N4 added: the design critique (#3) names adaptable, varied and explainable; N1-N3 covered only the last two.
 
-## Outcome
-Not run yet: the local endpoint is down (llama-swap stopped at 19:17 on 2026-09-27; the NVIDIA userspace library,
-595.104, no longer matches the loaded kernel module, 595.99.02, until the workstation reboots).
+## Outcome (2026-09-28, one run, nothing changed after it)
+Run at f9155eb after the reboot restored the endpoint: `docs/results/2026-09-28-llm-shadow-t3/` (`run.sh`,
+`metrics.txt`, `run/report.md`, raw decision logs in `run/decisions.tar.xz`). 24 matches, 432 shadow proposals,
+worker-fast on the local endpoint.
+
+| | criterion | result | |
+|---|---|---|---|
+| G1 validity | >= 0.90 | 0.988 (427 / 432) | pass |
+| G2 fog rejections | = 0 | 0 | pass |
+| G3 p95 latency | <= 20 s | 8.77 s (p50 7.13 s) | pass |
+| N1 variety | shadow >= selector + 0.15 | 0.572 vs 0.182 | pass |
+| N2 Full-tier authority use | >= 0.25 | 0.862 (200 / 232) | pass |
+| N3 explainability | >= 0.80 | 0.119 (51 / 427) | **fail** |
+| N4 adaptability | shadow >= selector | 0.592 (29 / 49) vs 0.088 (7 / 80) | pass |
+
+**Result: the Full vocabulary does not earn a played held-out tier comparison; `Parameters` stays adopted.** The
+gates pass, so the numbers are interpretable. N3 fails on length, not grounding: of the 427 accepted proposals, 365
+rationales exceed 400 characters (median 558), 11 cite no number, none are empty. N2 is carried mostly by
+objectives, parameters and composition; posture never differed (0 / 232). As pre-registered, no prompt or threshold is
+changed after the run; a shorter-rationale prompt would need its own pre-registration.
