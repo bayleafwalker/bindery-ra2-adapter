@@ -205,6 +205,43 @@ public sealed class ChannelTests
     }
 
     [Fact]
+    public async Task ADrainDuringTheRetryDelayStopsBeforeTheSecondAttempt()
+    {
+        ChannelRunner? runner = null;
+        FakeLauncher launcher = new(_ => Task.FromResult(new ChannelMatchResult(StartupCrashEvidence(), TelemetryObserved: 0)));
+        runner = new ChannelRunner(launcher, new FakeProduction(), new MemorySink(), (_, _) => { runner!.RequestDrain(); return Task.CompletedTask; });
+
+        ChannelSessionSummary summary = await runner.RunAsync(Request(5));
+
+        Assert.Equal(1, Assert.Single(summary.Matches).Attempt);
+        Assert.Equal("drain requested", summary.StopReason);
+    }
+
+    [Fact]
+    public void TheReportCountsMatchesAndRetriesNotAttempts()
+    {
+        // One match that crashed at startup twice: one match, one retry.
+        ChannelMatchContext context = new("channel-1", 1, "MAP01.MAP", playerView, null);
+        ChannelMatchRecord first = ChannelRunner.FromResult(Request(1), context, DateTimeOffset.UtcNow, new ChannelMatchResult(StartupCrashEvidence(), TelemetryObserved: 0));
+        ChannelMatchRecord second = ChannelRunner.FromResult(Request(1), context with { Attempt = 2 }, DateTimeOffset.UtcNow, new ChannelMatchResult(StartupCrashEvidence(), TelemetryObserved: 0));
+
+        ExperimentRow row = Assert.Single(ChannelExperimentReport.Build([first, second]));
+
+        Assert.Equal(1, row.Matches);
+        Assert.Equal(1, row.StartupCrashesRetried);
+    }
+
+    [Fact]
+    public void EachAttemptHasItsOwnEvidenceFolder()
+    {
+        // A retry must not overwrite the crashed attempt's evidence.
+        ChannelMatchContext context = new("channel-1", 1, "MAP01.MAP", playerView, null);
+
+        Assert.Equal("match-001", context.EvidenceFolderName);
+        Assert.Equal("match-001-attempt2", (context with { Attempt = 2 }).EvidenceFolderName);
+    }
+
+    [Fact]
     public async Task ACompletedMatchResetsTheRun()
     {
         int call = 0;

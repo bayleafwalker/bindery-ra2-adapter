@@ -91,7 +91,7 @@ try
     {
         // Every match is a new session: fresh keys and its own evidence folder.
         LiveAcceptanceSettings match = live.WithNewIdempotencyKeys();
-        string directory = Path.Combine(channelDirectory, "match-" + context.MatchIndex.ToString("D3", CultureInfo.InvariantCulture));
+        string directory = Path.Combine(channelDirectory, context.EvidenceFolderName);
         Console.WriteLine($"match {context.MatchIndex}: session_idempotency_key={match.SessionIdempotencyKey} evidence={directory}");
         return match.ToRequest(directory, settings.Seed);
     },

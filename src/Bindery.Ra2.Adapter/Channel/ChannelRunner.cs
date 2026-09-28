@@ -11,7 +11,12 @@ public sealed record ChannelMatchContext(
     CaptureSource Capture,
     AgentSeatAssignment? AgentSeat,
     // Which try at this MatchIndex this is: 1, or 2 after a startup-crash retry.
-    int Attempt = 1);
+    int Attempt = 1)
+{
+    /// <summary>The evidence folder for this attempt, relative to the channel's directory.</summary>
+    public string EvidenceFolderName => "match-" + MatchIndex.ToString("D3", System.Globalization.CultureInfo.InvariantCulture)
+        + (Attempt > 1 ? "-attempt" + Attempt.ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty);
+}
 
 /// <summary>
 /// What the launcher brings back. <paramref name="Evidence"/> is the live
@@ -184,7 +189,8 @@ public sealed class ChannelRunner
                     Enter(ChannelPhase.Holding);
                     await TryBroadcastAsync(ct => production.ShowHoldingAsync("restarting match", ct), $"holding before retry of match {index}", cancellationToken).ConfigureAwait(false);
                     await delay(request.EffectiveHoldingDuration, cancellationToken).ConfigureAwait(false);
-                    record = await PlayAttemptAsync(index, 2).ConfigureAwait(false);
+                    // A drain asked for during the pause stops here, not after a whole new game.
+                    if (Volatile.Read(ref drainRequested) != 1) record = await PlayAttemptAsync(index, 2).ConfigureAwait(false);
                 }
 
                 // Incomplete counts too: a crashed seat or telemetry that saw

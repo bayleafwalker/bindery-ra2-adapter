@@ -125,7 +125,9 @@ in the evidence it points to.
   `EffectiveHoldingDuration`, and the same `MatchIndex` runs again as
   attempt 2 with the same map and seed choice as attempt 1. Only the second
   attempt's outcome feeds `consecutiveFailures`; a second consecutive crash
-  is not retried again. `MaximumMatches` counts matches, not attempts, so a
+  is not retried again. Each attempt writes its own evidence folder
+  (`match-001`, `match-001-attempt2`), and a drain requested during the retry's
+  pause stops the channel before the second attempt. `MaximumMatches` counts matches, not attempts, so a
   retried match still spends only one slot of the match budget.
 - A failed scene switch is recorded in `BroadcastIssues`, and the match keeps
   running. Broadcasting is a side effect of the loop, not a dependency.

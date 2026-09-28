@@ -80,7 +80,8 @@ public static class ChannelExperimentReport
                 return new ExperimentRow(
                     group.Key.MapId,
                     group.Key.Controller,
-                    group.Count(),
+                    // Matches, not attempts: a retried match has two records.
+                    group.Count(static r => r.Attempt == 1),
                     completed.Length,
                     wins,
                     losses,
@@ -88,7 +89,7 @@ public static class ChannelExperimentReport
                     completed.Length == 0 ? 0 : Math.Round(completed.Average(static r => r.PlaybookRevisions), 2),
                     group.Select(static r => r.Seed).OfType<int>().Distinct().Order().ToArray(),
                     group.Count(static r => r.DecisionTraceContentHash is not null),
-                    group.Count(static r => r.FailureClass == ChannelRunner.StartupCrashFailureClass));
+                    group.Count(static r => r.FailureClass == ChannelRunner.StartupCrashFailureClass && r.Attempt == 1));
             })
             .ToArray();
     }
