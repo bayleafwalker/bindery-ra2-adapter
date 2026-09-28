@@ -263,6 +263,8 @@ public sealed class FeatureCompilerTests
 
         StrategicFeatures capped = compilerCapped.Compile(fullyScouted);
         Assert.Equal(0.39, capped.Scouting.CoverageFraction, precision: 6);
+        // Nothing else asks for a scout: no important unknowns this early (the 30 s grace).
+        Assert.Empty(capped.Scouting.ImportantUnknowns);
 
         // Turtle is not an aggressive posture, so the only way a Scout objective appears here is the
         // capped coverage falling below the 40% threshold in IntentComposer.Objectives.

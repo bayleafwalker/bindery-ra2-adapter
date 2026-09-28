@@ -42,7 +42,9 @@ namespace Bindery.Ra2.Bot.Features;
 /// <param name="LowPowerGraceSeconds">Same de-dup gap, specifically for <see cref="StrategicEventKind.LowPower"/>, which would otherwise re-fire every compile while power stays negative.</param>
 /// <param name="ScoutingCoverageCap">
 /// A diagnostic cap on <see cref="ScoutingFeatures.CoverageFraction"/> for arena experiments. The
-/// default 1.0 changes nothing; not a tuning knob.
+/// default 1.0 changes nothing; not a tuning knob. Every reader of the coverage sees the capped value:
+/// the intent composer's scout rule, the feature vector (bandit, distilled) and the rationale and LLM
+/// prompt text.
 /// </param>
 public sealed record FeatureOptions(
     double HistorySeconds = 65.0,
