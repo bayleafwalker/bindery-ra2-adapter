@@ -116,9 +116,11 @@ in the evidence it points to.
   was attached (`TelemetryObserved` is not null), it never saw the match
   start (`TelemetryObserved == 0`), and some player (non-observer) client's
   evidence carries a `Notable` `RunObservation.HostedExitCode` observation
-  (an NTSTATUS exit). Without telemetry attached there is nothing to
-  classify the crash from, so `FailureClass` stays unset and the match is
-  not retried -- this fails closed. When a match is classified this way, the
+  (an NTSTATUS exit), and every client's process, the observer's included,
+  was seen to exit (`ProcessExitCode` is not null; the launch agent would
+  start the retry's game beside one still running). Without telemetry
+  attached there is nothing to classify the crash from, so `FailureClass`
+  stays unset and the match is not retried -- this fails closed. When a match is classified this way, the
   attempt-1 record is still written to the ndjson (with its `Failure` text
   intact), the holding scene switches to "restarting match" through the same
   `TryBroadcastAsync` path used elsewhere, the channel waits
@@ -127,7 +129,9 @@ in the evidence it points to.
   attempt's outcome feeds `consecutiveFailures`; a second consecutive crash
   is not retried again. Each attempt writes its own evidence folder
   (`match-001`, `match-001-attempt2`), and a drain requested during the retry's
-  pause stops the channel before the second attempt. `MaximumMatches` counts matches, not attempts, so a
+  pause stops the channel before the second attempt, with stop reason "drain
+  requested". The experiment report's `startup_crashes_retried` counts second
+  attempts played. `MaximumMatches` counts matches, not attempts, so a
   retried match still spends only one slot of the match budget.
 - A failed scene switch is recorded in `BroadcastIssues`, and the match keeps
   running. Broadcasting is a side effect of the loop, not a dependency.
