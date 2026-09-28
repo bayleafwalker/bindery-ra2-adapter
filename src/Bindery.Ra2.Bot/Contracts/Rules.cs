@@ -89,3 +89,22 @@ public interface IRulesDatabase
     /// </summary>
     double? MultipleFactory => null;
 }
+
+/// <summary>
+/// The RA2 multiple-factory speed-up, shared by the simulator and the feature compiler so a queue's active item
+/// builds at the same rate in both: one item at a time per queue, sped up by its factory count.
+/// </summary>
+public static class ProductionRules
+{
+    /// <summary>
+    /// Per-second build multiplier for a queue with <paramref name="factories"/> factories of its kind: RA2's
+    /// <c>[General] MultipleFactory=</c> per extra factory when the rules give one, else <c>sqrt(factories)</c>
+    /// (the hand-authored fixture's approximation). Zero factories pauses the queue (0); RA2 halves this on low
+    /// power, which callers with power available apply on top.
+    /// </summary>
+    public static double FactorySpeed(IRulesDatabase rules, int factories)
+    {
+        if (factories <= 0) return 0;
+        return rules.MultipleFactory is { } perExtra and > 0 ? Math.Pow(1 / perExtra, factories - 1) : Math.Sqrt(factories);
+    }
+}

@@ -205,6 +205,54 @@ public sealed class FeatureCompilerReviewTests
         Assert.Equal(0, f.Economy.IncomePerMinute.Current, precision: 6);
     }
 
+    /// <summary>
+    /// RA2 builds one item per queue at a time; extra factories only speed that one item up (here the fixture's
+    /// sqrt(factories), since it does not set MultipleFactory=). Two factories with three unheld items must spend
+    /// at the sped-up rate of the single active item, not the sum of two items' rates.
+    /// </summary>
+    [Fact]
+    public void Spending_OneItemPerQueue_SpedUpByFactoryCount_NotSummedAcrossItems()
+    {
+        (BeliefModel belief, FeatureCompiler compiler) = New();
+        IReadOnlyList<ProductionQueueState> queues =
+        [
+            new ProductionQueueState(QueueKind.Vehicle,
+            [
+                new QueueItem("tank", 0.3, false, false), new QueueItem("tank", 0, false, false),
+                new QueueItem("tank", 0, false, false),
+            ], 2),
+        ];
+        compiler.Compile(belief.Apply(Frame(0, 20000, [ConYardAtHome()], queues: queues)));
+        StrategicFeatures f = compiler.Compile(belief.Apply(Frame(1, 19000, [ConYardAtHome()], queues: queues)));
+
+        // tank: 900 cost / 10 s = 90/s, times sqrt(2) for the second factory, times 60 for per-minute.
+        double expected = 900.0 / 10.0 * Math.Sqrt(2) * 60.0;
+        Assert.Equal(expected, f.Economy.SpendingPerMinute.Current, precision: 6);
+    }
+
+    /// <summary>A queue's factories are all busy once it has one active item, regardless of how many more are queued.</summary>
+    [Fact]
+    public void Utilization_OneActiveItem_MakesAllOfThatQueuesFactoriesBusy()
+    {
+        (BeliefModel belief, FeatureCompiler compiler) = New();
+        IReadOnlyList<ProductionQueueState> queues = [new ProductionQueueState(QueueKind.Vehicle, [new QueueItem("tank", 0.3, false, false)], 2)];
+        StrategicFeatures f = compiler.Compile(belief.Apply(Frame(0, 20000, [ConYardAtHome()], queues: queues)));
+
+        Assert.Equal(1.0, f.Economy.ProductionUtilization, precision: 6);
+    }
+
+    /// <summary>A queue with no factories of its kind is paused (RA2): it spends nothing even with items queued.</summary>
+    [Fact]
+    public void Spending_QueueWithNoFactories_IsZero()
+    {
+        (BeliefModel belief, FeatureCompiler compiler) = New();
+        IReadOnlyList<ProductionQueueState> queues = [new ProductionQueueState(QueueKind.Vehicle, [new QueueItem("tank", 0.3, false, false)], 0)];
+        compiler.Compile(belief.Apply(Frame(0, 20000, [ConYardAtHome()], queues: queues)));
+        StrategicFeatures f = compiler.Compile(belief.Apply(Frame(1, 20000, [ConYardAtHome()], queues: queues)));
+
+        Assert.Equal(0, f.Economy.SpendingPerMinute.Current, precision: 6);
+    }
+
     /// <summary>Runway is how long the bank lasts at the net burn; with credits rising it never runs out.</summary>
     [Fact]
     public void CashRunway_UsesNetBurn_AndIsUnboundedWhileCreditsRise()
