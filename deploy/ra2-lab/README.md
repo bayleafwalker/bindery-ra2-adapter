@@ -101,11 +101,17 @@ played, check the telemetry, not only the harness:
   `syringe-client-*.log` (e.g. `C00000FD`, a stack overflow); the harness then
   records that client as failed. The startup stack overflows seen so far were
   inside the game tree's `DDRAW.dll` (DDrawCompat 0.5.4, offset 0x1C104).
-  `ddrawcompat-client-*.log` keeps DDrawCompat's own log for each run. Windows
-  Error Reporting is set to write `gamemd.exe` dumps to `C:\Bindery\dumps` on
-  both guests (key `HKLM\SOFTWARE\Microsoft\Windows\Windows Error
-  Reporting\LocalDumps\gamemd.exe`, delete it to revert); it may not fire
-  while Syringe is attached as the debugger.
+  `ddrawcompat-client-*.log` keeps DDrawCompat's own log for each run.
+  Crash dumps need Windows Error Reporting LocalDumps for `gamemd.exe`. The
+  harness does not set it: it is a manual step, once per guest:
+
+  ```sh
+  ra2-vm-exec <dom> '$k = "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\gamemd.exe"; New-Item -Path $k -Force | Out-Null; New-ItemProperty -Path $k -Name DumpFolder -PropertyType ExpandString -Value "C:\Bindery\dumps" -Force | Out-Null; New-ItemProperty -Path $k -Name DumpType -PropertyType DWord -Value 2 -Force | Out-Null; New-ItemProperty -Path $k -Name DumpCount -PropertyType DWord -Value 5 -Force | Out-Null'
+  ```
+
+  Revert with
+  `ra2-vm-exec <dom> 'Remove-Item -Recurse "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps"'`.
+  WER may not write a dump while Syringe is attached as the debugger.
 - A module that faults at a randomised address can be named on the same boot:
   DLL bases stay fixed per boot, so the 32-bit module list of a running
   `gamemd.exe` (`C:\Windows\SysWOW64\WindowsPowerShell\v1.0\powershell.exe`,
