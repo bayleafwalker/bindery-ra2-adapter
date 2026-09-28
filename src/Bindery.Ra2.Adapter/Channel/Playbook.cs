@@ -413,7 +413,11 @@ public interface IRoutineFeedback
 /// counts as placed and starts the next item. After
 /// <see cref="MaximumPlacementTries"/> the routine notes it and holds; so it
 /// does when a produce order is refused. Time is observation time, so a
-/// replay makes the same decisions.
+/// replay makes the same decisions. It also means the 3 s retry happens on
+/// the first admitted observation at or after 3 s: with a live seat that is
+/// within one poll while anything the house sees changes, and at worst within
+/// the credits heartbeat (<c>Ra2yrcppTelemetryOptions.CreditsHeartbeat</c>,
+/// 10 s by default) when nothing does. No timer is added.
 /// </remarks>
 public sealed class BuildOrderRoutineController : IRoutineController, IRoutineFeedback
 {
