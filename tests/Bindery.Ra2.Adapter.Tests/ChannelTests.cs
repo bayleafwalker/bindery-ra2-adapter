@@ -155,6 +155,46 @@ public sealed class ChannelTests
     }
 
     [Fact]
+    public void AMatchWhoseLiveTelemetrySawNothingIsNotCompleted()
+    {
+        // Lab run 20260928-111904-s2: gamemd aborted on frame 0 (exit 3), the
+        // control plane still wound down cleanly, and the channel recorded
+        // "completed" with zero telemetry events. Attached telemetry that saw
+        // nothing means no match was played.
+        ChannelMatchContext context = new("channel-1", 1, "MAP01.MAP", playerView, null);
+        ChannelMatchRecord record = ChannelRunner.FromResult(Request(1), context, DateTimeOffset.UtcNow,
+            new ChannelMatchResult(Evidence(complete: true), TelemetryObserved: 0, TelemetryEnded: false));
+
+        Assert.Equal(ChannelMatchOutcome.Incomplete, record.Outcome);
+        Assert.Contains("saw no events", record.Failure);
+    }
+
+    [Fact]
+    public void AnEmptyTelemetryStreamCarriesTheSourcesOwnIssue()
+    {
+        // Zero events does not prove the game quit: a source that failed
+        // (or a wrong endpoint) also sees nothing. Say what was seen, and why
+        // if the source knows.
+        ChannelMatchContext context = new("channel-1", 1, "MAP01.MAP", playerView, null);
+        ChannelMatchRecord record = ChannelRunner.FromResult(Request(1), context, DateTimeOffset.UtcNow,
+            new ChannelMatchResult(Evidence(complete: true), TelemetryObserved: 0, TelemetryEnded: false, TelemetryIssue: "returned no object type classes 5 times"));
+
+        Assert.Equal(ChannelMatchOutcome.Incomplete, record.Outcome);
+        Assert.Contains("saw no events", record.Failure);
+        Assert.Contains("returned no object type classes", record.Failure);
+        Assert.DoesNotContain("frame", record.Failure);
+    }
+
+    [Fact]
+    public void AMatchWithoutAttachedTelemetryIsJudgedOnTheLifecycleAlone()
+    {
+        ChannelMatchContext context = new("channel-1", 1, "MAP01.MAP", playerView, null);
+        ChannelMatchRecord record = ChannelRunner.FromResult(Request(1), context, DateTimeOffset.UtcNow, new ChannelMatchResult(Evidence(complete: true)));
+
+        Assert.Equal(ChannelMatchOutcome.Completed, record.Outcome);
+    }
+
+    [Fact]
     public void AFailedObserverDegradesTheViewButNotTheMatch()
     {
         ChannelMatchContext context = new("channel-1", 1, "MAP01.MAP", playerView, null);
