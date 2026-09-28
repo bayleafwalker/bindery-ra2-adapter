@@ -365,20 +365,21 @@ public sealed class LeaseKeepAliveTests
         // An HttpListener whose Start failed is disposed, so a retry that reuses
         // it throws ObjectDisposedException (two Windows CI failures, PR #21 and
         // #23; reproduced on Linux by this test).
-        using HttpListener occupier = new();
+        HttpListener? occupier = null;
         int taken = 0;
         for (int attempt = 0; taken == 0; attempt++)
         {
             int port = Random.Shared.Next(20000, 60000);
-            occupier.Prefixes.Clear();
-            occupier.Prefixes.Add($"http://127.0.0.1:{port}/");
-            try { occupier.Start(); taken = port; }
+            // The same rule as the fix: a listener whose Start failed is not reused.
+            HttpListener candidate = new();
+            candidate.Prefixes.Add($"http://127.0.0.1:{port}/");
+            try { candidate.Start(); occupier = candidate; taken = port; }
             catch (HttpListenerException) when (attempt < 20) { }
         }
-        int free = taken == 59999 ? 20000 : taken + 1;
-        Queue<int> ports = new([taken, free, free + 1, free + 2]);
+        using HttpListener held = occupier!;
+        int offered = 0;
 
-        using TunnelStub stub = new(ports.Dequeue);
+        using TunnelStub stub = new(() => offered++ == 0 ? taken : Random.Shared.Next(20000, 60000));
 
         Assert.NotEqual(taken, stub.Uri.Port);
         Assert.True(stub.Listening);
