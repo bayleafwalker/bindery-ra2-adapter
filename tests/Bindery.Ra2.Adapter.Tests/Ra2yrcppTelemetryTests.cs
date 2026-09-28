@@ -23,6 +23,19 @@ internal static class Snapshots
         new() { Name = "NAPOWR", PointerSelf = Napowr, Type = AbstractType.Buildingtype },
     ];
 
+    /// <summary>
+    /// The same types as a live fork build fills them: name is the INI Name=
+    /// display text and id is the rules ID (measured 2026-09-28 in the lab).
+    /// </summary>
+    public static ObjectTypeClass[] ForkTypes { get; } =
+    [
+        new() { Name = "Allied Construction Vehicle", Id = "AMCV", PointerSelf = Amcv, Type = AbstractType.Unittype },
+        new() { Name = "Soviet Construction Vehicle", Id = "SMCV", PointerSelf = Smcv, Type = AbstractType.Unittype },
+        new() { Name = "Rhino Heavy Tank", Id = "HTNK", PointerSelf = Htnk, Type = AbstractType.Unittype },
+        new() { Name = "Allied Power Plant", Id = "GAPOWR", PointerSelf = Gapowr, Type = AbstractType.Buildingtype },
+        new() { Name = "Tesla Reactor", Id = "NAPOWR", PointerSelf = Napowr, Type = AbstractType.Buildingtype },
+    ];
+
     public static House House(string name, uint self, int money = 10000, bool current = false, bool defeated = false, bool winner = false, bool gameOver = false) =>
         new() { Name = name, Self = self, Money = money, CurrentPlayer = current, Defeated = defeated, IsWinner = winner, IsGameOver = gameOver, PowerOutput = 0, PowerDrain = 0 };
 
@@ -115,6 +128,21 @@ public sealed class Ra2yrcppTelemetryTests
         Assert.Equal("Americans", Text(ended, "winner"));
         Assert.True(diff.Ended);
         Assert.Empty(diff.Next(Snapshots.State(6, over, []), start.AddSeconds(14)));
+    }
+
+    [Fact]
+    public void ObjectsAreTypedByTheRulesIdWhenTheForkReportsOne()
+    {
+        // Lab run 20260928-113643-s2: the fork's type name was "Allied
+        // Construction Vehicle", so a routine keyed on AMCV never saw its MCV.
+        Ra2yrcppSnapshotDiff diff = new();
+        diff.SetTypes(Snapshots.ForkTypes);
+        DateTimeOffset start = DateTimeOffset.UnixEpoch;
+
+        IReadOnlyList<Ra2yrcppEvent> events = diff.Next(Snapshots.State(1, Snapshots.Opening(), [Snapshots.Unit(0xA1, Snapshots.Americans, Snapshots.Amcv)]), start);
+
+        Ra2yrcppEvent mcv = Assert.Single(events, static e => e.EventType == Ra2TelemetryEventTypes.UnitCreated);
+        Assert.Equal("AMCV", mcv.Payload.GetProperty("type").GetString());
     }
 
     [Fact]

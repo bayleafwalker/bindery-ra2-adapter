@@ -72,8 +72,9 @@ public sealed record PlayerCommand(string Kind, JsonElement Arguments);
 /// <summary>
 /// The command channel's vocabulary. Object orders name object addresses
 /// (<c>objects</c>), optionally with the stable IDs seen for them
-/// (<c>unique_ids</c>, one per object); the sink drops any the house does not
-/// own or whose ID has changed.
+/// (<c>unique_ids</c>, one per object). With IDs the sink finds each object
+/// by its ID among the house's objects on the seat's client, whose addresses
+/// may differ from the controller's; it drops any it cannot find there.
 /// </summary>
 public static class PlayerCommandKinds
 {
@@ -85,7 +86,7 @@ public static class PlayerCommandKinds
     public const string Move = "move";
     /// <summary><c>{objects, x, y, z?}</c></summary>
     public const string AttackMove = "attack_move";
-    /// <summary><c>{objects, target}</c></summary>
+    /// <summary><c>{objects, target, target_unique_id?}</c>: with a stable ID the target is found by it on the seat's client.</summary>
     public const string Attack = "attack";
     /// <summary><c>{type, action?: begin|hold|cancel}</c></summary>
     public const string Produce = "produce";

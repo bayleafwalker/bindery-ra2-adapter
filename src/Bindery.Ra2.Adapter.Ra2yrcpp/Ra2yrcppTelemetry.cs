@@ -78,7 +78,9 @@ public sealed class Ra2yrcppSnapshotDiff
     public void SetTypes(IEnumerable<ObjectTypeClass> types)
     {
         ArgumentNullException.ThrowIfNull(types);
-        foreach (ObjectTypeClass type in types) typeNames[type.PointerSelf] = type.Name;
+        // The rules ID ("AMCV") when the fork reports one; name is the INI
+        // Name= display text ("Allied Construction Vehicle") on live builds.
+        foreach (ObjectTypeClass type in types) typeNames[type.PointerSelf] = string.IsNullOrEmpty(type.Id) ? type.Name : type.Id;
     }
 
     public IReadOnlyList<Ra2yrcppEvent> Next(GameState state, DateTimeOffset at)
