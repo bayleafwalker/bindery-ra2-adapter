@@ -164,7 +164,7 @@ public static class SpawnIniRenderer
         for (int ai = 0; ai < plan.AiPlayers.Count; ai++)
         {
             int team = plan.AiPlayers[ai].Team;
-            if (team == 0) continue;
+            if (team <= 0) continue;
             int[] allies = Enumerable.Range(0, plan.AiPlayers.Count)
                 .Where(other => other != ai && plan.AiPlayers[other].Team == team)
                 .Select(other => plan.GlobalOrder.Count + other)

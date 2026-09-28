@@ -119,6 +119,31 @@ public sealed class SpawnMatchTests
     }
 
     [Fact]
+    public void ANegativeTeamIsNoTeam()
+    {
+        // xna-cncnet-client treats teamId <= 0 as unteamed; so do we.
+        SpawnMatchPlan plan = Plan() with
+        {
+            AiPlayers = [new SpawnAiParticipant(SpawnLocation: 2, Team: -1), new SpawnAiParticipant(SpawnLocation: 3, Team: -1)],
+        };
+
+        Assert.DoesNotContain("_Alliances]", SpawnIniRenderer.Render(plan), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MoreThanEightHousesAreRejected()
+    {
+        // The spawner reads Multi1..Multi8 only; a ninth house would be
+        // rendered as an alliance with whatever sits at house index 8.
+        SpawnMatchPlan plan = Plan() with
+        {
+            AiPlayers = Enumerable.Range(0, 7).Select(static _ => new SpawnAiParticipant(Team: 1)).ToArray(),
+        };
+
+        Assert.Throws<ArgumentException>(() => SpawnIniRenderer.Render(plan));
+    }
+
+    [Fact]
     public void TheGameIsToldToExitWithoutTheScoreScreen()
     {
         // Otherwise the match ends but the process waits on a click, and the
