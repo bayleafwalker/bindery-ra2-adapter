@@ -45,8 +45,9 @@ Decision: **no primary cause**, so the line closes with "no single first diverge
 | scouting | 31/31 (1.00) | 15/15 (1.00) |
 | intent, composition, defend, attack-gate, none | 0 | 0 |
 
-Scouting is the first divergence of every discordant pair in both directions, always at second 106 (the first scout
-order): the oracle, which knows where the enemy is, sends its first scout elsewhere. It fails the 2x condition
+Scouting is the first divergence of every discordant pair in both directions, always at second 106: in all 46 pairs
+the selector issues its first scout order then and the oracle issues none (the oracle does scout later: 427 of its
+480 games have a scout order, against 480 of 480 for the selector). It fails the 2x condition
 (1.00 against 1.00), and as a first divergence it is structural, not discriminating: it happens whoever wins, so this
 design cannot say which later decision decides these games. Per the pre-registration, no categories are changed after
 the run and no rerun follows; a design that skips the scout difference (for example, first divergence after the
