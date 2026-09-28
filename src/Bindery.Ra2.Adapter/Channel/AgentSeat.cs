@@ -90,7 +90,12 @@ public static class PlayerCommandKinds
     public const string Attack = "attack";
     /// <summary><c>{type, action?: begin|hold|cancel}</c></summary>
     public const string Produce = "produce";
-    /// <summary><c>{object, x, y, z?}</c>: a finished building from one of the house's factories.</summary>
+    /// <summary>
+    /// <c>{type, x, y, z?, unique_id?}</c>: the house's finished building of that
+    /// type (rules ID or name), found in one of its factories on the seat's
+    /// client; <c>unique_id</c> picks one when several are finished. An
+    /// object address is refused, because addresses differ between clients.
+    /// </summary>
     public const string PlaceBuilding = "place_building";
 }
 

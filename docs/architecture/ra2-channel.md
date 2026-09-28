@@ -278,7 +278,13 @@ in-process fake of the service.
   `current_player` house is the seat's house. A different house refuses the
   seat for good. It drops object addresses that the latest snapshot does not
   show as the house's, and it maps `PlayerCommandKinds` to `UnitOrder`,
-  `ProduceOrder` and `PlaceBuilding`. The fork's observer refusal arrives as
+  `ProduceOrder` and `PlaceBuilding`. `place_building` names a type, not an
+  address (`{type, x, y, z?, unique_id?}`): the sink finds the house's one
+  finished building of that type in limbo in its own factory on the seat's
+  client and sends that address with the factory item's stable ID. None, or
+  more than one without a `unique_id`, is refused before the game; the fork
+  then runs the game's proximity and `CanPlaceHere` checks and returns an
+  error when the cell is not legal. The fork's observer refusal arrives as
   a failed command in the trace. An order whose result never comes back
   (a timeout after it was sent) is traced as `command_outcome_unknown`, not
   failed, because the fork may already have queued it.

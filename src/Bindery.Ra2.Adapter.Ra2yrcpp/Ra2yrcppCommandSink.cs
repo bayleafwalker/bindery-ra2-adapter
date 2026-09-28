@@ -29,7 +29,8 @@ public sealed class Ra2yrcppSeatException(string message) : InvalidOperationExce
 /// carries the snapshot's IDs (<c>object_unique_ids</c>, and
 /// <c>target_unique_id</c> for a target) so the fork rejects it if the
 /// objects change before it runs; fork builds without stable IDs send none
-/// and ignore the fields.
+/// and ignore the fields. A placement names a type instead: the finished
+/// building is found in the house's own factory on this client.
 /// The fork re-checks ownership on the game thread, and an ERROR result is
 /// thrown as <see cref="Ra2yrcppCommandException"/>. An order whose result
 /// is lost (a timeout or a dropped connection after it was sent) throws
@@ -108,10 +109,7 @@ public sealed class Ra2yrcppCommandSink : IPlayerCommandSink, IAsyncDisposable
                     await ProduceAsync(arguments, cancellationToken).ConfigureAwait(false);
                     break;
                 case PlaceBuilding:
-                    uint building = Address(arguments, "object");
-                    if (!state.Factories.Any(f => f.Owner == own.Self && f.Object == building && f.Completed))
-                        throw new InvalidOperationException($"place_building: {building:x} is not a finished building in a factory of {House}");
-                    await SubmitAsync(new Ra2Yrproto.Commands.PlaceBuilding { Building = new Ra2Yrproto.Ra2Yr.Object { PointerSelf = building }, Coordinates = Coordinates(arguments) }, cancellationToken).ConfigureAwait(false);
+                    await PlaceAsync(state, own, arguments, cancellationToken).ConfigureAwait(false);
                     break;
                 default:
                     throw new ArgumentException($"unknown command kind {command.Kind}");
@@ -196,6 +194,48 @@ public sealed class Ra2yrcppCommandSink : IPlayerCommandSink, IAsyncDisposable
             string other => throw new ArgumentException($"unknown produce action {other}"),
             null => ProduceAction.Begin,
         };
+        ObjectTypeClass found = await TypeAsync(name, cancellationToken).ConfigureAwait(false);
+        await SubmitAsync(new ProduceOrder { ObjectType = found, Action = action }, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Places the house's finished building of a type. The building waits in
+    /// limbo in one of the house's factories; it is found there on this
+    /// client by its type, because its address differs between clients. A
+    /// <c>unique_id</c> narrows it to one object. Two finished buildings of
+    /// the type are refused as ambiguous rather than guessed between.
+    /// </summary>
+    private async Task PlaceAsync(GameState state, House own, JsonElement arguments, CancellationToken cancellationToken)
+    {
+        if (arguments.ValueKind == JsonValueKind.Object && arguments.TryGetProperty("object", out _))
+            throw new ArgumentException("place_building names the building by type (and unique_id), not by an object address");
+        string name = arguments.ValueKind == JsonValueKind.Object && arguments.TryGetProperty("type", out JsonElement value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()!
+            : throw new ArgumentException("place_building needs a type");
+        uint? uniqueId = arguments.TryGetProperty("unique_id", out JsonElement id) && id.ValueKind != JsonValueKind.Null
+            ? id.TryGetUInt32(out uint parsed) ? parsed : throw new ArgumentException("unique_id is a stable object ID")
+            : null;
+        Coordinates coordinates = Coordinates(arguments);
+        uint pointer = (await TypeAsync(name, cancellationToken).ConfigureAwait(false)).PointerSelf;
+        Dictionary<uint, Ra2Yrproto.Ra2Yr.Object> objects = state.Objects.GroupBy(static o => o.PointerSelf).ToDictionary(static g => g.Key, static g => g.First());
+        Factory[] finished = state.Factories
+            .Where(f => f.Owner == own.Self && f.Completed && f.Object != 0
+                && objects.TryGetValue(f.Object, out Ra2Yrproto.Ra2Yr.Object? o) && o.PointerTechnotypeclass == pointer
+                && (uniqueId is null || f.ObjectUniqueId == uniqueId))
+            .ToArray();
+        Factory factory = finished.Length switch
+        {
+            0 => throw new InvalidOperationException($"no finished {name} in a factory of {House}"),
+            1 => finished[0],
+            _ => throw new InvalidOperationException($"{finished.Length} finished {name} in the factories of {House}; name one by unique_id"),
+        };
+        Ra2Yrproto.Ra2Yr.Object building = new() { PointerSelf = factory.Object, UniqueId = factory.ObjectUniqueId };
+        await SubmitAsync(new Ra2Yrproto.Commands.PlaceBuilding { Building = building, Coordinates = coordinates }, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>A type by rules ID or name, from the type classes the fork reported once.</summary>
+    private async Task<ObjectTypeClass> TypeAsync(string name, CancellationToken cancellationToken)
+    {
         if (types.Count == 0)
         {
             ReadValue read = await Client.RunAsync(new ReadValue { Data = new StorageValue { InitialGameState = new GameState() } }, cancellationToken).ConfigureAwait(false);
@@ -205,8 +245,7 @@ public sealed class Ra2yrcppCommandSink : IPlayerCommandSink, IAsyncDisposable
             foreach (ObjectTypeClass type in reported.Where(static t => !string.IsNullOrEmpty(t.Id))) types.TryAdd(type.Id, type);
             foreach (ObjectTypeClass type in reported) types.TryAdd(type.Name, type);
         }
-        if (!types.TryGetValue(name, out ObjectTypeClass? found)) throw new ArgumentException($"unknown object type {name}");
-        await SubmitAsync(new ProduceOrder { ObjectType = found, Action = action }, cancellationToken).ConfigureAwait(false);
+        return types.TryGetValue(name, out ObjectTypeClass? found) ? found : throw new ArgumentException($"unknown object type {name}");
     }
 
     private async Task<(GameState State, House Own)> LocalHouseAsync(CancellationToken cancellationToken)
