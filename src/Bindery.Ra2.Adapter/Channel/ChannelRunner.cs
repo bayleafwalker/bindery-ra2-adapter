@@ -98,7 +98,7 @@ public sealed class ChannelRunner
     /// <see cref="ChannelMatchRecord.FailureClass"/> for a match whose evidence
     /// shows the game crashed before it ever started: attached telemetry that
     /// saw nothing, with a notable hosted-exit-code observation from a player
-    /// client, and every player's process seen to exit. Retried once; see
+    /// client, and every client's process (observer too) seen to exit. Retried once; see
     /// <see cref="RunAsync"/>.
     /// </summary>
     internal const string StartupCrashFailureClass = "startup_crash";
@@ -276,12 +276,13 @@ public sealed class ChannelRunner
         // A startup crash: telemetry was attached, it never saw the match
         // start, and a player's debugger log named an NTSTATUS exit. Without
         // telemetry attached there is nothing to classify from, so this stays
-        // unset and the match is not retried. Nor is it retried while a
-        // player's process was never seen to exit: the launch agent would start
-        // the retry's game beside one that may still be running.
+        // unset and the match is not retried. Nor is it retried while any
+        // client's process, the observer's included, was never seen to exit:
+        // the launch agent would start the retry's game beside one that may
+        // still be running.
         bool startupCrash = result.TelemetryObserved is not null && noTelemetry
             && players.Any(static c => c.Observations?.Any(static o => o.Kind == RunObservation.HostedExitCode && o.Notable) == true)
-            && players.All(static c => c.ProcessExitCode is not null);
+            && evidence is not null && evidence.Clients.All(static c => c.ProcessExitCode is not null);
         string? failureClass = startupCrash ? StartupCrashFailureClass : null;
         return new ChannelMatchRecord(
             request.ChannelId,

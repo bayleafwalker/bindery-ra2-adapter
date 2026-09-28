@@ -234,6 +234,21 @@ public sealed class ChannelTests
     }
 
     [Fact]
+    public async Task AStartupCrashIsNotRetriedWhileTheObserversExitIsUnobserved()
+    {
+        // The observer's game runs through the same launch agent: it too must
+        // be seen to exit before a retry starts another.
+        FakeLauncher launcher = new(_ => Task.FromResult(new ChannelMatchResult(StartupCrashEvidence(observerExitUnobserved: true), TelemetryObserved: 0)));
+        ChannelRunner runner = new(launcher, new FakeProduction(), new MemorySink(), NoDelay);
+
+        ChannelSessionSummary summary = await runner.RunAsync(Request(1));
+
+        ChannelMatchRecord match = Assert.Single(summary.Matches);
+        Assert.Null(match.FailureClass);
+        Assert.Equal(1, match.Attempt);
+    }
+
+    [Fact]
     public async Task ADrainDuringTheRetryDelayIsTheStopReasonAfterAnEarlierFailure()
     {
         // An ordinary failed match, then a startup crash drained before its
@@ -576,7 +591,7 @@ public sealed class ChannelTests
     /// -- the shape of the intermittent DDrawCompat STATUS_STACK_OVERFLOW seen
     /// at startup in the lab (~2 of 20 launches).
     /// </summary>
-    internal static LiveAcceptanceEvidence StartupCrashEvidence(bool secondExitUnobserved = false)
+    internal static LiveAcceptanceEvidence StartupCrashEvidence(bool secondExitUnobserved = false, bool observerExitUnobserved = false)
     {
         LiveClientEvidence Client(string id, int? exitCode, string? failure, IReadOnlyList<RunObservation> observations) =>
             new(id, "account-" + id, "instance-" + id, "golden-1", "sha256:game", "sha256:ini", ["ready"], exitCode, failure, observations, "player");
@@ -586,6 +601,9 @@ public sealed class ChannelTests
             secondExitUnobserved
                 ? Client("b", null, "InvalidOperationException: remote client status poll failed", [])
                 : Client("b", 0, null, []),
+            .. observerExitUnobserved
+                ? new[] { new LiveClientEvidence("o", "account-o", "observer-1", "golden-1", "sha256:game", "sha256:ini", ["ready"], null, "InvalidOperationException: remote client status poll failed", [], "observer") }
+                : [],
         ];
         return new LiveAcceptanceEvidence(
             LiveAcceptanceRunner.EvidenceSchemaVersion,
