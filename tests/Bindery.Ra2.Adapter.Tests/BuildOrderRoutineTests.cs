@@ -15,20 +15,20 @@ public sealed class BuildOrderRoutineTests
     private const int YardX = 10 * 256 + 128, YardY = 20 * 256 + 128;
 
     [Fact]
-    public void CandidateCellsSpiralOutwardFromThreeToEightCells()
+    public void CandidateCellsAreEveryCellOfRingsTwoToEightNearestFirst()
     {
         IReadOnlyList<(int X, int Y)> offsets = BuildOrderRoutineController.CandidateOffsets;
 
-        Assert.Equal(48, offsets.Count);
+        // Every cell 2 to 8 cells out (8r per ring): the game, not a guess,
+        // says which of them a building fits on.
+        Assert.Equal(Enumerable.Range(2, 7).Sum(static r => 8 * r), offsets.Count);
         Assert.Equal(offsets.Count, offsets.Distinct().Count());
-        Assert.Equal([(3, 0), (3, 3), (0, 3), (-3, 3), (-3, 0), (-3, -3), (0, -3), (3, -3)], offsets.Take(8));
-        // Each ring starts one step further round, so the tries do not all lean one way.
-        Assert.Equal((4, 4), offsets[8]);
-        Assert.Equal((-8, -8), offsets[40]);
+        Assert.Equal([(2, 0), (0, 2), (-2, 0), (0, -2)], offsets.Take(4));
         int[] rings = [.. offsets.Select(static o => Math.Max(Math.Abs(o.X), Math.Abs(o.Y)))];
         Assert.Equal(rings.Order(), rings);
-        Assert.Equal(3, rings.Min());
+        Assert.Equal(2, rings.Min());
         Assert.Equal(8, rings.Max());
+        Assert.True(offsets.Count <= 1024, "the fork truncates a PlaceQuery at 1024 cells");
     }
 
     [Fact]
@@ -78,8 +78,12 @@ public sealed class BuildOrderRoutineTests
 
         Assert.Equal(PlayerCommandKinds.PlaceBuilding, place.Kind);
         Assert.Equal("GAPOWR", place.Arguments.GetProperty("type").GetString());
-        Assert.Equal(13 * 256 + 128, place.Arguments.GetProperty("x").GetInt32());
-        Assert.Equal(YardY, place.Arguments.GetProperty("y").GetInt32());
+        JsonElement[] cells = [.. place.Arguments.GetProperty("cells").EnumerateArray()];
+        Assert.Equal(BuildOrderRoutineController.CandidateOffsets.Count, cells.Length);
+        Assert.Equal(12 * 256 + 128, cells[0].GetProperty("x").GetInt32());
+        Assert.Equal(YardY, cells[0].GetProperty("y").GetInt32());
+        Assert.Equal(0, cells[0].GetProperty("z").GetInt32());
+        Assert.False(place.Arguments.TryGetProperty("x", out _));
         Assert.Equal(701u, place.Arguments.GetProperty("unique_id").GetUInt32());
         Assert.False(place.Arguments.TryGetProperty("object", out _));
     }
@@ -93,9 +97,10 @@ public sealed class BuildOrderRoutineTests
         run.Routine.Completed(first, new InvalidOperationException("CanPlaceHere check failed"));
         PlayerCommand second = Assert.Single(run.See(10, Ra2TelemetryEventTypes.CreditsSampled, "{\"house\":\"Americans\",\"credits\":9000}"));
 
+        // Asked again: the cells free now may differ (a unit moved off one).
         Assert.Equal(PlayerCommandKinds.PlaceBuilding, second.Kind);
-        Assert.Equal(13 * 256 + 128, second.Arguments.GetProperty("x").GetInt32());
-        Assert.Equal(23 * 256 + 128, second.Arguments.GetProperty("y").GetInt32());
+        Assert.NotSame(first, second);
+        Assert.Equal(first.Arguments.GetProperty("cells").GetArrayLength(), second.Arguments.GetProperty("cells").GetArrayLength());
     }
 
     [Fact]
@@ -110,7 +115,7 @@ public sealed class BuildOrderRoutineTests
         PlayerCommand second = Assert.Single(run.See(13, Ra2TelemetryEventTypes.CreditsSampled, "{\"house\":\"Americans\",\"credits\":9000}"));
 
         Assert.Equal(PlayerCommandKinds.PlaceBuilding, second.Kind);
-        Assert.Equal(23 * 256 + 128, second.Arguments.GetProperty("y").GetInt32());
+        Assert.NotSame(first, second);
     }
 
     [Fact]
@@ -141,7 +146,7 @@ public sealed class BuildOrderRoutineTests
 
         Assert.Equal(BuildOrderRoutineController.MaximumPlacementTries, placements.Count);
         Assert.All(placements, static p => Assert.Equal(PlayerCommandKinds.PlaceBuilding, p.Kind));
-        Assert.Equal(12, placements.Select(static p => (p.Arguments.GetProperty("x").GetInt32(), p.Arguments.GetProperty("y").GetInt32())).Distinct().Count());
+        Assert.All(placements, static p => Assert.Equal(BuildOrderRoutineController.CandidateOffsets.Count, p.Arguments.GetProperty("cells").GetArrayLength()));
         string note = Assert.Single(routine.TakeNotes());
         Assert.Contains("GAPOWR", note, StringComparison.Ordinal);
         Assert.Contains("12", note, StringComparison.Ordinal);

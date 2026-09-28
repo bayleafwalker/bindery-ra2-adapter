@@ -47,7 +47,7 @@ function Install-Fork {
     allowedHostsRegex = $hosts
     logFilename       = 'ra2yrcpp.log'
     recordFilename    = 'ra2yrcpp.record'
-    allowedCommands   = @('GetGameState', 'ReadValue', 'UnitOrder', 'ProduceOrder', 'PlaceBuilding')
+    allowedCommands   = @('GetGameState', 'ReadValue', 'UnitOrder', 'ProduceOrder', 'PlaceBuilding', 'PlaceQuery')
   } | ConvertTo-Json | Set-Content -Encoding ascii (Join-Path $app 'ra2yrcpp.json')
   "ra2yrcpp: fork (hosts $hosts)"
 }

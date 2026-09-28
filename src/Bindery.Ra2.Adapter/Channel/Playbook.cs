@@ -397,10 +397,11 @@ public interface IRoutineFeedback
 /// left alone.
 ///
 /// A finished building (<c>ra2.production.completed</c> for the house) is
-/// placed on the next of <see cref="CandidateOffsets"/> from the yard's cell.
-/// A placement the game refuses, or one whose building is still waiting in
-/// the factory <c>placementTimeout</c> (3 s) after the order, moves to the
-/// next candidate on the next observation. The building leaving the factory
+/// placed with every cell of <see cref="CandidateOffsets"/> around the yard,
+/// in order: the seat's game says which of them the building fits on, and it
+/// goes on the first. A placement the game refuses, or one whose building is
+/// still waiting in the factory <c>placementTimeout</c> (3 s) after the
+/// order, is asked again on the next observation (a unit may have moved). The building leaving the factory
 /// counts as placed and starts the next item. After
 /// <see cref="MaximumPlacementTries"/> the routine notes it and holds; so it
 /// does when a produce order is refused. Time is observation time, so a
@@ -438,9 +439,9 @@ public sealed class BuildOrderRoutineController : IRoutineController, IRoutineFe
     }
 
     /// <summary>
-    /// Cells to try around the yard, nearest first: the eight compass points
-    /// of each ring 3 to 8 cells out, east first and clockwise, each ring
-    /// starting one point further round.
+    /// Cells offered around the yard: every cell 2 to 8 cells out, ring by
+    /// ring, nearest first within a ring, then by angle from east (280
+    /// cells, under the fork's 1024-cell PlaceQuery limit).
     /// </summary>
     public static IReadOnlyList<(int X, int Y)> CandidateOffsets { get; } = Candidates();
 
@@ -489,10 +490,11 @@ public sealed class BuildOrderRoutineController : IRoutineController, IRoutineFe
             Hold($"build order: {item} not placed after {MaximumPlacementTries} tries; holding");
             return null;
         }
-        (int dx, int dy) = CandidateOffsets[tries++];
+        tries++;
+        object[] cells = [.. CandidateOffsets.Select(o => new { x = Centre(yard.X, o.X), y = Centre(yard.Y, o.Y), z = yard.Z })];
         object arguments = current.UniqueId is { } id
-            ? new { type = item, x = Centre(yard.X, dx), y = Centre(yard.Y, dy), z = yard.Z, unique_id = id }
-            : new { type = item, x = Centre(yard.X, dx), y = Centre(yard.Y, dy), z = yard.Z };
+            ? new { type = item, cells, unique_id = id }
+            : new { type = item, cells };
         placement = new PlayerCommand(PlayerCommandKinds.PlaceBuilding, JsonSerializer.SerializeToElement(arguments));
         placedAt = observation.ReceivedAt;
         placementFailed = false;
@@ -533,17 +535,13 @@ public sealed class BuildOrderRoutineController : IRoutineController, IRoutineFe
 
     private static (int X, int Y)[] Candidates()
     {
-        (int X, int Y)[] compass = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)];
-        List<(int X, int Y)> candidates = [];
-        for (int ring = 3; ring <= 8; ring++)
-        {
-            for (int point = 0; point < compass.Length; point++)
-            {
-                (int x, int y) = compass[(point + ring - 3) % compass.Length];
-                candidates.Add((x * ring, y * ring));
-            }
-        }
-        return [.. candidates];
+        static double Turn(int x, int y) => Math.Atan2(y, x) is var a && a < 0 ? a + 2 * Math.PI : Math.Atan2(y, x);
+        return [.. Enumerable.Range(-8, 17)
+            .SelectMany(static x => Enumerable.Range(-8, 17).Select(y => (X: x, Y: y)))
+            .Where(static c => Math.Max(Math.Abs(c.X), Math.Abs(c.Y)) >= 2)
+            .OrderBy(static c => Math.Max(Math.Abs(c.X), Math.Abs(c.Y)))
+            .ThenBy(static c => c.X * c.X + c.Y * c.Y)
+            .ThenBy(static c => Turn(c.X, c.Y))];
     }
 }
 

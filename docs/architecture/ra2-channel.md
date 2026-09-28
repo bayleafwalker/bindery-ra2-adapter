@@ -285,12 +285,17 @@ in-process fake of the service.
   seat for good. It drops object addresses that the latest snapshot does not
   show as the house's, and it maps `PlayerCommandKinds` to `UnitOrder`,
   `ProduceOrder` and `PlaceBuilding`. `place_building` names a type, not an
-  address (`{type, x, y, z?, unique_id?}`): the sink finds the house's one
+  address (`{type, x, y, z?, unique_id?}`, or `cells: [{x, y, z}, ...]` in
+  place of `x`/`y`): the sink finds the house's one
   finished building of that type in limbo in its own factory on the seat's
   client and sends that address with the factory item's stable ID. None, or
   more than one without a `unique_id`, is refused before the game; the fork
   then runs the game's proximity and `CanPlaceHere` checks and returns an
-  error when the cell is not legal. The fork's observer refusal arrives as
+  error when the cell is not legal. With `cells`, the sink first asks the
+  seat's game (`PlaceQuery`, which runs the same two checks) which cells the
+  building fits on and places it on the first of them in the given order;
+  none is refused before the game. The guest's `allowedCommands` includes
+  `PlaceQuery`. The fork's observer refusal arrives as
   a failed command in the trace. An order whose result never comes back
   (a timeout after it was sent) is traced as `command_outcome_unknown`, not
   failed, because the fork may already have queued it.
@@ -301,10 +306,12 @@ in-process fake of the service.
   then, once the house's Construction Yard is placed, `produce` for a power
   plant, barracks and refinery one at a time (`GAPOWR`, `GAPILE`, `GAREFN`
   for a `GACNST` yard; `NAPOWR`, `NAHAND`, `NAREFN` for `NACNST`). On
-  `ra2.production.completed` it sends `place_building` for the next of 48
-  candidate cells 3 to 8 cells from the yard. A refused placement, or a
-  building still in the factory 3 s after the order, moves to the next cell
-  on the next observation; after 12 tries, or a refused `produce`, it adds a
+  `ra2.production.completed` it sends `place_building` with every cell 2 to 8
+  cells from the yard (280, nearest first), and the game picks the first the
+  building fits on. Blind single cells lost the live barracks to 12
+  `CanPlaceHere` refusals in a row (run 20260928-183205-s2). A refused
+  placement, or a building still in the factory 3 s after the order, is
+  asked again on the next observation; after 12 tries, or a refused `produce`, it adds a
   `controller_note` and holds. The seat reports every order's outcome to a
   controller that implements `ICommandFeedback`, and `PlaybookController`
   passes it on to its routine.

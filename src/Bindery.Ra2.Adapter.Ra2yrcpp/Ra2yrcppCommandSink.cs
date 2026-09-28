@@ -203,7 +203,10 @@ public sealed class Ra2yrcppCommandSink : IPlayerCommandSink, IAsyncDisposable
     /// limbo in one of the house's factories; it is found there on this
     /// client by its type, because its address differs between clients. A
     /// <c>unique_id</c> narrows it to one object. Two finished buildings of
-    /// the type are refused as ambiguous rather than guessed between.
+    /// the type are refused as ambiguous rather than guessed between. Given
+    /// <c>cells</c> instead of one <c>x</c>/<c>y</c>, this client's game is
+    /// asked (PlaceQuery) which of them the building fits on, and it goes on
+    /// the first of those in the given order; none is refused unplaced.
     /// </summary>
     private async Task PlaceAsync(GameState state, House own, JsonElement arguments, CancellationToken cancellationToken)
     {
@@ -215,7 +218,8 @@ public sealed class Ra2yrcppCommandSink : IPlayerCommandSink, IAsyncDisposable
         uint? uniqueId = arguments.TryGetProperty("unique_id", out JsonElement id) && id.ValueKind != JsonValueKind.Null
             ? id.TryGetUInt32(out uint parsed) ? parsed : throw new ArgumentException("unique_id is a stable object ID")
             : null;
-        Coordinates coordinates = Coordinates(arguments);
+        Coordinates[]? cells = Cells(arguments);
+        Coordinates? single = cells is null ? Coordinates(arguments) : null;
         uint pointer = (await TypeAsync(name, cancellationToken).ConfigureAwait(false)).PointerSelf;
         Dictionary<uint, Ra2Yrproto.Ra2Yr.Object> objects = state.Objects.GroupBy(static o => o.PointerSelf).ToDictionary(static g => g.Key, static g => g.First());
         Factory[] finished = state.Factories
@@ -230,7 +234,19 @@ public sealed class Ra2yrcppCommandSink : IPlayerCommandSink, IAsyncDisposable
             _ => throw new InvalidOperationException($"{finished.Length} finished {name} in the factories of {House}; name one by unique_id"),
         };
         Ra2Yrproto.Ra2Yr.Object building = new() { PointerSelf = factory.Object, UniqueId = factory.ObjectUniqueId };
+        Coordinates coordinates = single ?? await FirstPlaceableAsync(name, pointer, own, cells!, cancellationToken).ConfigureAwait(false);
         await SubmitAsync(new Ra2Yrproto.Commands.PlaceBuilding { Building = building, Coordinates = coordinates }, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>The first of <paramref name="cells"/> this client's game says the building fits on.</summary>
+    private async Task<Coordinates> FirstPlaceableAsync(string name, uint type, House own, Coordinates[] cells, CancellationToken cancellationToken)
+    {
+        PlaceQuery query = new() { TypeClass = type, HouseClass = own.Self };
+        query.Coordinates.AddRange(cells);
+        PlaceQuery placeable = await Client.RunAsync(query, cancellationToken).ConfigureAwait(false);
+        // The fork keeps the order it was given, so the first is the controller's choice.
+        return placeable.Coordinates.FirstOrDefault()
+            ?? throw new InvalidOperationException($"no placeable cell for {name} among {cells.Length} offered");
     }
 
     /// <summary>A type by rules ID or name, from the type classes the fork reported once.</summary>
@@ -288,6 +304,15 @@ public sealed class Ra2yrcppCommandSink : IPlayerCommandSink, IAsyncDisposable
         arguments.ValueKind == JsonValueKind.Object && arguments.TryGetProperty(field, out JsonElement value) && value.TryGetUInt32(out uint address)
             ? address
             : throw new ArgumentException($"the order needs {field}");
+
+    private static Coordinates[]? Cells(JsonElement arguments)
+    {
+        if (!arguments.TryGetProperty("cells", out JsonElement cells) || cells.ValueKind == JsonValueKind.Null) return null;
+        Coordinates[] parsed = cells.ValueKind == JsonValueKind.Array
+            ? [.. cells.EnumerateArray().Select(Coordinates)]
+            : throw new ArgumentException("cells is a list of {x, y, z}");
+        return parsed.Length is > 0 and <= 1024 ? parsed : throw new ArgumentException("cells needs 1 to 1024 cells");
+    }
 
     private static Coordinates Coordinates(JsonElement arguments)
     {

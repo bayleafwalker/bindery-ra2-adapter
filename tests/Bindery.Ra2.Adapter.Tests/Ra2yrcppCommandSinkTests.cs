@@ -25,6 +25,11 @@ internal sealed class FakeGame
     /// <summary>The type classes ReadValue reports.</summary>
     public ObjectTypeClass[] Types { get; set; } = Snapshots.Types;
 
+    /// <summary>The cells a PlaceQuery reports placeable; null reports none.</summary>
+    public Func<Coordinates, bool>? Placeable { get; set; }
+
+    public ConcurrentQueue<PlaceQuery> Queries { get; } = new();
+
     public CommandResult? Handle(Any command)
     {
         if (command.Is(GetGameState.Descriptor)) return FakeRa2yrcppServer.Ok(new GetGameState { State = State });
@@ -33,6 +38,14 @@ internal sealed class FakeGame
             GameState initial = new();
             initial.ObjectTypes.AddRange(Types);
             return FakeRa2yrcppServer.Ok(new ReadValue { Data = new StorageValue { InitialGameState = initial } });
+        }
+        if (command.Is(PlaceQuery.Descriptor))
+        {
+            PlaceQuery query = command.Unpack<PlaceQuery>();
+            Queries.Enqueue(query);
+            PlaceQuery result = new() { TypeClass = query.TypeClass, HouseClass = query.HouseClass };
+            result.Coordinates.AddRange(query.Coordinates.Where(c => Placeable?.Invoke(c) == true));
+            return FakeRa2yrcppServer.Ok(result);
         }
         IMessage order = command.Is(UnitOrder.Descriptor) ? command.Unpack<UnitOrder>()
             : command.Is(ProduceOrder.Descriptor) ? command.Unpack<ProduceOrder>()
@@ -300,6 +313,40 @@ public sealed class Ra2yrcppCommandSinkTests
         PlaceBuilding place = Assert.IsType<PlaceBuilding>(Assert.Single(game.Orders));
         Assert.Equal(0xA7u, place.Building.PointerSelf);
         Assert.Equal(new Coordinates { X = 1024, Y = 2048, Z = 16 }, place.Coordinates);
+    }
+
+    [Fact]
+    public async Task PlacementAmongCellsAsksTheSeatsGameAndTakesTheFirstPlaceableInTheGivenOrder()
+    {
+        FakeGame game = FinishedPowerPlant();
+        game.Placeable = static c => c.X is 1280 or 1536;
+        await using FakeRa2yrcppServer server = new(game.Handle);
+        await using Ra2yrcppCommandSink sink = Sink(server);
+
+        await sink.SendAsync(Command(Ra2yrcppCommandSink.PlaceBuilding,
+            "{\"type\":\"GAPOWR\",\"cells\":[{\"x\":1024,\"y\":2048,\"z\":0},{\"x\":1536,\"y\":2048,\"z\":0},{\"x\":1280,\"y\":2048,\"z\":0}]}"), CancellationToken.None);
+
+        PlaceQuery query = Assert.Single(game.Queries);
+        Assert.Equal(3, query.Coordinates.Count);
+        Assert.Equal(game.Types.First(static t => t.Id == "GAPOWR" || t.Name == "GAPOWR").PointerSelf, query.TypeClass);
+        Assert.Equal(game.State.Houses.Single(static h => h.CurrentPlayer).Self, query.HouseClass);
+        PlaceBuilding place = Assert.IsType<PlaceBuilding>(Assert.Single(game.Orders));
+        Assert.Equal(new Coordinates { X = 1536, Y = 2048, Z = 0 }, place.Coordinates);
+    }
+
+    [Fact]
+    public async Task PlacementWithNoPlaceableCellIsRefusedWithoutPlacing()
+    {
+        FakeGame game = FinishedPowerPlant();
+        await using FakeRa2yrcppServer server = new(game.Handle);
+        await using Ra2yrcppCommandSink sink = Sink(server);
+
+        InvalidOperationException refused = await Assert.ThrowsAsync<InvalidOperationException>(() => sink.SendAsync(Command(Ra2yrcppCommandSink.PlaceBuilding,
+            "{\"type\":\"GAPOWR\",\"cells\":[{\"x\":1024,\"y\":2048,\"z\":0}]}"), CancellationToken.None));
+
+        Assert.Contains("no placeable cell", refused.Message, StringComparison.Ordinal);
+        Assert.Single(game.Queries);
+        Assert.Empty(game.Orders);
     }
 
     [Fact]
