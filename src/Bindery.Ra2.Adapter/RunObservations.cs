@@ -30,8 +30,10 @@ public sealed record RunObservation(string Kind, string Detail, bool Notable)
 /// Syringe is a debugger: it logs first-chance exceptions, meaning ones the
 /// game throws and handles itself, and RA2 with Ares does that routinely
 /// during an ordinary match. An exception line is therefore an event, not a
-/// failure. Likewise the hosted exit code is just a number -- Yuri's Revenge
-/// exits with 3 when the player quits from the score screen.
+/// failure. Likewise the hosted exit code is usually just a number -- Yuri's
+/// Revenge exits with 3 when the match ends normally. The one exit code that
+/// is an event is an NTSTATUS error (0xC.......), e.g. C00000FD, a stack
+/// overflow: the process died of an unhandled exception.
 ///
 /// Nothing here decides pass or fail. Earlier versions did, and marked every
 /// completed match as a crash three different ways.
@@ -70,8 +72,22 @@ public static class SpawnerLogObservations
                 $"{exceptions.ToString(CultureInfo.InvariantCulture)} debugger exception line(s); first: {firstException}",
                 Notable: false));
         }
-        if (exitCode is not null) observations.Add(new RunObservation(RunObservation.HostedExitCode, exitCode, Notable: false));
+        if (exitCode is not null)
+        {
+            bool crashed = IsExceptionStatus(exitCode);
+            observations.Add(new RunObservation(RunObservation.HostedExitCode, crashed ? $"{exitCode} -- an exception status: the game crashed" : exitCode, Notable: crashed));
+        }
         return observations;
+    }
+
+    // "Done with exit code C00000FD (3221225725)." -> an NTSTATUS error.
+    // FFFFFFFF (a killed process) and ordinary codes are not.
+    private static bool IsExceptionStatus(string detail)
+    {
+        string[] words = detail.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return words.Length > 4
+            && uint.TryParse(words[4], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint code)
+            && (code & 0xF0000000u) == 0xC0000000u;
     }
 
     private static string Trim(string line)
