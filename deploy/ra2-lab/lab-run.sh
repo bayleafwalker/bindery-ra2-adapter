@@ -3,7 +3,7 @@
 #
 #   lab-run.sh --preflight            check every precondition, start nothing
 #   lab-run.sh --stage 1              LiveAcceptance: player-a vs 2 Brutal AI, player-b spectating
-#   lab-run.sh --stage 2              Channel tool: player-a + agent seat player-b (deploy_mcv)
+#   lab-run.sh --stage 2              Channel tool: player-a + agent seat player-b ($LAB_SEAT_ROUTINE)
 #                                     vs 2 Brutal AI, live telemetry from client-a, fork ra2yrcpp
 #   lab-run.sh --prepare-only --stage N   push payload, prepare guests, start the client-b agent; no match
 #   lab-run.sh --dry-run --stage N     full run without the preflight gate (validates settings end to end)
@@ -19,6 +19,8 @@
 #                   PREPARE_STAGE=2 --stage 1 plays a stage-1 match on the fork
 #                   ra2yrcpp DLL (bisection).
 #   LAB_MATCH_TIMEOUT  seconds before a match is stopped (default 2400).
+#   LAB_SEAT_ROUTINE   stage-2 agent seat routine: deploy_mcv (default) or
+#                   build_order (deploy, then power, barracks, refinery).
 #
 # Host: pinned CnCNet tunnel (docker, 192.168.122.1:50000) and bindery-core
 # external-runtime (native, 192.168.122.1:8080, state under runs/<id>/).
@@ -41,6 +43,9 @@ A_IP=$(guest_ip a || true) B_IP=$(guest_ip b || true)
 CP_BIN="$LAB/bin/bindery-external-runtime"
 PAYLOAD="$LAB/payload" SECRETS="$LAB/secrets"
 MATCH_TIMEOUT=${LAB_MATCH_TIMEOUT:-2400}
+SEAT_ROUTINE=${LAB_SEAT_ROUTINE:-deploy_mcv}
+case "$SEAT_ROUTINE" in deploy_mcv|build_order) ;;
+  *) echo "LAB_SEAT_ROUTINE must be deploy_mcv or build_order, not '$SEAT_ROUTINE'" >&2; exit 2 ;; esac
 
 stage="" mode=run
 while [ $# -gt 0 ]; do
@@ -173,10 +178,10 @@ mint() {  # writes $RUN/secrets/identities.json (0600)
 }
 
 render() {  # $RUN/secrets/settings.json for the stage
-  python3 - "$RUN" "$RUN_ID" "$stage" "$(sha256sum "$PAYLOAD/spawnmap-brutal.ini" | cut -d' ' -f1)" "$B_IP" <<'PY'
+  python3 - "$RUN" "$RUN_ID" "$stage" "$(sha256sum "$PAYLOAD/spawnmap-brutal.ini" | cut -d' ' -f1)" "$B_IP" "$SEAT_ROUTINE" <<'PY'
 import json, sys, pathlib
 run, run_id, stage = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
-b_ip = sys.argv[5]
+b_ip, seat_routine = sys.argv[5], sys.argv[6]
 ident = {s: json.loads((run / "secrets" / f"{s}.json").read_text()) for s in "ab"}
 def identity(s): return {"accountId": ident[s]["public_identity"]["account_id"], "accountToken": ident[s]["account_token"]}
 def launch(side, name, seat, spectator=False, command=None):
@@ -220,12 +225,12 @@ else:
                 "captureClientInstanceId": "client-a-decedec5",
                 "liveTelemetry": {"endpoint": "127.0.0.1:14521", "pollMilliseconds": 500},
                 "agentSeat": {"house": "player-b", "clientInstanceId": "client-b-b703066a",
-                              "routine": "deploy_mcv", "controllerVersion": "0.1.0"},
+                              "routine": seat_routine, "controllerVersion": "0.1.0"},
                 "live": live}
 out = run / "secrets" / "settings.json"
 out.write_text(json.dumps(settings, indent=2)); out.chmod(0o600)
 PY
-  log "rendered stage $stage settings (tokens only in $RUN/secrets, mode 0600)"
+  log "rendered stage $stage settings (seat routine $SEAT_ROUTINE) (tokens only in $RUN/secrets, mode 0600)"
 }
 
 # ---------------------------------------------------------------- guests
