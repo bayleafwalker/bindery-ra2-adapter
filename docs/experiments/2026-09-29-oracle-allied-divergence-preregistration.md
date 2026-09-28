@@ -46,9 +46,13 @@ Decision: **no primary cause**, so the line closes with "no single first diverge
 | intent, composition, defend, attack-gate, none | 0 | 0 |
 
 Scouting is the first divergence of every discordant pair in both directions, always at second 106: in all 46 pairs
-the selector issues its first scout order then and the oracle issues none (the oracle does scout later: 427 of its
-480 games have a scout order, against 480 of 480 for the selector). It fails the 2x condition
+the selector issues its first scout order then and the oracle issues none. It fails the 2x condition
 (1.00 against 1.00), and as a first divergence it is structural, not discriminating: it happens whoever wins, so this
 design cannot say which later decision decides these games. Per the pre-registration, no categories are changed after
 the run and no rerun follows; a design that skips the scout difference (for example, first divergence after the
 first scout order) would need its own pre-registration.
+
+Reported only, not decided on: as Allied the oracle issues a scout order at any time in 187 of its 240 games (the
+selector in 240 of 240; full traces, not committed). In the discordant pairs (committed traces) the oracle never
+scouts in 19 of 31 selector-only and 6 of 15 oracle-only pairs. Whether never scouting matters is a question for a
+separate pre-registration, not a finding of this one.
