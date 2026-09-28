@@ -58,7 +58,7 @@ done
 
 log() { printf '[%s] %s\n' "$(date +%T)" "$*"; }
 gx() { local side=$1 timeout=${3:-120}; "$EXEC" "bindery-ra2-client-$side" "$2" "$timeout"; }
-gpush() { local side=$1; shift; "$HERE/ra2-vm-push" "bindery-ra2-client-$side" "$@" >/dev/null; }
+gpush() { local secret=(); [ "$1" = --secret ] && { secret=(--secret); shift; }; local side=$1; shift; "$HERE/ra2-vm-push" "${secret[@]}" "bindery-ra2-client-$side" "$@" >/dev/null; }
 gpull() { local side=$1; shift; "$HERE/ra2-vm-pull" "bindery-ra2-client-$side" "$@"; }
 # The agent token goes to curl as a header file, never on a command line (ps shows those).
 auth() { printf 'Authorization: Bearer %s\n' "$(<"$SECRETS/agent-token.txt")"; }
@@ -241,7 +241,7 @@ push_payload() {
       gpush $side "$PAYLOAD/$file" "$dest"; log "client-$side: pushed $file"
     done < "$PAYLOAD/SHA256SUMS"
     gpush $side "$HERE/guest/prepare.ps1" 'C:\Bindery\lab\prepare.ps1'
-    gpush $side "$SECRETS/agent-token.txt" 'C:\Bindery\lab\secrets\agent-token.txt'
+    gpush --secret $side "$SECRETS/agent-token.txt" 'C:\Bindery\lab\secrets\agent-token.txt'
   done
 }
 prepare_guests() {  # $1 = 1|2|restore
@@ -275,7 +275,7 @@ agent_down() { gx b 'Get-Process Bindery.Ra2.Adapter.LaunchAgent -EA SilentlyCon
 run_match() {
   local exe settings
   if [ "$stage" = 1 ]; then exe=Bindery.Ra2.Adapter.LiveAcceptance.exe settings=settings-stage1.json; else exe=Bindery.Ra2.Adapter.Channel.exe settings=settings-stage2.json; fi
-  gpush a "$RUN/secrets/settings.json" "C:\\Bindery\\lab\\secrets\\$settings"
+  gpush --secret a "$RUN/secrets/settings.json" "C:\\Bindery\\lab\\secrets\\$settings"
   gx a "New-Item -ItemType Directory -Force C:\\Bindery\\lab\\runs\\$RUN_ID | Out-Null" >/dev/null
   labrun a "\$d = 'C:\\Bindery\\lab\\runs\\$RUN_ID'
 \"started \$(Get-Date -Format o) session=\$((Get-Process -Id \$PID).SessionId) user=\$env:USERNAME\" | Set-Content \"\$d\\harness.started\"
