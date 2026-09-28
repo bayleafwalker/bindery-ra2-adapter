@@ -359,18 +359,50 @@ public sealed class LeaseKeepAliveTests
         };
     }
 
+    [Fact]
+    public void TheTunnelStubRetriesOnAFreshListenerWhenItsPortIsTaken()
+    {
+        // An HttpListener whose Start failed is disposed, so a retry that reuses
+        // it throws ObjectDisposedException (two Windows CI failures, PR #21 and
+        // #23; reproduced on Linux by this test).
+        using HttpListener occupier = new();
+        int taken = 0;
+        for (int attempt = 0; taken == 0; attempt++)
+        {
+            int port = Random.Shared.Next(20000, 60000);
+            occupier.Prefixes.Clear();
+            occupier.Prefixes.Add($"http://127.0.0.1:{port}/");
+            try { occupier.Start(); taken = port; }
+            catch (HttpListenerException) when (attempt < 20) { }
+        }
+        int free = taken == 59999 ? 20000 : taken + 1;
+        Queue<int> ports = new([taken, free, free + 1, free + 2]);
+
+        using TunnelStub stub = new(ports.Dequeue);
+
+        Assert.NotEqual(taken, stub.Uri.Port);
+        Assert.True(stub.Listening);
+    }
+
     /// <summary>Answers the tunnel's port request on a loopback listener.</summary>
     private sealed class TunnelStub : IDisposable
     {
-        private readonly HttpListener listener = new();
+        private HttpListener listener = new();
 
         public TunnelStub()
+            : this(static () => Random.Shared.Next(20000, 60000))
+        {
+        }
+
+        /// <param name="nextPort">The port each attempt tries (tests pass a taken one first).</param>
+        public TunnelStub(Func<int> nextPort)
         {
             for (int attempt = 0; ; attempt++)
             {
-                int port = Random.Shared.Next(20000, 60000);
+                int port = nextPort();
                 Uri = new Uri($"http://127.0.0.1:{port}/");
-                listener.Prefixes.Clear();
+                // A listener whose Start failed is disposed: each attempt gets a new one.
+                if (attempt > 0) listener = new HttpListener();
                 listener.Prefixes.Add(Uri.ToString());
                 try
                 {
@@ -385,6 +417,8 @@ public sealed class LeaseKeepAliveTests
         }
 
         public Uri Uri { get; private set; } = null!;
+
+        public bool Listening => listener.IsListening;
 
         private async Task ServeAsync()
         {
