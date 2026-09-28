@@ -1,0 +1,3 @@
+selector: 1120 matches, 950 wins; leakage probe 0/672 differing frames, 0 fog-violation frames.
+selector-oracle: 1120 matches, 1028 wins; leakage probe 0/0 differing frames, 0 fog-violation frames.
+Wrote 2240 match results, 4 leakage probes and report.md to docs/results/2026-09-29-seen-ratio/H1-1.0 in 2299s.
