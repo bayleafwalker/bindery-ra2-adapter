@@ -417,7 +417,7 @@ public interface IRoutineFeedback
 /// the first admitted observation at or after 3 s: with a live seat that is
 /// within one poll while anything the house sees changes, and at worst within
 /// the credits heartbeat (<c>Ra2yrcppTelemetryOptions.CreditsHeartbeat</c>,
-/// 10 s by default) when nothing does. No timer is added.
+/// 10 s by default) plus one poll when nothing does. No timer is added.
 /// </remarks>
 public sealed class BuildOrderRoutineController : IRoutineController, IRoutineFeedback
 {
