@@ -218,6 +218,59 @@ public sealed class ChannelTests
     }
 
     [Fact]
+    public async Task AStartupCrashIsNotRetriedWhileAClientsExitIsUnobserved()
+    {
+        // The launch agent starts a new game even while an earlier one runs, so
+        // a client whose process was never seen to exit may still be playing:
+        // a retry would put a second game beside it.
+        FakeLauncher launcher = new(_ => Task.FromResult(new ChannelMatchResult(StartupCrashEvidence(secondExitUnobserved: true), TelemetryObserved: 0)));
+        ChannelRunner runner = new(launcher, new FakeProduction(), new MemorySink(), NoDelay);
+
+        ChannelSessionSummary summary = await runner.RunAsync(Request(1));
+
+        ChannelMatchRecord match = Assert.Single(summary.Matches);
+        Assert.Null(match.FailureClass);
+        Assert.Equal(1, match.Attempt);
+    }
+
+    [Fact]
+    public async Task ADrainDuringTheRetryDelayIsTheStopReasonAfterAnEarlierFailure()
+    {
+        // An ordinary failed match, then a startup crash drained before its
+        // retry: the channel stopped because of the drain, not two failures.
+        ChannelRunner? runner = null;
+        int launches = 0;
+        FakeLauncher launcher = new(_ => Task.FromResult(++launches == 1
+            ? new ChannelMatchResult(Evidence(complete: false), TelemetryObserved: 5)
+            : new ChannelMatchResult(StartupCrashEvidence(), TelemetryObserved: 0)));
+        int delays = 0;
+        runner = new ChannelRunner(launcher, new FakeProduction(), new MemorySink(), (_, _) =>
+        {
+            // The first pause is the holding between matches; the second is the retry's.
+            if (++delays == 2) runner!.RequestDrain();
+            return Task.CompletedTask;
+        });
+
+        ChannelSessionSummary summary = await runner.RunAsync(Request(5));
+
+        Assert.Equal([1, 1], summary.Matches.Select(static m => m.Attempt));
+        Assert.Equal("drain requested", summary.StopReason);
+    }
+
+    [Fact]
+    public void TheReportCountsOnlyRetriesThatWerePlayed()
+    {
+        // A startup crash drained before its retry was not retried.
+        ChannelMatchContext context = new("channel-1", 1, "MAP01.MAP", playerView, null);
+        ChannelMatchRecord crash = ChannelRunner.FromResult(Request(1), context, DateTimeOffset.UtcNow, new ChannelMatchResult(StartupCrashEvidence(), TelemetryObserved: 0));
+
+        ExperimentRow row = Assert.Single(ChannelExperimentReport.Build([crash]));
+
+        Assert.Equal(1, row.Matches);
+        Assert.Equal(0, row.StartupCrashesRetried);
+    }
+
+    [Fact]
     public void TheReportCountsMatchesAndRetriesNotAttempts()
     {
         // One match that crashed at startup twice: one match, one retry.
@@ -523,14 +576,16 @@ public sealed class ChannelTests
     /// -- the shape of the intermittent DDrawCompat STATUS_STACK_OVERFLOW seen
     /// at startup in the lab (~2 of 20 launches).
     /// </summary>
-    internal static LiveAcceptanceEvidence StartupCrashEvidence()
+    internal static LiveAcceptanceEvidence StartupCrashEvidence(bool secondExitUnobserved = false)
     {
-        LiveClientEvidence Client(string id, IReadOnlyList<RunObservation> observations) =>
-            new(id, "account-" + id, "instance-" + id, "golden-1", "sha256:game", "sha256:ini", ["ready"], null, null, observations, "player");
+        LiveClientEvidence Client(string id, int? exitCode, string? failure, IReadOnlyList<RunObservation> observations) =>
+            new(id, "account-" + id, "instance-" + id, "golden-1", "sha256:game", "sha256:ini", ["ready"], exitCode, failure, observations, "player");
         LiveClientEvidence[] clients =
         [
-            Client("a", [new RunObservation(RunObservation.HostedExitCode, "C00000FD -- an exception status: the game crashed", Notable: true)]),
-            Client("b", []),
+            Client("a", 3, null, [new RunObservation(RunObservation.HostedExitCode, "C00000FD -- an exception status: the game crashed", Notable: true)]),
+            secondExitUnobserved
+                ? Client("b", null, "InvalidOperationException: remote client status poll failed", [])
+                : Client("b", 0, null, []),
         ];
         return new LiveAcceptanceEvidence(
             LiveAcceptanceRunner.EvidenceSchemaVersion,

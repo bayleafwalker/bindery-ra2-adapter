@@ -98,7 +98,8 @@ public sealed class ChannelRunner
     /// <see cref="ChannelMatchRecord.FailureClass"/> for a match whose evidence
     /// shows the game crashed before it ever started: attached telemetry that
     /// saw nothing, with a notable hosted-exit-code observation from a player
-    /// client. Retried once; see <see cref="RunAsync"/>.
+    /// client, and every player's process seen to exit. Retried once; see
+    /// <see cref="RunAsync"/>.
     /// </summary>
     internal const string StartupCrashFailureClass = "startup_crash";
 
@@ -190,7 +191,12 @@ public sealed class ChannelRunner
                     await TryBroadcastAsync(ct => production.ShowHoldingAsync("restarting match", ct), $"holding before retry of match {index}", cancellationToken).ConfigureAwait(false);
                     await delay(request.EffectiveHoldingDuration, cancellationToken).ConfigureAwait(false);
                     // A drain asked for during the pause stops here, not after a whole new game.
-                    if (Volatile.Read(ref drainRequested) != 1) record = await PlayAttemptAsync(index, 2).ConfigureAwait(false);
+                    if (Volatile.Read(ref drainRequested) == 1)
+                    {
+                        stopReason = "drain requested";
+                        break;
+                    }
+                    record = await PlayAttemptAsync(index, 2).ConfigureAwait(false);
                 }
 
                 // Incomplete counts too: a crashed seat or telemetry that saw
@@ -270,9 +276,12 @@ public sealed class ChannelRunner
         // A startup crash: telemetry was attached, it never saw the match
         // start, and a player's debugger log named an NTSTATUS exit. Without
         // telemetry attached there is nothing to classify from, so this stays
-        // unset and the match is not retried.
+        // unset and the match is not retried. Nor is it retried while a
+        // player's process was never seen to exit: the launch agent would start
+        // the retry's game beside one that may still be running.
         bool startupCrash = result.TelemetryObserved is not null && noTelemetry
-            && players.Any(static c => c.Observations?.Any(static o => o.Kind == RunObservation.HostedExitCode && o.Notable) == true);
+            && players.Any(static c => c.Observations?.Any(static o => o.Kind == RunObservation.HostedExitCode && o.Notable) == true)
+            && players.All(static c => c.ProcessExitCode is not null);
         string? failureClass = startupCrash ? StartupCrashFailureClass : null;
         return new ChannelMatchRecord(
             request.ChannelId,

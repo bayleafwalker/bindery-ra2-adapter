@@ -126,7 +126,7 @@ try
     }
 
     foreach (ChannelMatchRecord match in summary.Matches)
-        Console.WriteLine($"match {match.MatchIndex}: {match.Outcome.ToString().ToLowerInvariant()} session={match.SessionId ?? "-"} seed={match.Seed?.ToString(CultureInfo.InvariantCulture) ?? "-"}{(match.Failure is null ? string.Empty : " failure=" + match.Failure)}");
+        Console.WriteLine($"match {match.MatchIndex}{(match.Attempt > 1 ? $" attempt {match.Attempt}" : string.Empty)}: {match.Outcome.ToString().ToLowerInvariant()} session={match.SessionId ?? "-"} seed={match.Seed?.ToString(CultureInfo.InvariantCulture) ?? "-"}{(match.Failure is null ? string.Empty : " failure=" + match.Failure)}");
     foreach (string issue in runner.BroadcastIssues) Console.WriteLine($"broadcast issue: {issue}");
     Console.WriteLine($"stopped: {summary.StopReason}");
     Console.WriteLine($"records={records.Path}");

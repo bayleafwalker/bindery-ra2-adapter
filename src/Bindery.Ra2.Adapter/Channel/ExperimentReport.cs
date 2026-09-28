@@ -89,7 +89,8 @@ public static class ChannelExperimentReport
                     completed.Length == 0 ? 0 : Math.Round(completed.Average(static r => r.PlaybookRevisions), 2),
                     group.Select(static r => r.Seed).OfType<int>().Distinct().Order().ToArray(),
                     group.Count(static r => r.DecisionTraceContentHash is not null),
-                    group.Count(static r => r.FailureClass == ChannelRunner.StartupCrashFailureClass && r.Attempt == 1));
+                    // Retries played: a crash drained before its retry was not retried.
+                    group.Count(static r => r.Attempt == 2));
             })
             .ToArray();
     }
