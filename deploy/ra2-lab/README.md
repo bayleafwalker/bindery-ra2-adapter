@@ -51,3 +51,65 @@ virsh -c qemu:///session qemu-agent-command bindery-ra2-client-a '{"execute":"gu
 ```
 
 Use `virsh destroy` only when the agent is not answering.
+
+## Unattended matches: `lab-run.sh`
+
+One host command prepares both guests, starts the host services, plays one
+match, collects evidence and restores the guests:
+
+```bash
+export RA2_LAB_HOME=/projects/bindery-vm/lab-kit-2026-09-27/lab   # bin/, payload/, secrets/, runs/
+export RA2_LAB_TUNNEL=<path>/run-private-tunnel.sh                # `up` / `down` the pinned tunnel container
+deploy/ra2-lab/lab-run.sh --preflight     # checks only; starts nothing
+deploy/ra2-lab/lab-run.sh --stage 1       # LiveAcceptance: player-a vs 2 allied AI, player-b spectating
+deploy/ra2-lab/lab-run.sh --stage 2       # Channel: player-a + agent seat player-b vs 2 allied AI, fork ra2yrcpp
+deploy/ra2-lab/lab-run.sh --teardown      # stop everything, restore stock ra2yrcpp
+```
+
+`RA2_LAB_HOME` stays out of the repository: it holds game content
+(`payload/spawnmap-brutal.ini`) and tokens. `build-payload.sh [--fork-dir <dir>]`
+rebuilds `payload/` from this checkout. The guest addresses come from the guest
+agent (`virsh domifaddr --source agent`). Games start in the desktop session
+through the on-demand task `\Bindery\BinderyLabRun`; no other task, service or
+autologon is used.
+
+A stage-1 match ends by itself when player-a is defeated. The two AI houses are
+on one team (`SpawnAiParticipant.Team`, rendered as `[Multi{n}_Alliances]`):
+unallied, they fought each other and never went near the idle human, and the
+match ran to the timeout.
+
+### Reading a run
+
+Evidence lands in `$RA2_LAB_HOME/runs/<id>/evidence/`. Before calling a match
+played, check the telemetry, not only the harness:
+
+- `telemetry.txt` must show thousands of records per client. The capture is a
+  gzip stream of varint-length-delimited `ra2yrproto` `GameState` messages; a
+  partial trailing record is normal when the game is stopped.
+- `control_plane_lifecycle_complete=True` alone does not prove the game
+  played: the control plane winds down cleanly around a game that quit on frame 0.
+- Syringe reports exit code 3 for a normal QuickExit ending too, so the exit
+  code does not distinguish a played match from a failed one.
+
+`PREPARE_STAGE=2 lab-run.sh --stage 1` plays the stage-1 shape on the fork DLL,
+which separates the DLL from the agent seat when stage 2 fails.
+
+### Building the fork ra2yrcpp DLL
+
+Build `bayleafwalker/ra2yrcpp` with upstream's docker MinGW toolchain (Ubuntu
+24.04, `g++-mingw-w64-i686-posix`). It links libstdc++ statically, so the game
+tree needs only `libra2yrcpp.dll` and `zlib1.dll`, like the stock appliance. A
+nix GCC 15 build that uses the mcfgthread runtime (`libmcfgthread-2.dll`) made
+the game quit on frame 0, with nothing recorded.
+
+```bash
+git clone --recurse-submodules https://github.com/bayleafwalker/ra2yrcpp && cd ra2yrcpp
+docker compose build builder
+docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":/home/user/project -w /home/user/project \
+  -e HOME=/tmp shmocz/ra2yrcpp:latest ./scripts/tools.sh build-cpp
+deploy/ra2-lab/build-payload.sh --fork-dir <ra2yrcpp>/cbuild/mingw-w64-i686-Release/pkg/bin   # from the adapter checkout
+```
+
+The image is built locally and not pushed. In a git worktree, also mount the
+main repository's `.git` read-only at the same path, because the build calls
+`git rev-parse`.

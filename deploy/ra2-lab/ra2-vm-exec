@@ -18,7 +18,9 @@ pid=$(agent "$request" | python3 -c 'import json,sys; print(json.load(sys.stdin)
 deadline=$((SECONDS + timeout))
 while :; do
   status=$(agent "{\"execute\":\"guest-exec-status\",\"arguments\":{\"pid\":$pid}}")
-  if python3 -c 'import json,sys; sys.exit(0 if json.loads(sys.argv[1])["return"]["exited"] else 1)' "$status"; then
+  # The status carries the captured output (base64): pass it on stdin, never argv,
+  # or large outputs overflow ARG_MAX (and the reaped pid cannot be polled again).
+  if printf '%s' "$status" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin)["return"]["exited"] else 1)'; then
     break
   fi
   if ((SECONDS >= deadline)); then
@@ -28,11 +30,11 @@ while :; do
   sleep 1
 done
 
-python3 - "$status" <<'EOF'
+printf '%s' "$status" | python3 -c '
 import base64, json, sys
-r = json.loads(sys.argv[1])["return"]
+r = json.load(sys.stdin)["return"]
 for key, stream in (("out-data", sys.stdout), ("err-data", sys.stderr)):
     if key in r:
         stream.write(base64.b64decode(r[key]).decode("utf-8", "replace"))
 sys.exit(r.get("exitcode", 1))
-EOF
+'
