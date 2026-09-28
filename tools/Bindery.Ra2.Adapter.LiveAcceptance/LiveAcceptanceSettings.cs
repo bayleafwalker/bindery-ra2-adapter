@@ -82,7 +82,7 @@ internal sealed class LiveAcceptanceSettings
 
     /// <summary>
     /// Computer-controlled houses. Their seats follow the human seats, so two
-    /// clients plus two AI need a four-seat map. Handicap 2 is aggressive.
+    /// clients plus two AI need a four-seat map. Handicap 2 is aggressive; a shared positive Team allies them.
     /// </summary>
     public SpawnAiParticipant[]? AiPlayers { get; init; }
 

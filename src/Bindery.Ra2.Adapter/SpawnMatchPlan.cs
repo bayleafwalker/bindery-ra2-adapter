@@ -27,12 +27,19 @@ public sealed record SpawnParticipant(
 /// <paramref name="Handicap"/> is the difficulty: measured 2026-08-25, **2 is
 /// aggressive and 0 is passive** -- at 0 the AI ignored idle human players and
 /// fought each other.
+///
+/// <paramref name="Team"/> allies AI houses: every AI sharing a positive team
+/// is allied with the others on it. Measured 2026-09-27 at handicap 2: two
+/// unallied AI still fought each other for 40 minutes and never went near an
+/// idle human, so a match against one could not end. Allied, the human is
+/// their only enemy.
 /// </remarks>
 public sealed record SpawnAiParticipant(
     int Handicap = 2,
     int Country = 0,
     int Color = 4,
-    int SpawnLocation = -1);
+    int SpawnLocation = -1,
+    int Team = 0);
 
 /// <summary>
 /// Match rules, using the spawner's own option names.
@@ -117,6 +124,10 @@ public sealed record SpawnMatchPlan(
         // two clients disagree about who starts where, which desyncs the match
         // on frame one.
         ArgumentNullException.ThrowIfNull(GlobalOrder);
+        ArgumentNullException.ThrowIfNull(AiPlayers);
+        // The spawner reads Multi1..Multi8 only, humans (spectators included)
+        // first and AI after them.
+        if (PlayerCount + AiPlayers.Count > 8) throw new ArgumentException("the spawner supports at most eight houses, humans and AI together");
         if (GlobalOrder.Count != PlayerCount) throw new ArgumentException("the global order must contain every participant exactly once");
         if (!GlobalOrder.Contains(Local)) throw new ArgumentException("the local participant is missing from the global order");
         foreach (SpawnParticipant other in Others)

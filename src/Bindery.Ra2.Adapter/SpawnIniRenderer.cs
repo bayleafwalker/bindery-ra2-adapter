@@ -117,6 +117,7 @@ public static class SpawnIniRenderer
             AppendAiSection(output, "HouseHandicaps", plan, static ai => ai.Handicap);
             AppendAiSection(output, "HouseCountries", plan, static ai => ai.Country);
             AppendAiSection(output, "HouseColors", plan, static ai => ai.Color);
+            AppendAiAlliances(output, plan);
         }
 
         // Written in GLOBAL player order and byte identical on every client:
@@ -152,6 +153,25 @@ public static class SpawnIniRenderer
         for (int ai = 0; ai < plan.AiPlayers.Count; ai++)
         {
             Append(output, "Multi" + (plan.GlobalOrder.Count + ai + 1).ToString(CultureInfo.InvariantCulture), value(plan.AiPlayers[ai]));
+        }
+    }
+
+    // yrpp-spawner reads [Multi{n}_Alliances] HouseAlly{One..Eight} as
+    // zero-based house indices; AI house n sits at index humans + n.
+    private static void AppendAiAlliances(StringBuilder output, SpawnMatchPlan plan)
+    {
+        string[] allyKeys = ["HouseAllyOne", "HouseAllyTwo", "HouseAllyThree", "HouseAllyFour", "HouseAllyFive", "HouseAllySix", "HouseAllySeven"];
+        for (int ai = 0; ai < plan.AiPlayers.Count; ai++)
+        {
+            int team = plan.AiPlayers[ai].Team;
+            if (team <= 0) continue;
+            int[] allies = Enumerable.Range(0, plan.AiPlayers.Count)
+                .Where(other => other != ai && plan.AiPlayers[other].Team == team)
+                .Select(other => plan.GlobalOrder.Count + other)
+                .ToArray();
+            if (allies.Length == 0) continue;
+            output.Append("\r\n[Multi").Append((plan.GlobalOrder.Count + ai + 1).ToString(CultureInfo.InvariantCulture)).Append("_Alliances]\r\n");
+            for (int i = 0; i < allies.Length; i++) Append(output, allyKeys[i], allies[i]);
         }
     }
 

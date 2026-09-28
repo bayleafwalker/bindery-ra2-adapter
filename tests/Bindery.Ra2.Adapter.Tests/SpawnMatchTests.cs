@@ -86,6 +86,64 @@ public sealed class SpawnMatchTests
     }
 
     [Fact]
+    public void AiHousesOnOneTeamAreAlliedWithEachOther()
+    {
+        // Measured 2026-09-27: two unallied AI fought each other for 40
+        // minutes and never went near the idle human, so the match could not
+        // end. yrpp-spawner reads [Multi{n}_Alliances] HouseAlly{One..} as
+        // zero-based house indices and adds them to that house's allies.
+        SpawnMatchPlan plan = Plan() with
+        {
+            AiPlayers = [new SpawnAiParticipant(Country: 2, SpawnLocation: 2, Team: 1),
+                         new SpawnAiParticipant(Country: 5, SpawnLocation: 3, Team: 1)],
+        };
+
+        string ini = SpawnIniRenderer.Render(plan);
+
+        // Two humans, so the AI are Multi3 (index 2) and Multi4 (index 3).
+        Assert.Contains("[Multi3_Alliances]\r\nHouseAllyOne=3\r\n", ini, StringComparison.Ordinal);
+        Assert.Contains("[Multi4_Alliances]\r\nHouseAllyOne=2\r\n", ini, StringComparison.Ordinal);
+        Assert.DoesNotContain("[Multi1_Alliances]", ini, StringComparison.Ordinal);
+        Assert.DoesNotContain("[Multi2_Alliances]", ini, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AiHousesWithoutATeamGetNoAlliances()
+    {
+        SpawnMatchPlan plan = Plan() with
+        {
+            AiPlayers = [new SpawnAiParticipant(SpawnLocation: 2), new SpawnAiParticipant(SpawnLocation: 3)],
+        };
+
+        Assert.DoesNotContain("_Alliances]", SpawnIniRenderer.Render(plan), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ANegativeTeamIsNoTeam()
+    {
+        // xna-cncnet-client treats teamId <= 0 as unteamed; so do we.
+        SpawnMatchPlan plan = Plan() with
+        {
+            AiPlayers = [new SpawnAiParticipant(SpawnLocation: 2, Team: -1), new SpawnAiParticipant(SpawnLocation: 3, Team: -1)],
+        };
+
+        Assert.DoesNotContain("_Alliances]", SpawnIniRenderer.Render(plan), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MoreThanEightHousesAreRejected()
+    {
+        // The spawner reads Multi1..Multi8 only; a ninth house would be
+        // rendered as an alliance with whatever sits at house index 8.
+        SpawnMatchPlan plan = Plan() with
+        {
+            AiPlayers = Enumerable.Range(0, 7).Select(static _ => new SpawnAiParticipant(Team: 1)).ToArray(),
+        };
+
+        Assert.Throws<ArgumentException>(() => SpawnIniRenderer.Render(plan));
+    }
+
+    [Fact]
     public void TheGameIsToldToExitWithoutTheScoreScreen()
     {
         // Otherwise the match ends but the process waits on a click, and the
