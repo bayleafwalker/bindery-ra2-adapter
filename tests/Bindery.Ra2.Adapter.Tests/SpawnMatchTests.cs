@@ -251,6 +251,45 @@ public sealed class SpawnMatchTests
     }
 
     [Fact]
+    public void AnExceptionStatusAsTheExitCodeIsACrash()
+    {
+        // Lab run 20260928-123407-s2: client-b's game died at startup with
+        // STATUS_STACK_OVERFLOW, the observation was not notable, and the
+        // channel recorded the match as completed.
+        IReadOnlyList<RunObservation> observations = SpawnerLogObservations.Read(
+            "[02:45:16] SyringeDebugger::Run: Done with exit code C00000FD (3221225725).\n");
+
+        RunObservation exitCode = Assert.Single(observations, o => o.Kind == RunObservation.HostedExitCode);
+        Assert.True(exitCode.Notable);
+        Assert.Contains("C00000FD", exitCode.Detail, StringComparison.Ordinal);
+        Assert.Contains("crash", exitCode.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TheLastExitLineOfARealLogDecides()
+    {
+        // The real layout: CRLF lines, first-chance exceptions, lines after the exit.
+        const string log = "[02:45:13] SyringeDebugger::HandleException: Exception (Code: 0xE06D7363 at 0x7556AED4)!\r\n" +
+                           "[02:45:14] SyringeDebugger::Run: Done with exit code 3 (3).\r\n" +
+                           "[02:45:16] SyringeDebugger::Run: Done with exit code C0000005 (3221225477).\r\n" +
+                           "\r\n[02:45:16] WinMain: SyringeDebugger::Run finished.\r\n[02:45:16] WinMain: Exiting on success.\r\n";
+
+        RunObservation exitCode = Assert.Single(SpawnerLogObservations.Read(log), o => o.Kind == RunObservation.HostedExitCode);
+        Assert.True(exitCode.Notable);
+        Assert.StartsWith("Done with exit code C0000005 (3221225477).", exitCode.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AKilledGameIsNotReportedAsACrash()
+    {
+        // The lab's timeout stops the process: Syringe records FFFFFFFF.
+        IReadOnlyList<RunObservation> observations = SpawnerLogObservations.Read(
+            "[22:23:02] SyringeDebugger::Run: Done with exit code FFFFFFFF (4294967295).\n");
+
+        Assert.False(Assert.Single(observations, o => o.Kind == RunObservation.HostedExitCode).Notable);
+    }
+
+    [Fact]
     public void RoutineHookWarningsProduceNoObservations()
     {
         // Syringe reports these on every RA2 run.

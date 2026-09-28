@@ -366,7 +366,7 @@ public sealed class LiveAcceptanceRunner
         List<string> limitations =
         [
             "relay traffic observation must be supplied from the relay/control-plane telemetry path",
-            "debugger exception lines are first-chance events, not failures; only a desync dump is treated as notable",
+            "debugger exception lines are first-chance events, not failures; only a desync dump or an exception-status exit code (the game crashed) is treated as notable",
             "Kctl knowledge.candidate.intake authority must be verified by the served identity",
             "oracle reads must be traced and attached to the qualification packet",
             "human acceptance is required before global qualification"
