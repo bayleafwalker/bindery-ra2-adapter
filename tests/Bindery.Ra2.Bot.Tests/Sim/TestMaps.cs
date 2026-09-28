@@ -26,4 +26,11 @@ internal static class TestMaps
         MapInfo map = new("test-combat", 40, 10, regions, links, ore);
         return new SimMap(map, [new RegionId(0), new RegionId(3)]);
     }
+
+    /// <summary>
+    /// Two players, but the map defines no regions at all: every cell, including any rally point, is outside
+    /// every region. For testing the spawn fallback when <see cref="MapInfo.RegionOf"/> legitimately finds nothing.
+    /// </summary>
+    public static SimMap NoRegions() =>
+        new(new MapInfo("test-no-regions", 40, 40, [], [], []), [new RegionId(0), new RegionId(1)]);
 }

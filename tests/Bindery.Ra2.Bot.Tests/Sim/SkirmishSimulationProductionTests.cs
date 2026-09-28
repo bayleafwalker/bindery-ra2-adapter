@@ -183,4 +183,61 @@ public sealed class SkirmishSimulationProductionTests
         Assert.Equal(1, sim.RejectedCommandCount(attacker));
         Assert.False(sim.Observe(victim, ObservationMode.Oracle).Entities.Single(e => e.Id == enemyMcv).Deployed);
     }
+
+    // Invariant: a unit whose rally cell lands outside every region (the map defines none at all) must still spawn
+    // in its OWN player's start region, never in player 0's just because that is where the old fallback looked.
+    [Fact]
+    public void A_finished_unit_whose_rally_cell_is_outside_every_region_spawns_in_its_own_players_start_region()
+    {
+        NoRegionRules rules = new();
+        SimMap map = TestMaps.NoRegions();
+        SkirmishSimulation sim = new(map, rules, SimTestHelpers.TwoPlayers(seed: 11, maxSeconds: 30));
+        PlayerId first = new(0);
+        PlayerId second = new(1);
+
+        // The rules declare no MCV and no weapon or sight on anything, so construction never resolves a region and
+        // a match never needs fog or combat to resolve one either — the only thing this map's empty region list has
+        // to support is the production spawn under test. Seed each side's base by hand: player 0 only needs to stay
+        // alive (undefeated), player 1 needs a factory to build its infantry queue from.
+        sim.DebugSpawnAt(first, NoRegionRules.Factory, new Cell(1, 1), map.StartRegions[0]);
+        sim.DebugSpawnAt(second, NoRegionRules.Factory, new Cell(30, 30), map.StartRegions[1]);
+        sim.DebugEnqueue(second, QueueKind.Infantry, NoRegionRules.Grunt);
+
+        sim.Advance(3);
+
+        ObservedEntity spawned = sim.Observe(second, ObservationMode.Oracle).Entities.Single(e => e.TypeId == NoRegionRules.Grunt);
+        Assert.Equal(sim.StartRegionOf(second), sim.DebugRegionOf(spawned.Id));
+        Assert.NotEqual(map.StartRegions[0], sim.DebugRegionOf(spawned.Id));
+    }
+
+    /// <summary>
+    /// A minimal rules fixture with no MCV, one production building and one unit it can build, neither with a
+    /// weapon or any sight — so a match on it never needs fog or combat resolution, both of which (unlike the spawn
+    /// fallback under test) assume every live entity's region is one <see cref="MapInfo.RegionOf"/> can find again.
+    /// Lets a test run to completion on a map that defines no regions at all.
+    /// </summary>
+    private sealed class NoRegionRules : IRulesDatabase
+    {
+        public const string Factory = "test-no-region-factory";
+        public const string Grunt = "test-no-region-grunt";
+
+        private static readonly IReadOnlyList<Faction> AnyFaction = [Faction.Allied, Faction.Soviet, Faction.Yuri];
+
+        private readonly Dictionary<string, UnitRule> byType = new UnitRule[]
+        {
+            new(Factory, Factory, AnyFaction, EntityKind.Building, UnitRole.Production, QueueKind.Building,
+                0, 1, 0, [], 0, 100, ArmorClass.Concrete, 0, WeaponClass.None, 0, 0, 0, AntiAir: false, Deployable: false),
+            new(Grunt, Grunt, AnyFaction, EntityKind.Infantry, UnitRole.AntiInfantry, QueueKind.Infantry,
+                10, 1, 0, [[Factory]], 1, 10, ArmorClass.None, 0, WeaponClass.None, 0, 3, 0, AntiAir: false, Deployable: false),
+        }.ToDictionary(r => r.TypeId);
+
+        public string RulesetId => "test-no-region-rules:v1";
+        public IReadOnlyCollection<UnitRule> All => byType.Values;
+        public bool TryGet(string typeId, out UnitRule rule) => byType.TryGetValue(typeId, out rule!);
+        public UnitRule Get(string typeId) => byType[typeId];
+        public bool CanBuild(Faction faction, IReadOnlySet<string> ownedBuildingTypes, string typeId) =>
+            TryGet(typeId, out UnitRule rule) && rule.Prerequisites.All(group => group.Any(ownedBuildingTypes.Contains));
+        public IReadOnlyList<string>? PathTo(Faction faction, IReadOnlySet<string> ownedBuildingTypes, string typeId) => null;
+        public double Effectiveness(string attacker, string defender) => 1.0;
+    }
 }
