@@ -19,6 +19,8 @@
 #                   PREPARE_STAGE=2 --stage 1 plays a stage-1 match on the fork
 #                   ra2yrcpp DLL (bisection).
 #   LAB_MATCH_TIMEOUT  seconds before a match is stopped (default 2400).
+#   LAB_DEFER_SERVICE_START  1: the fork starts its service on the first game
+#                   frame (ra2yrcpp.json deferServiceStart); 0 (default): at ExeRun.
 #   LAB_SEAT_ROUTINE   stage-2 agent seat routine: deploy_mcv (default) or
 #                   build_order (deploy, then power, barracks, refinery).
 #
@@ -43,6 +45,9 @@ A_IP=$(guest_ip a || true) B_IP=$(guest_ip b || true)
 CP_BIN="$LAB/bin/bindery-external-runtime"
 PAYLOAD="$LAB/payload" SECRETS="$LAB/secrets"
 MATCH_TIMEOUT=${LAB_MATCH_TIMEOUT:-2400}
+DEFER_SERVICE_START=${LAB_DEFER_SERVICE_START:-0}
+case "$DEFER_SERVICE_START" in 0|1) ;;
+  *) echo "LAB_DEFER_SERVICE_START must be 0 or 1, not '$DEFER_SERVICE_START'" >&2; exit 2 ;; esac
 SEAT_ROUTINE=${LAB_SEAT_ROUTINE:-deploy_mcv}
 case "$SEAT_ROUTINE" in deploy_mcv|build_order) ;;
   *) echo "LAB_SEAT_ROUTINE must be deploy_mcv or build_order, not '$SEAT_ROUTINE'" >&2; exit 2 ;; esac
@@ -252,7 +257,8 @@ push_payload() {
 prepare_guests() {  # $1 = 1|2|restore
   for side in a b; do
     log "client-$side: prepare stage $1"
-    gx $side "& C:\\Bindery\\lab\\prepare.ps1 -Stage $1 -RunId '${RUN_ID:-}'${A_IP:+ -CommandPeer $A_IP}" 180 | sed 's/^/    /'
+    local defer=""; [ "$1" = 2 ] && [ "$DEFER_SERVICE_START" = 1 ] && defer=" -DeferServiceStart"
+    gx $side "& C:\\Bindery\\lab\\prepare.ps1 -Stage $1 -RunId '${RUN_ID:-}'${A_IP:+ -CommandPeer $A_IP}$defer" 180 | sed 's/^/    /'
   done
 }
 # Run a command in the guest's interactive session through BinderyLabRun.

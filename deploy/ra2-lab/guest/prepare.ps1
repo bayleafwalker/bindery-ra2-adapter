@@ -1,16 +1,19 @@
 # Bindery RA2 lab: put this guest's appliance into the state one stage needs.
 # Runs as SYSTEM through the QEMU guest agent (lab-run.sh). Idempotent.
-#   prepare.ps1 -Stage 1|2|restore -RunId <id> -CommandPeer <client-a address>
+#   prepare.ps1 -Stage 1|2|restore -RunId <id> -CommandPeer <client-a address> [-DeferServiceStart]
 # Stage 1 : stock ra2yrcpp (v0.2 appliance), brutal-AI spawnmap.ini.
 # Stage 2 : fork ra2yrcpp (C:\Bindery\lab\fork) + allowlisted ra2yrcpp.json;
 #           on client-b a firewall rule admits TCP 14521 from client-a
 #           (-CommandPeer) only. The fork DLL must be built with upstream's
 #           docker MinGW toolchain (README): it then needs only zlib1.dll.
 # restore : stock ra2yrcpp and no 14521 rule (spawnmap.ini stays as staged).
+# -DeferServiceStart (stage 2 only): the fork starts its service on the first
+#           game frame instead of at ExeRun (ra2yrcpp.json deferServiceStart;
+#           needs a fork build with feat/defer-service-start).
 # Every file replaced in the game tree is first copied, once, to
 # C:\Bindery\backup-2026-09-27\<appliance>\.
 param([Parameter(Mandatory)][ValidateSet('1', '2', 'restore')][string] $Stage, [string] $RunId = '',
-      [ValidatePattern('^\d{1,3}(\.\d{1,3}){3}$')][string] $CommandPeer = '')
+      [ValidatePattern('^\d{1,3}(\.\d{1,3}){3}$')][string] $CommandPeer = '', [switch] $DeferServiceStart)
 $ErrorActionPreference = 'Stop'
 $lab = 'C:\Bindery\lab'
 switch -Wildcard ($env:COMPUTERNAME) { '*RA2-A' { $side = 'a' } '*RA2-B' { $side = 'b' } default { throw "unknown clone $env:COMPUTERNAME" } }
@@ -42,14 +45,16 @@ function Install-Fork {
   Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $app 'libmcfgthread-2.dll')
   # regex_search in the fork: anchor it, or 192.168.122.1 also matches .189.
   $hosts = if ($side -eq 'b') { '^(127\.0\.0\.1|' + [regex]::Escape($CommandPeer) + ')$' } else { '^127\.0\.0\.1$' }
-  [ordered]@{
+  $config = [ordered]@{
     port              = 14521
     allowedHostsRegex = $hosts
     logFilename       = 'ra2yrcpp.log'
     recordFilename    = 'ra2yrcpp.record'
     allowedCommands   = @('GetGameState', 'ReadValue', 'UnitOrder', 'ProduceOrder', 'PlaceBuilding', 'PlaceQuery')
-  } | ConvertTo-Json | Set-Content -Encoding ascii (Join-Path $app 'ra2yrcpp.json')
-  "ra2yrcpp: fork (hosts $hosts)"
+  }
+  if ($DeferServiceStart) { $config.deferServiceStart = $true }
+  $config | ConvertTo-Json | Set-Content -Encoding ascii (Join-Path $app 'ra2yrcpp.json')
+  "ra2yrcpp: fork (hosts $hosts$(if ($DeferServiceStart) { ', service deferred to the first frame' }))"
 }
 $rule = 'Bindery RA2 lab command 14521'
 function Remove-CommandRule { Get-NetFirewallRule -DisplayName $rule -ErrorAction SilentlyContinue | Remove-NetFirewallRule }
