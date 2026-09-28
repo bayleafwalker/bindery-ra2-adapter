@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Run a PowerShell command inside an RA2 lab guest through the QEMU guest agent
+# (qemu:///session), wait for it, print its stdout/stderr and exit with its code.
+# No network, SSH or console access is involved.
+#   ra2-vm-exec <domain> '<powershell command>' [timeout-seconds]
+set -euo pipefail
+domain=$1 command=$2 timeout=${3:-120}
+uri=${LIBVIRT_DEFAULT_URI:-qemu:///session}
+
+agent() { virsh -c "$uri" qemu-agent-command "$domain" "$1"; }
+
+request=$(python3 -c 'import json,sys; print(json.dumps({"execute": "guest-exec", "arguments": {
+  "path": "powershell.exe",
+  "arg": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", sys.argv[1]],
+  "capture-output": True}}))' "$command")
+pid=$(agent "$request" | python3 -c 'import json,sys; print(json.load(sys.stdin)["return"]["pid"])')
+
+deadline=$((SECONDS + timeout))
+while :; do
+  status=$(agent "{\"execute\":\"guest-exec-status\",\"arguments\":{\"pid\":$pid}}")
+  if python3 -c 'import json,sys; sys.exit(0 if json.loads(sys.argv[1])["return"]["exited"] else 1)' "$status"; then
+    break
+  fi
+  if ((SECONDS >= deadline)); then
+    echo "ra2-vm-exec: $domain pid $pid still running after ${timeout}s" >&2
+    exit 124
+  fi
+  sleep 1
+done
+
+python3 - "$status" <<'EOF'
+import base64, json, sys
+r = json.loads(sys.argv[1])["return"]
+for key, stream in (("out-data", sys.stdout), ("err-data", sys.stderr)):
+    if key in r:
+        stream.write(base64.b64decode(r[key]).decode("utf-8", "replace"))
+sys.exit(r.get("exitcode", 1))
+EOF
