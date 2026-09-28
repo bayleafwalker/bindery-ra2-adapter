@@ -27,12 +27,19 @@ public sealed record SpawnParticipant(
 /// <paramref name="Handicap"/> is the difficulty: measured 2026-08-25, **2 is
 /// aggressive and 0 is passive** -- at 0 the AI ignored idle human players and
 /// fought each other.
+///
+/// <paramref name="Team"/> allies AI houses: every AI sharing a non-zero team
+/// is allied with the others on it. Measured 2026-09-27 at handicap 2: two
+/// unallied AI still fought each other for 40 minutes and never went near an
+/// idle human, so a match against one could not end. Allied, the human is
+/// their only enemy.
 /// </remarks>
 public sealed record SpawnAiParticipant(
     int Handicap = 2,
     int Country = 0,
     int Color = 4,
-    int SpawnLocation = -1);
+    int SpawnLocation = -1,
+    int Team = 0);
 
 /// <summary>
 /// Match rules, using the spawner's own option names.
