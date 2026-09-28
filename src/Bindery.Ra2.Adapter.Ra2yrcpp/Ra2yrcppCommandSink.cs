@@ -144,11 +144,23 @@ public sealed class Ra2yrcppCommandSink : IPlayerCommandSink, IAsyncDisposable
 
     private async Task Order(GameState state, House own, JsonElement arguments, UnitAction action, CancellationToken cancellationToken, Coordinates? coordinates = null, uint target = 0)
     {
-        Dictionary<uint, uint> owned = state.Objects.Where(o => o.PointerHouse == own.Self && !o.InLimbo).GroupBy(static o => o.PointerSelf).ToDictionary(static g => g.Key, static g => g.First().UniqueId);
+        Ra2Yrproto.Ra2Yr.Object[] mine = state.Objects.Where(o => o.PointerHouse == own.Self && !o.InLimbo).ToArray();
+        Dictionary<uint, uint> owned = mine.GroupBy(static o => o.PointerSelf).ToDictionary(static g => g.Key, static g => g.First().UniqueId);
+        Dictionary<uint, uint> byId = mine.Where(static o => o.UniqueId != 0).GroupBy(static o => o.UniqueId).ToDictionary(static g => g.Key, static g => g.First().PointerSelf);
         uint[] requested = Addresses(arguments).ToArray();
         uint[]? seen = UniqueIds(arguments, requested.Length);
+        // The controller's addresses may come from another client's memory
+        // (the capture client), where the same object lives elsewhere; its
+        // stable ID names the object on this client. Without one, the address
+        // must be this house's and unchanged.
+        uint? Resolve(uint address, uint seenId)
+        {
+            if (seenId != 0 && byId.TryGetValue(seenId, out uint local)) return local;
+            return owned.TryGetValue(address, out uint id) && (seenId == 0 || id == 0) ? address : null;
+        }
         uint[] addresses = requested
-            .Where((address, i) => owned.TryGetValue(address, out uint id) && (seen is null || seen[i] == 0 || id == 0 || seen[i] == id))
+            .Select((address, i) => Resolve(address, seen?[i] ?? 0))
+            .OfType<uint>()
             .Distinct()
             .ToArray();
         if (addresses.Length == 0) throw new InvalidOperationException($"{action}: none of the objects is {House}'s in the latest snapshot");
@@ -156,7 +168,13 @@ public sealed class Ra2yrcppCommandSink : IPlayerCommandSink, IAsyncDisposable
         order.ObjectAddresses.AddRange(addresses);
         uint[] ids = addresses.Select(a => owned[a]).ToArray();
         if (ids.All(static id => id != 0)) order.ObjectUniqueIds.AddRange(ids);
-        if (target != 0 && state.Objects.FirstOrDefault(o => o.PointerSelf == target && !o.InLimbo) is { UniqueId: not 0 } targeted) order.TargetUniqueId = targeted.UniqueId;
+        uint targetId = target != 0 && arguments.TryGetProperty("target_unique_id", out JsonElement tid) && tid.TryGetUInt32(out uint parsed) ? parsed : 0;
+        if (targetId != 0 && state.Objects.FirstOrDefault(o => o.UniqueId == targetId && !o.InLimbo) is { } byStableId)
+        {
+            order.TargetObject = byStableId.PointerSelf;
+            order.TargetUniqueId = targetId;
+        }
+        else if (target != 0 && state.Objects.FirstOrDefault(o => o.PointerSelf == target && !o.InLimbo) is { UniqueId: not 0 } targeted) order.TargetUniqueId = targeted.UniqueId;
         if (coordinates is not null) order.Coordinates = coordinates;
         await SubmitAsync(order, cancellationToken).ConfigureAwait(false);
     }
@@ -177,7 +195,12 @@ public sealed class Ra2yrcppCommandSink : IPlayerCommandSink, IAsyncDisposable
         if (types.Count == 0)
         {
             ReadValue read = await Client.RunAsync(new ReadValue { Data = new StorageValue { InitialGameState = new GameState() } }, cancellationToken).ConfigureAwait(false);
-            foreach (ObjectTypeClass type in read.Data?.InitialGameState?.ObjectTypes ?? []) types.TryAdd(type.Name, type);
+            foreach (ObjectTypeClass type in read.Data?.InitialGameState?.ObjectTypes ?? [])
+            {
+                // Controllers name types by rules ID; older fork builds only report the name.
+                if (!string.IsNullOrEmpty(type.Id)) types.TryAdd(type.Id, type);
+                types.TryAdd(type.Name, type);
+            }
         }
         if (!types.TryGetValue(name, out ObjectTypeClass? found)) throw new ArgumentException($"unknown object type {name}");
         await SubmitAsync(new ProduceOrder { ObjectType = found, Action = action }, cancellationToken).ConfigureAwait(false);

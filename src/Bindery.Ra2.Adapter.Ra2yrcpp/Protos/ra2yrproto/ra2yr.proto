@@ -1,7 +1,7 @@
 // Vendored unmodified, apart from this header, from bayleafwalker/ra2yrproto
-// a7708edf7f69bb8a1b922e7ae628bc88118e81a7 (ra2yrproto/ra2yr.proto; GPL-3.0,
+// 4919f0d6b89ebedb60cb8c44c1e4a3a6adefbbe1 (ra2yrproto/ra2yr.proto; GPL-3.0,
 // see that repository's LICENSE): shmocz/ra2yrproto 0ad7245 plus stable
-// object IDs. Recorded in UPSTREAM-REVISIONS.yaml; re-vendor rather than edit.
+// object IDs and ObjectTypeClass.id. Recorded in UPSTREAM-REVISIONS.yaml; re-vendor rather than edit.
 syntax = "proto3";
 
 package ra2yrproto.ra2yr;
@@ -242,6 +242,10 @@ message ObjectTypeClass {
   bool requires_stolen_third_tech = 23;
   uint32 pointer_cameo = 24;
   int32 strength = 25;
+  // AbstractTypeClass::ID, the rules section name (e.g. "AMCV"). Unlike name
+  // (the INI Name= value, e.g. "Allied Construction Vehicle"), it is unique
+  // and does not change with the ruleset's display text.
+  string id = 26;
 }
 
 message Object {

@@ -22,13 +22,16 @@ internal sealed class FakeGame
 
     public ConcurrentQueue<IMessage> Orders { get; } = new();
 
+    /// <summary>The type classes ReadValue reports.</summary>
+    public ObjectTypeClass[] Types { get; set; } = Snapshots.Types;
+
     public CommandResult? Handle(Any command)
     {
         if (command.Is(GetGameState.Descriptor)) return FakeRa2yrcppServer.Ok(new GetGameState { State = State });
         if (command.Is(ReadValue.Descriptor))
         {
             GameState initial = new();
-            initial.ObjectTypes.AddRange(Snapshots.Types);
+            initial.ObjectTypes.AddRange(Types);
             return FakeRa2yrcppServer.Ok(new ReadValue { Data = new StorageValue { InitialGameState = initial } });
         }
         IMessage order = command.Is(UnitOrder.Descriptor) ? command.Unpack<UnitOrder>()
@@ -88,6 +91,49 @@ public sealed class Ra2yrcppCommandSinkTests
         Assert.Equal([7001u], order.ObjectUniqueIds);
         Assert.Equal(0xB1u, order.TargetObject);
         Assert.Equal(8001u, order.TargetUniqueId);
+    }
+
+    [Fact]
+    public async Task OrdersNameTheSeatClientsOwnObjectByItsStableId()
+    {
+        // The controller reads telemetry from another client, whose objects
+        // live at other addresses: measured 2026-09-28, player-b's MCV was
+        // 0x18fb8700 on client-a and 0x18d87758 on client-b, unique_id
+        // 1070755 on both. Only the stable ID names the same object.
+        FakeGame game = new()
+        {
+            State = Snapshots.State(1, Snapshots.Opening(),
+            [
+                Snapshots.Unit(0xB7, Snapshots.Americans, Snapshots.Amcv, uniqueId: 6),
+                Snapshots.Unit(0xC9, Snapshots.Soviets, Snapshots.Htnk, uniqueId: 9),
+            ]),
+        };
+        await using FakeRa2yrcppServer server = new(game.Handle);
+        await using Ra2yrcppCommandSink sink = Sink(server);
+
+        await sink.SendAsync(Command(Ra2yrcppCommandSink.Deploy, "{\"objects\":[161],\"unique_ids\":[6]}"), CancellationToken.None);
+        await sink.SendAsync(Command(Ra2yrcppCommandSink.Attack, "{\"objects\":[161],\"unique_ids\":[6],\"target\":153,\"target_unique_id\":9}"), CancellationToken.None);
+
+        UnitOrder[] orders = game.Orders.Cast<UnitOrder>().ToArray();
+        Assert.Equal(2, orders.Length);
+        Assert.Equal([0xB7u], orders[0].ObjectAddresses);
+        Assert.Equal([6u], orders[0].ObjectUniqueIds);
+        Assert.Equal([0xB7u], orders[1].ObjectAddresses);
+        Assert.Equal(0xC9u, orders[1].TargetObject);
+        Assert.Equal(9u, orders[1].TargetUniqueId);
+    }
+
+    [Fact]
+    public async Task ProductionFindsATypeByItsRulesIdWhenItsNameIsDisplayText()
+    {
+        FakeGame game = new() { Types = Snapshots.ForkTypes };
+        await using FakeRa2yrcppServer server = new(game.Handle);
+        await using Ra2yrcppCommandSink sink = Sink(server);
+
+        await sink.SendAsync(Command(Ra2yrcppCommandSink.Produce, "{\"type\":\"GAPOWR\"}"), CancellationToken.None);
+
+        ProduceOrder produce = Assert.IsType<ProduceOrder>(Assert.Single(game.Orders));
+        Assert.Equal(Snapshots.Gapowr, produce.ObjectType.PointerSelf);
     }
 
     [Fact]
