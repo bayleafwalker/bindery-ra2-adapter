@@ -4,9 +4,11 @@ namespace Bindery.Ra2.Bot.Features;
 public sealed partial class FeatureCompiler
 {
     /// <summary>
-    /// Estimates economy figures. The spending rate is the sum of <c>Cost / BuildSeconds</c> over the items a queue
-    /// is actually building: the first <see cref="ProductionQueueState.Factories"/> items that are neither ready nor
-    /// on hold, since items waiting behind a busy factory cost nothing yet (the same cap utilization uses).
+    /// Estimates economy figures. RA2 builds one item per queue at a time; extra factories of that queue's kind
+    /// only speed it up (<see cref="ProductionRules.FactorySpeed"/>, halved on low power), and a queue with no
+    /// factories of its kind pauses. The spending rate is the sum, over queues, of <c>Cost / BuildSeconds</c> for
+    /// the queue's active item (the first item that is neither ready nor on hold; items behind it cost nothing yet)
+    /// times that speed-up; a queue with no factories, or none but ready/held items, contributes nothing.
     ///
     /// Income is the credit change over a trailing <see cref="FeatureOptions.IncomeWindowSeconds"/> window with the
     /// spending over that window added back: <c>(creditsNow - creditsThen + integratedSpend) / window</c>. A
@@ -20,19 +22,24 @@ public sealed partial class FeatureCompiler
     /// Cash runway is how long the bank lasts at the net burn (spending less income); with income covering spending
     /// it is <see cref="UnknownSeconds"/>, because the bank is not running out.
     /// </summary>
+    /// <summary>
+    /// The item a queue is building: its first item not on hold, unless that item is finished and waiting for
+    /// placement, which blocks the queue (RA2, and the simulator's AwaitingPlacement) whether or not the producer
+    /// marks the items behind it on hold.
+    /// </summary>
+    private static QueueItem? Producing(ProductionQueueState queue) =>
+        queue.Items.FirstOrDefault(static i => !i.OnHold) is { Ready: false } item ? item : null;
+
     private EconomyFeatures CompileEconomy(BeliefSnapshot snapshot, out double incomePerMinute, out double spendingPerMinute)
     {
         double spendingPerSecond = 0;
         foreach (ProductionQueueState queue in snapshot.Queues)
         {
-            int building = 0;
-            foreach (QueueItem item in queue.Items)
-            {
-                if (item.Ready || item.OnHold) continue;
-                if (building++ >= queue.Factories) break;
-                if (!rules.TryGet(item.TypeId, out UnitRule rule) || rule.BuildSeconds <= 0) continue;
-                spendingPerSecond += rule.Cost / rule.BuildSeconds;
-            }
+            if (queue.Factories <= 0) continue;
+            if (Producing(queue) is not { } item) continue;
+            if (!rules.TryGet(item.TypeId, out UnitRule rule) || rule.BuildSeconds <= 0) continue;
+            double factorySpeed = ProductionRules.FactorySpeed(rules, queue.Factories) * (snapshot.Power.LowPower ? 0.5 : 1.0);
+            spendingPerSecond += rule.Cost / rule.BuildSeconds * factorySpeed;
         }
         spendingPerMinute = spendingPerSecond * 60.0;
 
@@ -48,7 +55,7 @@ public sealed partial class FeatureCompiler
         foreach (ProductionQueueState queue in snapshot.Queues)
         {
             totalFactories += queue.Factories;
-            busyFactories += Math.Min(queue.Factories, queue.Items.Count(static i => !i.Ready && !i.OnHold));
+            busyFactories += Producing(queue) is not null ? queue.Factories : 0;
         }
         double utilization = totalFactories > 0 ? (double)busyFactories / totalFactories : 0.0;
 
