@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# relay-counters baseline|finish <run-dir> -- UDP counters of the pinned tunnel container's netns
+set -euo pipefail
+NAME=${BINDERY_TUNNEL_NAME:-bindery-private-tunnel}; RUN=$2
+counters() { docker exec "$NAME" sh -c 'cat /proc/net/snmp' | awk '/^Udp:/{if(h){print $2" "$5}else{h=1}}'; }
+case "$1" in
+  baseline) counters > "$RUN/.relay-baseline"; echo "relay baseline: $(cat "$RUN/.relay-baseline") (in out)" ;;
+  finish) read -r i0 o0 < "$RUN/.relay-baseline"; read -r i1 o1 < <(counters)
+    echo "relay: in=$((i1 - i0)) out=$((o1 - o0)) (tunnel container UDP InDatagrams/OutDatagrams delta)" ;;
+esac

@@ -8,3 +8,4 @@ artifacts/
 # from nearest-marker rooting; not committed in this repo)
 .auditctl/
 _artifacts/*/audit*/
+__pycache__/
