@@ -11,9 +11,11 @@ CHUNK = 64 * 1024  # base64 of each chunk must stay well inside libvirt's messag
 
 
 def agent(domain, cmd):
-    out = subprocess.run(["virsh", "-c", URI, "qemu-agent-command", domain, json.dumps(cmd)],
-                         check=True, capture_output=True, text=True).stdout
-    return json.loads(out)["return"]
+    done = subprocess.run(["virsh", "-c", URI, "qemu-agent-command", domain, json.dumps(cmd)],
+                          capture_output=True, text=True)
+    if done.returncode != 0:
+        raise RuntimeError(f"virsh {cmd['execute']} on {domain} failed: {done.stderr.strip()}")
+    return json.loads(done.stdout)["return"]
 
 
 args = sys.argv[1:]
@@ -21,9 +23,12 @@ secret = args[:1] == ["--secret"]
 domain, local, remote = args[1:4] if secret else args[0:3]
 data = open(local, "rb").read()
 def write_argv(domain, handle, data):
+    written = 0
     for i in range(0, len(data), CHUNK):
-        agent(domain, {"execute": "guest-file-write",
-                       "arguments": {"handle": handle, "buf-b64": base64.b64encode(data[i:i + CHUNK]).decode()}})
+        written += agent(domain, {"execute": "guest-file-write",
+                                  "arguments": {"handle": handle, "buf-b64": base64.b64encode(data[i:i + CHUNK]).decode()}})["count"]
+    if written != len(data):
+        raise RuntimeError(f"guest-file-write to {domain} wrote {written} of {len(data)} bytes")
 
 
 def write_stdin(domain, handle, data):
