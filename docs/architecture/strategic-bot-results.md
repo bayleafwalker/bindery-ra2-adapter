@@ -316,6 +316,48 @@ attack decision (confidence-weighted, or a prior for unscouted army), checked
 on held-out maps. More strategist cleverness on the training setup is not
 where the gap is.
 
+### Why the oracle trails the selector on held-out maps against held-out AI (2026-09-28)
+
+After the enemy-aware attack gate, `selector-oracle` scored 68/96 against the
+selector's 74/96 in the held-out-maps × `ai-horde`/`ai-armor` cell (8 seeds;
+reproduced exactly at fe3244a). The oracle view is not at fault. A probe that
+feeds each arm's frames through the other mode's belief model and feature
+compiler reproduced the arm's enemy, army and threat features in 13,606 of
+13,606 samples. The oracle is the belief pipeline with fog removed. The only
+own-side differences, ore remaining and kills value, follow documented fog rules
+and are not selector inputs.
+
+The difference is the attack gate. Oracle frames always carry full confidence
+and a fresh sighting. Every oracle attack therefore takes the gate's "seen"
+branch: launch at `SeenAttackForceRatio` (0.8) × the exact enemy army, with no
+prior and no margin. The belief arm mostly faces up to 1.2 × a prior-inflated
+estimate. The 0.8 was chosen on training maps
+(`docs/experiments/2026-09-27-enemy-aware-gating-preregistration.md`). The gate
+lifted the belief selector in this cell (40 → 55 of 72) and lowered the oracle
+(52 → 49). At 40 seeds (480 matches per arm, `docs/results/2026-09-28-oracle-gap/`):
+
+| Run (both arms) | selector Allied | selector Soviet | oracle Allied | oracle Soviet | selector | oracle |
+|---|---|---|---|---|---|---|
+| `SeenAttackForceRatio` 0.8 (default) | 166/240 | 190/240 | 121/240 | 216/240 | 356 | 337 |
+| 1.0 | 164/240 | 190/240 | 148/240 | 218/240 | 354 | 366 |
+| 1.2 | 163/240 | 190/240 | 137/240 | 175/240 | 353 | 312 |
+
+At the default, the whole deficit is the oracle playing Allied. The paired
+results are 46 matches the selector wins and the oracle loses against 1 the
+other way (p < 1e-4). As Soviet the oracle is better (32 against 6). The
+aggregate hides this: across all maps the held-out-opponent rows read 174
+against 175 of 240. The response to the ratio is not monotonic. At 1.0 the
+oracle's Allied games still trail (148 against 164, p 0.026). Candidates are
+the armour-share rule, which only the oracle reliably reaches with confidence,
+reduced scouting when enemy positions are known, and the defend triggers.
+
+So "oracle − belief" in this report measures information plus a different
+launch policy, not information alone. The ratio is not changed here: choosing it
+from held-out results would be tuning on held-out data. The next step is a
+pre-registered run of `--arms selector,selector-oracle --knob
+SeenAttackForceRatio=0.8|1.0 --seeds 40` on training maps × all opponents and
+held-out maps × training opponents, paired by faction.
+
 ## What the strength and tuning work changed
 
 Measured when each change landed (selector arm, simulator, commit messages
