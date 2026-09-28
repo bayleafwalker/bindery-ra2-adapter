@@ -23,4 +23,23 @@ and the line closes. Reported only: Soviet and overall paired results. One run e
 cells after the run.
 
 ## Outcome
-Not run yet.
+Run once at 01870c2 (`docs/results/2026-09-29-oracle-scouting/commit`); `analysis.txt`, per-run `report.md` and
+`results.json.xz` (the analysis reproduces from the compressed files).
+
+Decision: **S1 fails**, and the line closes. The capped oracle is not better as Allied; it is much worse:
+
+| seeds 81-120 | Allied | Soviet |
+|---|---|---|
+| R0 selector-oracle | 147/240 | 218/240 |
+| R1 selector-oracle, ScoutingCoverageCap 0.39 | 102/240 | 222/240 |
+| R0 selector (reference) | 151/240 | 186/240 |
+
+Paired selector-oracle, capped against baseline: Allied better 1, worse 46 (sign p 6.8e-13); Soviet better 9, worse 5
+(p 0.42); all better 10, worse 51.
+
+Deviation in wording: the failure branch above says "no measurable effect"; the measured effect is large but in the
+opposite direction to S1, so it is recorded as it is. What it shows: a Scout objective held all match costs the oracle
+many Allied games. What it does not show: whether the selector's opening-only scout matters, because this
+intervention is far stronger than that (as the design above said). The missing scout objective is therefore not
+supported as a cause of the oracle's Allied deficit, and on these fresh seeds that deficit is small at baseline (147
+against the selector's 151). No other cap values or seeds follow, as pre-registered.

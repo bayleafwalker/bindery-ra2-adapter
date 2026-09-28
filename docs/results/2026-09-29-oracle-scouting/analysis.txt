@@ -1,0 +1,6 @@
+baseline selector-oracle: Allied 147/240, Soviet 218/240
+capped selector-oracle: Allied 102/240, Soviet 222/240
+baseline selector (reference): Allied 151/240, Soviet 186/240
+paired selector-oracle all: capped better 10, worse 51, sign p 9.624e-08
+paired selector-oracle Allied: capped better 1, worse 46, sign p 6.821e-13
+paired selector-oracle Soviet: capped better 9, worse 5, sign p 0.424
