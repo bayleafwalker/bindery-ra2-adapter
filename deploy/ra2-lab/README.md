@@ -66,6 +66,13 @@ deploy/ra2-lab/lab-run.sh --stage 2       # Channel: player-a + agent seat playe
 deploy/ra2-lab/lab-run.sh --teardown      # stop everything, restore stock ra2yrcpp
 ```
 
+`--prepare-only --stage N` stops after preparing the guests and starting the
+client-b agent. `--dry-run --stage N` skips the preflight gate and caps the
+wait. A run exits with the match's status: 0 only if the harness exited 0,
+124 if the match was stopped at the timeout, and 1 otherwise. The agent token
+reaches curl as a header file and guest files are written through virsh on
+stdin, so neither shows up in a process's command line.
+
 `RA2_LAB_HOME` stays out of the repository: it holds game content
 (`payload/spawnmap-brutal.ini`) and tokens. `build-payload.sh [--fork-dir <dir>]`
 rebuilds `payload/` from this checkout. The guest addresses come from the guest

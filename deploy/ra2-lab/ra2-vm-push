@@ -15,11 +15,25 @@ def agent(domain, cmd):
 
 domain, local, remote = sys.argv[1:4]
 data = open(local, "rb").read()
+def write_all(domain, handle, data):
+    """Write every chunk in one virsh session fed on stdin: file contents
+    (tokens included) must not appear in a command line, which ps shows."""
+    script = "".join(
+        "qemu-agent-command {} '{}'\n".format(domain, json.dumps(
+            {"execute": "guest-file-write",
+             "arguments": {"handle": handle, "buf-b64": base64.b64encode(data[i:i + CHUNK]).decode()}}))
+        for i in range(0, len(data), CHUNK))
+    done = subprocess.run(["virsh", "-q", "-c", URI], input=script, capture_output=True, text=True)
+    written = sum(json.loads(line[line.index("{"):])["return"]["count"]
+                  for line in done.stdout.splitlines() if '{"return"' in line)
+    # In stdin mode virsh can exit 0 after a failed command: check the errors and the byte count.
+    if done.returncode != 0 or "error:" in done.stderr or written != len(data):
+        raise RuntimeError(f"guest-file-write to {domain} wrote {written} of {len(data)} bytes: {done.stderr.strip()}")
+
+
 h = agent(domain, {"execute": "guest-file-open", "arguments": {"path": remote, "mode": "wb"}})
 try:
-    for i in range(0, len(data), CHUNK):
-        agent(domain, {"execute": "guest-file-write",
-                       "arguments": {"handle": h, "buf-b64": base64.b64encode(data[i:i + CHUNK]).decode()}})
+    write_all(domain, h, data)
 finally:
     agent(domain, {"execute": "guest-file-close", "arguments": {"handle": h}})
 print(f"pushed {len(data)} bytes to {domain}:{remote}")

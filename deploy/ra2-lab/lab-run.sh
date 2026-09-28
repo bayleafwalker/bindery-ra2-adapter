@@ -36,7 +36,8 @@ BIND=192.168.122.1 CP_PORT=8080 RELAY=192.168.122.1:50000
 AGENT_PORT=14620
 # Guest addresses come from the guest agent, not from a DHCP lease someone wrote down.
 guest_ip() { virsh -c "$URI" domifaddr "bindery-ra2-client-$1" --source agent 2>/dev/null | awk '$(NF-1) == "ipv4" && $NF !~ /^127\./ { sub("/.*", "", $NF); print $NF; exit }'; }
-A_IP=$(guest_ip a) B_IP=$(guest_ip b)
+# Empty when a guest agent does not answer; preflight reports it and run modes refuse.
+A_IP=$(guest_ip a || true) B_IP=$(guest_ip b || true)
 CP_BIN="$LAB/bin/bindery-external-runtime"
 PAYLOAD="$LAB/payload" SECRETS="$LAB/secrets"
 MATCH_TIMEOUT=${LAB_MATCH_TIMEOUT:-2400}
@@ -51,7 +52,7 @@ while [ $# -gt 0 ]; do
     # Skip the preflight gate and cap the wait: exercises the whole run even
     # while guest->8080 is closed (the harness then fails at the control plane).
     --dry-run) mode=dry; MATCH_TIMEOUT=240 ;;
-    *) echo "usage: $0 --preflight | --stage 1|2 [--prepare-only] | --teardown" >&2; exit 2 ;;
+    *) echo "usage: $0 --preflight | --stage 1|2 [--prepare-only | --dry-run] | --teardown" >&2; exit 2 ;;
   esac; shift
 done
 
@@ -59,6 +60,8 @@ log() { printf '[%s] %s\n' "$(date +%T)" "$*"; }
 gx() { local side=$1 timeout=${3:-120}; "$EXEC" "bindery-ra2-client-$side" "$2" "$timeout"; }
 gpush() { local side=$1; shift; "$HERE/ra2-vm-push" "bindery-ra2-client-$side" "$@" >/dev/null; }
 gpull() { local side=$1; shift; "$HERE/ra2-vm-pull" "bindery-ra2-client-$side" "$@"; }
+# The agent token goes to curl as a header file, never on a command line (ps shows those).
+auth() { printf 'Authorization: Bearer %s\n' "$(<"$SECRETS/agent-token.txt")"; }
 
 # ---------------------------------------------------------------- preflight
 preflight() {
@@ -120,16 +123,16 @@ preflight() {
     sleep 1
   fi
   local tnc
-  tnc=$(gx a "(Test-NetConnection $BIND -Port $CP_PORT -WarningAction SilentlyContinue).TcpTestSucceeded" 60 2>&1 | tr -d '\r' | tail -1)
+  tnc=$(gx a "(Test-NetConnection $BIND -Port $CP_PORT -WarningAction SilentlyContinue).TcpTestSucceeded" 60 2>&1 | tr -d '\r' | tail -1 || true)
   [ -n "$probe" ] && kill "$probe" 2>/dev/null
   [ "$tnc" = True ] && ok "client-a -> $BIND:$CP_PORT (Test-NetConnection True${probe:+, via probe listener})" \
     || bad "client-a -> $BIND:$CP_PORT blocked (Test-NetConnection $tnc${probe:+, probe listener was up}): host firewall on virbr0 must admit TCP $CP_PORT"
   if ss -Hlnt "sport = :50000" | grep -q .; then
-    tnc=$(gx a "(Test-NetConnection $BIND -Port 50000 -WarningAction SilentlyContinue).TcpTestSucceeded" 60 2>&1 | tr -d '\r' | tail -1)
+    tnc=$(gx a "(Test-NetConnection $BIND -Port 50000 -WarningAction SilentlyContinue).TcpTestSucceeded" 60 2>&1 | tr -d '\r' | tail -1 || true)
     [ "$tnc" = True ] && ok "client-a -> tunnel $BIND:50000" || bad "client-a -> tunnel $BIND:50000 failed"
   else note "tunnel not up; client-a -> $BIND:50000 checked at run"; fi
   local code
-  code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $(cat "$SECRETS/agent-token.txt" 2>/dev/null)" "http://$B_IP:$AGENT_PORT/health" || true)
+  code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' -H @<(auth 2>/dev/null) "http://$B_IP:$AGENT_PORT/health" || true)
   case "$code" in 200) ok "host -> client-b launch agent http://$B_IP:$AGENT_PORT/health 200" ;;
     000) note "client-b launch agent not answering (expected unless it is running)" ;;
     *) bad "client-b launch agent answered HTTP $code" ;; esac
@@ -139,7 +142,13 @@ preflight() {
 }
 
 # ---------------------------------------------------------------- host services
-tunnel_up() { "$TUNNEL" up >/dev/null; sleep 3; curl -s -m 5 "http://$BIND:50000/status" | head -1; }
+tunnel_up() {
+  "$TUNNEL" up >/dev/null || { log "tunnel did not start ($TUNNEL up failed)"; exit 1; }
+  sleep 3
+  local status; status=$(curl -s -m 5 "http://$BIND:50000/status" || true)
+  [ -n "$status" ] || { log "tunnel started but $BIND:50000/status does not answer"; exit 1; }
+  log "tunnel: ${status%%$'\n'*}"
+}
 cp_up() {
   local state="$RUN/control-plane"; mkdir -p "$state"
   if [ -f "$LAB/control-plane.pid" ] && kill -0 "$(cat "$LAB/control-plane.pid")" 2>/dev/null; then log "control plane already running"; return; fi
@@ -238,7 +247,7 @@ push_payload() {
 prepare_guests() {  # $1 = 1|2|restore
   for side in a b; do
     log "client-$side: prepare stage $1"
-    gx $side "& C:\\Bindery\\lab\\prepare.ps1 -Stage $1 -RunId '${RUN_ID:-}' -CommandPeer $A_IP" 180 | sed 's/^/    /'
+    gx $side "& C:\\Bindery\\lab\\prepare.ps1 -Stage $1 -RunId '${RUN_ID:-}'${A_IP:+ -CommandPeer $A_IP}" 180 | sed 's/^/    /'
   done
 }
 # Run a command in the guest's interactive session through BinderyLabRun.
@@ -248,13 +257,13 @@ labrun() {  # side, powershell body
   gx "$1" 'Start-ScheduledTask -TaskPath "\Bindery\" -TaskName BinderyLabRun' >/dev/null
 }
 agent_up() {
-  if curl -s -m 3 -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $(cat "$SECRETS/agent-token.txt")" "http://$B_IP:$AGENT_PORT/health" | grep -q 200; then log "client-b agent already up"; return; fi
+  if curl -s -m 3 -o /dev/null -w '%{http_code}' -H @<(auth) "http://$B_IP:$AGENT_PORT/health" | grep -q 200; then log "client-b agent already up"; return; fi
   labrun b '$lab = "C:\Bindery\lab"
 "started $(Get-Date -Format o) session=$((Get-Process -Id $PID).SessionId) user=$env:USERNAME" | Set-Content "$lab\agent.started"
 & "$lab\bin\Bindery.Ra2.Adapter.LaunchAgent.exe" "http://'"$B_IP"':14620/" "$lab\secrets\agent-token.txt" 2>&1 | Out-File -Encoding utf8 "$lab\agent.log"
 "exit=$LASTEXITCODE $(Get-Date -Format o)" | Set-Content "$lab\agent.exited"'
   for _ in $(seq 30); do
-    code=$(curl -s -m 3 -o "$LAB/.health" -w '%{http_code}' -H "Authorization: Bearer $(cat "$SECRETS/agent-token.txt")" "http://$B_IP:$AGENT_PORT/health" || true)
+    code=$(curl -s -m 3 -o "$LAB/.health" -w '%{http_code}' -H @<(auth) "http://$B_IP:$AGENT_PORT/health" || true)
     [ "$code" = 200 ] && { log "client-b agent healthy at http://$B_IP:$AGENT_PORT/ : $(cat "$LAB/.health")"; rm -f "$LAB/.health"; return; }
     sleep 2
   done
@@ -276,15 +285,18 @@ run_match() {
   local t0=$SECONDS
   while :; do
     if gx a "Test-Path C:\\Bindery\\lab\\runs\\$RUN_ID\\harness.exit" | grep -q True; then break; fi
-    if (( SECONDS - t0 > MATCH_TIMEOUT )); then log "timeout: stopping the match"; gx a 'Get-Process gamemd,Syringe,Bindery.Ra2.Adapter.* -EA SilentlyContinue | Stop-Process -Force' || true; gx b 'Get-Process gamemd,Syringe -EA SilentlyContinue | Stop-Process -Force' || true; sleep 5; break; fi
+    if (( SECONDS - t0 > MATCH_TIMEOUT )); then log "timeout: stopping the match"; MATCH_RC=124; gx a 'Get-Process gamemd,Syringe,Bindery.Ra2.Adapter.* -EA SilentlyContinue | Stop-Process -Force' || true; gx b 'Get-Process gamemd,Syringe -EA SilentlyContinue | Stop-Process -Force' || true; sleep 5; break; fi
     sleep 15
   done
-  log "harness finished after $((SECONDS - t0))s, exit $(gx a "Get-Content C:\\Bindery\\lab\\runs\\$RUN_ID\\harness.exit -EA SilentlyContinue" | tr -d '\r')"
+  local rc; rc=$(gx a "Get-Content C:\\Bindery\\lab\\runs\\$RUN_ID\\harness.exit -EA SilentlyContinue" | tr -d '\r' || true)
+  log "harness finished after $((SECONDS - t0))s, exit ${rc:-none}"
+  # The run's own exit status is the match's: an unattended caller must see a failed or stopped match.
+  if [ "$MATCH_RC" = 0 ] && [ "$rc" != 0 ]; then MATCH_RC=1; fi
 }
 
 collect() {
   local out="$RUN/evidence"; mkdir -p "$out"
-  "$LAB/relay-counters" finish "$RUN" | tee "$out/relay.txt"
+  "$HERE/relay-counters" finish "$RUN" | tee "$out/relay.txt"
   for side in a b; do
     gx $side "\$f = 'C:\\Bindery\\appliances\\client-$side\\ra2yrcpp.record'
       if (-not (Test-Path \$f)) { '0 0'; exit }
@@ -322,6 +334,8 @@ case "$mode" in
   teardown) teardown; exit 0 ;;
 esac
 [ "$stage" = 1 ] || [ "$stage" = 2 ] || { echo "--stage 1|2 is required" >&2; exit 2; }
+[ -n "$A_IP" ] && [ -n "$B_IP" ] || { echo "the guest agent reported no address (client-a '$A_IP', client-b '$B_IP'); run --preflight" >&2; exit 1; }
+MATCH_RC=0
 RUN_ID="$(date +%Y%m%d-%H%M%S)-s$stage"; RUN="$LAB/runs/$RUN_ID"; mkdir -p "$RUN"
 exec > >(tee -a "$RUN/lab-run.log") 2>&1
 log "run $RUN_ID"
@@ -331,10 +345,11 @@ agent_up
 [ "$mode" = prepare ] && { log "prepare-only: guests ready for stage $stage, client-b agent up; no match started"; exit 0; }
 [ "$mode" = dry ] && log "dry run: preflight gate skipped" || preflight || { log "preflight failed; not starting the match (guests stay prepared; --teardown to undo)"; exit 1; }
 trap 'log "tearing down"; teardown' EXIT
-log "tunnel: $(tunnel_up)"
+tunnel_up
 cp_up
 mint
 render
-"$LAB/relay-counters" baseline "$RUN"
+"$HERE/relay-counters" baseline "$RUN"
 run_match
 collect
+exit "$MATCH_RC"
