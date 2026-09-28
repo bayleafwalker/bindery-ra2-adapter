@@ -91,7 +91,7 @@ try
     {
         // Every match is a new session: fresh keys and its own evidence folder.
         LiveAcceptanceSettings match = live.WithNewIdempotencyKeys();
-        string directory = Path.Combine(channelDirectory, "match-" + context.MatchIndex.ToString("D3", CultureInfo.InvariantCulture));
+        string directory = Path.Combine(channelDirectory, context.EvidenceFolderName);
         Console.WriteLine($"match {context.MatchIndex}: session_idempotency_key={match.SessionIdempotencyKey} evidence={directory}");
         return match.ToRequest(directory, settings.Seed);
     },
@@ -126,7 +126,7 @@ try
     }
 
     foreach (ChannelMatchRecord match in summary.Matches)
-        Console.WriteLine($"match {match.MatchIndex}: {match.Outcome.ToString().ToLowerInvariant()} session={match.SessionId ?? "-"} seed={match.Seed?.ToString(CultureInfo.InvariantCulture) ?? "-"}{(match.Failure is null ? string.Empty : " failure=" + match.Failure)}");
+        Console.WriteLine($"match {match.MatchIndex}{(match.Attempt > 1 ? $" attempt {match.Attempt}" : string.Empty)}: {match.Outcome.ToString().ToLowerInvariant()} session={match.SessionId ?? "-"} seed={match.Seed?.ToString(CultureInfo.InvariantCulture) ?? "-"}{(match.Failure is null ? string.Empty : " failure=" + match.Failure)}");
     foreach (string issue in runner.BroadcastIssues) Console.WriteLine($"broadcast issue: {issue}");
     Console.WriteLine($"stopped: {summary.StopReason}");
     Console.WriteLine($"records={records.Path}");

@@ -17,7 +17,10 @@ public sealed record ExperimentRow(
     int Undecided,
     double MeanPlaybookRevisions,
     IReadOnlyList<int> Seeds,
-    int TracesInBindery);
+    int TracesInBindery,
+    // Matches whose first attempt was classified a startup crash and retried;
+    // the retry's own outcome is counted normally above.
+    int StartupCrashesRetried);
 
 /// <summary>
 /// Compares controllers across channel matches -- the point of recording
@@ -77,14 +80,17 @@ public static class ChannelExperimentReport
                 return new ExperimentRow(
                     group.Key.MapId,
                     group.Key.Controller,
-                    group.Count(),
+                    // Matches, not attempts: a retried match has two records.
+                    group.Count(static r => r.Attempt == 1),
                     completed.Length,
                     wins,
                     losses,
                     undecided,
                     completed.Length == 0 ? 0 : Math.Round(completed.Average(static r => r.PlaybookRevisions), 2),
                     group.Select(static r => r.Seed).OfType<int>().Distinct().Order().ToArray(),
-                    group.Count(static r => r.DecisionTraceContentHash is not null));
+                    group.Count(static r => r.DecisionTraceContentHash is not null),
+                    // Retries played: a crash drained before its retry was not retried.
+                    group.Count(static r => r.Attempt == 2));
             })
             .ToArray();
     }
@@ -93,7 +99,7 @@ public static class ChannelExperimentReport
     {
         ArgumentNullException.ThrowIfNull(rows);
         StringBuilder text = new();
-        text.Append("map\tcontroller\tmatches\tcompleted\twins\tlosses\tundecided\tmean_revisions\tseeds\ttraces_in_bindery\n");
+        text.Append("map\tcontroller\tmatches\tcompleted\twins\tlosses\tundecided\tmean_revisions\tseeds\ttraces_in_bindery\tstartup_crashes_retried\n");
         foreach (ExperimentRow row in rows)
         {
             text.Append(row.MapId).Append('\t')
@@ -105,7 +111,8 @@ public static class ChannelExperimentReport
                 .Append(row.Undecided.ToString(CultureInfo.InvariantCulture)).Append('\t')
                 .Append(row.MeanPlaybookRevisions.ToString("0.##", CultureInfo.InvariantCulture)).Append('\t')
                 .Append(row.Seeds.Count.ToString(CultureInfo.InvariantCulture)).Append('\t')
-                .Append(row.TracesInBindery.ToString(CultureInfo.InvariantCulture)).Append('\n');
+                .Append(row.TracesInBindery.ToString(CultureInfo.InvariantCulture)).Append('\t')
+                .Append(row.StartupCrashesRetried.ToString(CultureInfo.InvariantCulture)).Append('\n');
         }
         return text.ToString();
     }

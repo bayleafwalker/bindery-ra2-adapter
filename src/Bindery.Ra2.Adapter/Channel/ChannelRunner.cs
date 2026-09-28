@@ -9,7 +9,14 @@ public sealed record ChannelMatchContext(
     int MatchIndex,
     string MapId,
     CaptureSource Capture,
-    AgentSeatAssignment? AgentSeat);
+    AgentSeatAssignment? AgentSeat,
+    // Which try at this MatchIndex this is: 1, or 2 after a startup-crash retry.
+    int Attempt = 1)
+{
+    /// <summary>The evidence folder for this attempt, relative to the channel's directory.</summary>
+    public string EvidenceFolderName => "match-" + MatchIndex.ToString("D3", System.Globalization.CultureInfo.InvariantCulture)
+        + (Attempt > 1 ? "-attempt" + Attempt.ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty);
+}
 
 /// <summary>
 /// What the launcher brings back. <paramref name="Evidence"/> is the live
@@ -87,6 +94,15 @@ public sealed class ChannelRunner
     private readonly List<string> broadcastIssues = [];
     private int drainRequested;
 
+    /// <summary>
+    /// <see cref="ChannelMatchRecord.FailureClass"/> for a match whose evidence
+    /// shows the game crashed before it ever started: attached telemetry that
+    /// saw nothing, with a notable hosted-exit-code observation from a player
+    /// client, and every client's process (observer too) seen to exit. Retried once; see
+    /// <see cref="RunAsync"/>.
+    /// </summary>
+    internal const string StartupCrashFailureClass = "startup_crash";
+
     public ChannelRunner(
         IChannelMatchLauncher launcher,
         IBroadcastProduction production,
@@ -123,17 +139,10 @@ public sealed class ChannelRunner
             Enter(ChannelPhase.Holding);
             await TryBroadcastAsync(ct => production.ShowHoldingAsync("channel starting", ct), "holding before first match", cancellationToken).ConfigureAwait(false);
 
-            int consecutiveFailures = 0;
-            for (int index = 1; index <= request.MaximumMatches; index++)
+            async Task<ChannelMatchRecord> PlayAttemptAsync(int index, int attempt)
             {
-                if (Volatile.Read(ref drainRequested) == 1)
-                {
-                    stopReason = "drain requested";
-                    break;
-                }
-
                 Enter(ChannelPhase.Starting);
-                ChannelMatchContext context = new(request.ChannelId, index, request.MapId, request.Capture, request.AgentSeat);
+                ChannelMatchContext context = new(request.ChannelId, index, request.MapId, request.Capture, request.AgentSeat, attempt);
                 DateTimeOffset startedAt = DateTimeOffset.UtcNow;
                 ChannelMatchRecord record;
                 try
@@ -159,10 +168,41 @@ public sealed class ChannelRunner
                 await TryBroadcastAsync(ct => production.ShowHoldingAsync("match ended", ct), $"holding after match {index}", cancellationToken).ConfigureAwait(false);
                 await records.WriteAsync(record, cancellationToken).ConfigureAwait(false);
                 matches.Add(record);
+                return record;
+            }
+
+            int consecutiveFailures = 0;
+            for (int index = 1; index <= request.MaximumMatches; index++)
+            {
+                if (Volatile.Read(ref drainRequested) == 1)
+                {
+                    stopReason = "drain requested";
+                    break;
+                }
+
+                ChannelMatchRecord record = await PlayAttemptAsync(index, 1).ConfigureAwait(false);
+
+                // A crash before the game ever started -- an NTSTATUS exit with
+                // no telemetry -- is retried once with the same map and seed;
+                // any other non-completion, or a second crash, is not.
+                if (record is { FailureClass: StartupCrashFailureClass, Attempt: 1 })
+                {
+                    Enter(ChannelPhase.Holding);
+                    await TryBroadcastAsync(ct => production.ShowHoldingAsync("restarting match", ct), $"holding before retry of match {index}", cancellationToken).ConfigureAwait(false);
+                    await delay(request.EffectiveHoldingDuration, cancellationToken).ConfigureAwait(false);
+                    // A drain asked for during the pause stops here, not after a whole new game.
+                    if (Volatile.Read(ref drainRequested) == 1)
+                    {
+                        stopReason = "drain requested";
+                        break;
+                    }
+                    record = await PlayAttemptAsync(index, 2).ConfigureAwait(false);
+                }
 
                 // Incomplete counts too: a crashed seat or telemetry that saw
                 // nothing is as broken as a failed launch, and must not run
-                // unattended to the match budget.
+                // unattended to the match budget. Only the final attempt's
+                // outcome feeds this count.
                 consecutiveFailures = record.Outcome == ChannelMatchOutcome.Completed ? 0 : consecutiveFailures + 1;
                 if (consecutiveFailures >= ChannelRequest.MaximumConsecutiveFailures)
                 {
@@ -233,6 +273,17 @@ public sealed class ChannelRunner
         // source's own issue when it has one.
         if (noTelemetry) failure ??= "the attached telemetry saw no events" + (result.TelemetryIssue is { } issue ? $": {issue}" : "");
         if (evidence is null) failure ??= "the launcher returned no evidence";
+        // A startup crash: telemetry was attached, it never saw the match
+        // start, and a player's debugger log named an NTSTATUS exit. Without
+        // telemetry attached there is nothing to classify from, so this stays
+        // unset and the match is not retried. Nor is it retried while any
+        // client's process, the observer's included, was never seen to exit:
+        // the launch agent would start the retry's game beside one that may
+        // still be running.
+        bool startupCrash = result.TelemetryObserved is not null && noTelemetry
+            && players.Any(static c => c.Observations?.Any(static o => o.Kind == RunObservation.HostedExitCode && o.Notable) == true)
+            && evidence is not null && evidence.Clients.All(static c => c.ProcessExitCode is not null);
+        string? failureClass = startupCrash ? StartupCrashFailureClass : null;
         return new ChannelMatchRecord(
             request.ChannelId,
             context.MatchIndex,
@@ -261,7 +312,10 @@ public sealed class ChannelRunner
             observerIssue,
             result.DecisionTraceContentHash,
             context.AgentSeat?.Controller,
-            context.AgentSeat?.House);
+            context.AgentSeat?.House,
+            BroadcastIssue: null,
+            Attempt: context.Attempt,
+            FailureClass: failureClass);
     }
 
     private static ChannelMatchRecord Failed(ChannelRequest request, ChannelMatchContext context, DateTimeOffset startedAt, Exception exception) => new(
@@ -285,5 +339,6 @@ public sealed class ChannelRunner
         0,
         request.Capture,
         request.Broadcast.Public is not null,
-        $"{exception.GetType().Name}: {exception.Message}");
+        $"{exception.GetType().Name}: {exception.Message}",
+        Attempt: context.Attempt);
 }

@@ -71,7 +71,8 @@ never turns a played match into a failed one. One exception: attached
 telemetry that saw no events at all is no evidence that anything was played
 (a game that quit on frame 0 looks the same), so that match is `Incomplete`
 with the failure "the attached telemetry saw no events"; two such matches in a
-row stop the channel, so a misconfigured telemetry endpoint stops it too. A channel record never upgrades the qualification flags
+row (after any startup-crash retry -- see "Continuity rules") stop the
+channel, so a misconfigured telemetry endpoint stops it too. A channel record never upgrades the qualification flags
 in the evidence it points to.
 
 ### Overlay, audio and the experiment report
@@ -102,9 +103,36 @@ in the evidence it points to.
     playbook revisions, distinct seeds, and traces stored in Bindery.
   - Only completed matches count, and a completed match with no named
     winner is undecided, never a loss.
+  - `startup_crashes_retried` counts, per map and controller, the matches
+    whose first attempt was classified a startup crash and retried; the
+    retry's own outcome is still counted normally in the other columns.
 
 ### Continuity rules
 
+- **Startup-crash retry.** The live lab sees an intermittent
+  `STATUS_STACK_OVERFLOW` inside DDrawCompat at game startup (roughly 2 of
+  every 20 launches). A match record gets `ChannelMatchRecord.FailureClass =
+  "startup_crash"` when, on its first attempt, all of these hold: telemetry
+  was attached (`TelemetryObserved` is not null), it never saw the match
+  start (`TelemetryObserved == 0`), and some player (non-observer) client's
+  evidence carries a `Notable` `RunObservation.HostedExitCode` observation
+  (an NTSTATUS exit), and every client's process, the observer's included,
+  was seen to exit (`ProcessExitCode` is not null; the launch agent would
+  start the retry's game beside one still running). Without telemetry
+  attached there is nothing to classify the crash from, so `FailureClass`
+  stays unset and the match is not retried -- this fails closed. When a match is classified this way, the
+  attempt-1 record is still written to the ndjson (with its `Failure` text
+  intact), the holding scene switches to "restarting match" through the same
+  `TryBroadcastAsync` path used elsewhere, the channel waits
+  `EffectiveHoldingDuration`, and the same `MatchIndex` runs again as
+  attempt 2 with the same map and seed choice as attempt 1. Only the second
+  attempt's outcome feeds `consecutiveFailures`; a second consecutive crash
+  is not retried again. Each attempt writes its own evidence folder
+  (`match-001`, `match-001-attempt2`), and a drain requested during the retry's
+  pause stops the channel before the second attempt, with stop reason "drain
+  requested". The experiment report's `startup_crashes_retried` counts second
+  attempts played. `MaximumMatches` counts matches, not attempts, so a
+  retried match still spends only one slot of the match budget.
 - A failed scene switch is recorded in `BroadcastIssues`, and the match keeps
   running. Broadcasting is a side effect of the loop, not a dependency.
 - The output is stopped in a `finally` block, including on cancellation.
@@ -253,8 +281,9 @@ is a separate project so the core library keeps no generated code: it
 vendors four `.proto` files from bayleafwalker/ra2yrproto, with stable
 object IDs (recorded in
 `UPSTREAM-REVISIONS.yaml`) and generates C# with protoc at build time.
-**None of it has run against a live game yet**; every test uses an
-in-process fake of the service.
+It has run against a live game: the lab's stage-2 runs on 2026-09-28 played
+full matches over this transport, with the agent seat deploying its MCV.
+Every test still uses an in-process fake of the service.
 
 - `Ra2yrcppClient`: a WebSocket to port 14521, one binary protobuf message
   per frame. A command goes out as `CLIENT_COMMAND` and its result comes back

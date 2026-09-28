@@ -74,7 +74,7 @@ public sealed record ChannelRequest(
     AgentSeatAssignment? AgentSeat = null,
     TimeSpan? HoldingDuration = null)
 {
-    /// <summary>Consecutive matches that did not complete (failed or incomplete) after which the channel drains rather than retry.</summary>
+    /// <summary>Consecutive matches that did not complete (failed or incomplete), after at most one startup-crash retry, after which the channel drains rather than retry.</summary>
     public const int MaximumConsecutiveFailures = 2;
 
     public TimeSpan EffectiveHoldingDuration => HoldingDuration ?? TimeSpan.FromSeconds(20);
@@ -145,7 +145,12 @@ public sealed record ChannelMatchRecord(
     ControllerDeclaration? AgentController = null,
     string? AgentHouse = null,
     // What the broadcast health watch saw wrong while this match was on air.
-    string? BroadcastIssue = null);
+    string? BroadcastIssue = null,
+    // Which try at this MatchIndex this is: 1, or 2 after a startup-crash retry.
+    int Attempt = 1,
+    // Set when the evidence matches a known, retryable failure shape (currently
+    // only "startup_crash"); null for every other failure or a completed match.
+    string? FailureClass = null);
 
 /// <summary>What one channel session did, in order.</summary>
 public sealed record ChannelSessionSummary(
