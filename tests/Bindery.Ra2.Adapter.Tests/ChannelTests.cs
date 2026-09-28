@@ -109,6 +109,102 @@ public sealed class ChannelTests
     }
 
     [Fact]
+    public async Task AStartupCrashIsRetriedOnceThenTheChannelContinues()
+    {
+        int call = 0;
+        FakeLauncher launcher = new(_ => Task.FromResult(++call switch
+        {
+            1 => new ChannelMatchResult(StartupCrashEvidence(), TelemetryObserved: 0),
+            2 => new ChannelMatchResult(Evidence(complete: true)),
+            _ => new ChannelMatchResult(Evidence(complete: true)),
+        }));
+        ChannelRunner runner = new(launcher, new FakeProduction(), new MemorySink(), NoDelay);
+
+        ChannelSessionSummary summary = await runner.RunAsync(Request(2));
+
+        Assert.Equal(3, summary.Matches.Count);
+        Assert.Equal(1, summary.Matches[0].MatchIndex);
+        Assert.Equal(1, summary.Matches[0].Attempt);
+        Assert.Equal("startup_crash", summary.Matches[0].FailureClass);
+        Assert.Equal(ChannelMatchOutcome.Incomplete, summary.Matches[0].Outcome);
+        Assert.Contains("saw no events", summary.Matches[0].Failure);
+
+        Assert.Equal(1, summary.Matches[1].MatchIndex);
+        Assert.Equal(2, summary.Matches[1].Attempt);
+        Assert.Null(summary.Matches[1].FailureClass);
+        Assert.Equal(ChannelMatchOutcome.Completed, summary.Matches[1].Outcome);
+
+        // The retry's success reset the run, so the second logical match played
+        // as usual and the channel never drained on consecutive failures.
+        Assert.Equal(2, summary.Matches[2].MatchIndex);
+        Assert.Equal(1, summary.Matches[2].Attempt);
+        Assert.Equal(ChannelMatchOutcome.Completed, summary.Matches[2].Outcome);
+        Assert.Equal("match budget reached", summary.StopReason);
+    }
+
+    [Fact]
+    public async Task MaximumMatchesCountsMatchesNotAttempts()
+    {
+        int call = 0;
+        FakeLauncher launcher = new(_ => Task.FromResult(++call == 1
+            ? new ChannelMatchResult(StartupCrashEvidence(), TelemetryObserved: 0)
+            : new ChannelMatchResult(Evidence(complete: true))));
+        ChannelRunner runner = new(launcher, new FakeProduction(), new MemorySink(), NoDelay);
+
+        ChannelSessionSummary summary = await runner.RunAsync(Request(1));
+
+        Assert.Equal(2, summary.Matches.Count);
+        Assert.All(summary.Matches, static m => Assert.Equal(1, m.MatchIndex));
+        Assert.Equal("match budget reached", summary.StopReason);
+    }
+
+    [Fact]
+    public async Task ACrashAfterTheMatchStartedIsNotRetried()
+    {
+        // Telemetry observed events, so the match did start; a crash from that
+        // point on is an ordinary incomplete match, not a startup crash.
+        FakeLauncher launcher = new(_ => Task.FromResult(new ChannelMatchResult(StartupCrashEvidence(), TelemetryObserved: 5)));
+        ChannelRunner runner = new(launcher, new FakeProduction(), new MemorySink(), NoDelay);
+
+        ChannelSessionSummary summary = await runner.RunAsync(Request(1));
+
+        Assert.Single(summary.Matches);
+        Assert.Null(summary.Matches[0].FailureClass);
+        Assert.Equal(1, summary.Matches[0].Attempt);
+        Assert.Equal(ChannelMatchOutcome.Incomplete, summary.Matches[0].Outcome);
+    }
+
+    [Fact]
+    public async Task NoAttachedTelemetryIsNeverClassifiedOrRetried()
+    {
+        // Fail closed: without telemetry attached there is nothing to
+        // classify the crash from, so the match is not retried.
+        FakeLauncher launcher = new(_ => Task.FromResult(new ChannelMatchResult(StartupCrashEvidence())));
+        ChannelRunner runner = new(launcher, new FakeProduction(), new MemorySink(), NoDelay);
+
+        ChannelSessionSummary summary = await runner.RunAsync(Request(1));
+
+        Assert.Single(summary.Matches);
+        Assert.Null(summary.Matches[0].FailureClass);
+        Assert.Equal(1, summary.Matches[0].Attempt);
+    }
+
+    [Fact]
+    public async Task TwoMatchesThatEachCrashTwiceDrainTheChannel()
+    {
+        FakeLauncher launcher = new(_ => Task.FromResult(new ChannelMatchResult(StartupCrashEvidence(), TelemetryObserved: 0)));
+        ChannelRunner runner = new(launcher, new FakeProduction(), new MemorySink(), NoDelay);
+
+        ChannelSessionSummary summary = await runner.RunAsync(Request(5));
+
+        Assert.Equal(4, summary.Matches.Count);
+        Assert.Equal([1, 1, 2, 2], summary.Matches.Select(static m => m.MatchIndex));
+        Assert.Equal([1, 2, 1, 2], summary.Matches.Select(static m => m.Attempt));
+        Assert.All(summary.Matches, static m => Assert.Equal(ChannelMatchOutcome.Incomplete, m.Outcome));
+        Assert.Contains("consecutive", summary.StopReason);
+    }
+
+    [Fact]
     public async Task ACompletedMatchResetsTheRun()
     {
         int call = 0;
@@ -382,6 +478,39 @@ public sealed class ChannelTests
         using JsonDocument document = JsonDocument.Parse(payload);
         ulong sequence = Interlocked.Increment(ref nextSequence);
         return new RawObservation($"event-{sequence}", "capture-1", sequence, type, Ra2LabProfile.AdapterId, Ra2LabProfile.AdapterVersion, DateTimeOffset.UtcNow, document.RootElement.Clone(), "sha256:raw");
+    }
+
+    /// <summary>
+    /// Evidence for a match whose control plane wound down with no telemetry
+    /// observed, and whose first player's debugger log named an NTSTATUS exit
+    /// -- the shape of the intermittent DDrawCompat STATUS_STACK_OVERFLOW seen
+    /// at startup in the lab (~2 of 20 launches).
+    /// </summary>
+    internal static LiveAcceptanceEvidence StartupCrashEvidence()
+    {
+        LiveClientEvidence Client(string id, IReadOnlyList<RunObservation> observations) =>
+            new(id, "account-" + id, "instance-" + id, "golden-1", "sha256:game", "sha256:ini", ["ready"], null, null, observations, "player");
+        LiveClientEvidence[] clients =
+        [
+            Client("a", [new RunObservation(RunObservation.HostedExitCode, "C00000FD -- an exception status: the game crashed", Notable: true)]),
+            Client("b", []),
+        ];
+        return new LiveAcceptanceEvidence(
+            LiveAcceptanceRunner.EvidenceSchemaVersion,
+            Guid.NewGuid().ToString("D"),
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            "session-1",
+            "golden-1",
+            new LiveRelayEvidence("cncnet-private", "allocation-1", "192.168.122.1:50000", false, null),
+            new LiveTelemetryEvidence(Ra2LabProfile.TelemetryProtocol, "127.0.0.1:14521", false, null),
+            clients,
+            "ended",
+            ["departed", "departed"],
+            new LiveQualificationFlags(false, false, false, false, false, false),
+            [],
+            "MAP01.MAP",
+            4242);
     }
 
     internal static LiveAcceptanceEvidence Evidence(bool complete, bool desync = false, string? observerFailure = null)
