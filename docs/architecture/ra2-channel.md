@@ -202,8 +202,8 @@ recorded on the match and leaves the trace on disk.
 `PlaybookController` is that two-speed loop:
 
 - A `PlayerView` remembers only what the seat's filter admitted: its own
-  credits trend, own units by type, own buildings, enemy sightings, and
-  defeats.
+  credits trend, own units by type, own buildings, own factory items by
+  type (`OwnProduction`), enemy sightings, and defeats.
 - **Triggers** name the meaningful moments:
   - `opening`;
   - `new_threat`: an enemy object came into view, with a 60 s cooldown;
@@ -271,6 +271,11 @@ in-process fake of the service.
   winner before it emits `ra2.match.ended`. That makes the **observer
   client's service the preferred telemetry endpoint**: its game is not over
   when a player's is.
+- Production: each house's factory items become `ra2.production.changed`
+  (`house`, rules `type`, `progress` in 10% steps, `on_hold`, `completed`,
+  `unique_id`, and `gone` when the item leaves the factory) and, once per
+  item, `ra2.production.completed`, with `visible_to: [house]`. The type
+  comes from the item's limbo object; its address is never emitted.
 - `GetGameState` releases the fork's single-step mode. With `single_step`
   configured, the game advances one step per poll, so the poll cadence
   paces the game.

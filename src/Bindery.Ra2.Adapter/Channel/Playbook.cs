@@ -28,6 +28,11 @@ public sealed record PlayerViewSummary(
     int EnemySightings,
     IReadOnlyList<string> DefeatedHouses);
 
+/// <summary>One of the house's own factory items, as its production events last reported it.</summary>
+/// <param name="Progress">Percent done, in the telemetry's steps.</param>
+/// <param name="UniqueId">The item's stable ID, when the fork reports one.</param>
+public sealed record OwnProductionItem(string Type, int Progress, bool OnHold, bool Completed, uint? UniqueId);
+
 /// <summary>
 /// What one house has been allowed to see so far, built only from
 /// observations its <see cref="PlayerObservationFilter"/> admitted. It never
@@ -39,6 +44,7 @@ public sealed class PlayerView
     private readonly Dictionary<string, int> ownUnits = new(StringComparer.Ordinal);
     private readonly SortedSet<string> ownBuildings = new(StringComparer.Ordinal);
     private readonly SortedSet<string> defeated = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, OwnProductionItem> ownProduction = new(StringComparer.Ordinal);
 
     public PlayerView(string house, PayloadFields? fields = null, TimeSpan? economyWindow = null)
     {
@@ -61,6 +67,9 @@ public sealed class PlayerView
     public int EnemySightings { get; private set; }
 
     public long? Credits => credits.Count == 0 ? null : credits[^1].Credits;
+
+    /// <summary>The house's items in its factories now, by type; an item leaves when it is placed or cancelled.</summary>
+    public IReadOnlyDictionary<string, OwnProductionItem> OwnProduction => ownProduction;
 
     /// <summary>Credit change across the economy window, once the window is covered.</summary>
     public long? CreditsChangeOverWindow
@@ -109,6 +118,19 @@ public sealed class PlayerView
             case Ra2TelemetryEventTypes.BuildingPlaced when own && TypeOf(observation) is { } type:
                 ownBuildings.Add(type);
                 break;
+            case Ra2TelemetryEventTypes.ProductionChanged or Ra2TelemetryEventTypes.ProductionCompleted when own && TypeOf(observation) is { } type:
+                if (ReadBool(observation.Payload, "gone"))
+                {
+                    ownProduction.Remove(type);
+                    break;
+                }
+                ownProduction[type] = new OwnProductionItem(
+                    type,
+                    (int)(ReadLong(observation.Payload, "progress") ?? 0),
+                    ReadBool(observation.Payload, "on_hold"),
+                    ReadBool(observation.Payload, "completed"),
+                    ReadLong(observation.Payload, Fields.UniqueId) is { } id and > 0 and <= uint.MaxValue ? (uint)id : null);
+                break;
             case Ra2TelemetryEventTypes.PlayerDefeated when Owner(observation) is { } house:
                 defeated.Add(house);
                 break;
@@ -139,6 +161,11 @@ public sealed class PlayerView
         && value.TryGetInt64(out long number)
             ? number
             : null;
+
+    private static bool ReadBool(JsonElement payload, string field) =>
+        payload.ValueKind == JsonValueKind.Object
+        && payload.TryGetProperty(field, out JsonElement value)
+        && value.ValueKind == JsonValueKind.True;
 }
 
 /// <summary>Names a meaningful moment -- one worth revising the plan for.</summary>

@@ -213,6 +213,23 @@ public sealed class PlaybookTests
         Assert.Equal(PlayerCommandKinds.Deploy, Assert.Single(step.Commands).Kind);
     }
 
+    [Fact]
+    public void TheViewKeepsTheHousesOwnProductionByTypeUntilTheItemLeavesTheFactory()
+    {
+        PlayerView view = new("Americans");
+
+        view.Apply(At(1, Ra2TelemetryEventTypes.ProductionChanged, "{\"house\":\"Americans\",\"type\":\"GAPOWR\",\"progress\":40,\"on_hold\":false,\"completed\":false,\"unique_id\":701,\"visible_to\":[\"Americans\"]}"));
+        view.Apply(At(1, Ra2TelemetryEventTypes.ProductionChanged, "{\"house\":\"Soviets\",\"type\":\"NAPOWR\",\"progress\":10,\"on_hold\":false,\"completed\":false,\"visible_to\":[\"Soviets\"]}"));
+        OwnProductionItem item = Assert.Single(view.OwnProduction).Value;
+        Assert.Equal(new OwnProductionItem("GAPOWR", 40, false, false, 701), item);
+
+        view.Apply(At(2, Ra2TelemetryEventTypes.ProductionCompleted, "{\"house\":\"Americans\",\"type\":\"GAPOWR\",\"progress\":100,\"on_hold\":false,\"completed\":true,\"unique_id\":701,\"visible_to\":[\"Americans\"]}"));
+        Assert.True(view.OwnProduction["GAPOWR"].Completed);
+
+        view.Apply(At(3, Ra2TelemetryEventTypes.ProductionChanged, "{\"house\":\"Americans\",\"type\":\"GAPOWR\",\"progress\":100,\"on_hold\":false,\"completed\":true,\"unique_id\":701,\"gone\":true,\"visible_to\":[\"Americans\"]}"));
+        Assert.Empty(view.OwnProduction);
+    }
+
     private static RawObservation At(int seconds, string type, string payload)
     {
         using JsonDocument document = JsonDocument.Parse(payload);
