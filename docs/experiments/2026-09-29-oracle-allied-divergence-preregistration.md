@@ -32,4 +32,22 @@ The script was checked for parsing only on training traces (`--maps training --o
 this cell.
 
 ## Outcome
-Not run yet.
+Run once at 11739be (`docs/results/2026-09-29-oracle-divergence/commit`): selector-oracle 366/480; `analysis.txt`,
+`run/report.md`, `run/results.json.xz`, and the 92 traces of the 46 Allied discordant pairs in
+`discordant-traces.tar.xz` (+ `.sha256`; the analysis reproduces from these archives).
+
+Gate: passes. Allied pairs 240: selector-only 31, oracle-only 15, sign p 0.0259.
+
+Decision: **no primary cause**, so the line closes with "no single first divergence".
+
+| First divergence | selector-only | oracle-only |
+|---|---|---|
+| scouting | 31/31 (1.00) | 15/15 (1.00) |
+| intent, composition, defend, attack-gate, none | 0 | 0 |
+
+Scouting is the first divergence of every discordant pair in both directions, always at second 106 (the first scout
+order): the oracle, which knows where the enemy is, sends its first scout elsewhere. It fails the 2x condition
+(1.00 against 1.00), and as a first divergence it is structural, not discriminating: it happens whoever wins, so this
+design cannot say which later decision decides these games. Per the pre-registration, no categories are changed after
+the run and no rerun follows; a design that skips the scout difference (for example, first divergence after the
+first scout order) would need its own pre-registration.
