@@ -60,7 +60,7 @@ sources:
       - upstream: ra2yrproto/commands_game.proto
         path: src/Bindery.Ra2.Adapter.Ra2yrcpp/Protos/ra2yrproto/commands_game.proto
         upstream_sha256: sha256:6b7b86b58fa33d3b8b62c5bfc6a1b70dc7ab5a15ea16b2849da9b02f3a04ef4a
-    use: protocol definitions vendored unmodified apart from a provenance header; C# is generated at build time by protoc (Grpc.Tools, no gRPC services) into Bindery.Ra2.Adapter.Ra2yrcpp and never committed. The stable-ID fields (Object.unique_id, Factory.object_unique_id, UnitOrder.object_unique_ids/target_unique_id) and ObjectTypeClass.id are ignored by fork builds from before them, so the adapter stays compatible (it falls back to the type name and to addresses); re-pin to the merge commit once the PR lands
+    use: protocol definitions vendored unmodified apart from a provenance header; C# is generated at build time by protoc (Grpc.Tools, no gRPC services) into Bindery.Ra2.Adapter.Ra2yrcpp and never committed. The stable-ID fields (Object.unique_id, Factory.object_unique_id, UnitOrder.object_unique_ids/target_unique_id) and ObjectTypeClass.id are ignored by fork builds from before them, so the adapter stays compatible (types fall back to the name; an order that carries stable IDs is refused where they do not resolve rather than sent to a foreign address); re-pin to the merge commit once the PR lands
   - project: cncnet-docker-tunnel
     repository: https://github.com/CnCNet/cncnet-docker-tunnel
     ref: main

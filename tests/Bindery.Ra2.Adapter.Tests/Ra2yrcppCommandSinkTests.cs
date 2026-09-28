@@ -124,6 +124,49 @@ public sealed class Ra2yrcppCommandSinkTests
     }
 
     [Fact]
+    public async Task AStableIdThatNoLongerResolvesIsRefusedNotTriedAtTheForeignAddress()
+    {
+        // The controller's addresses are the capture client's. On this client
+        // 0x99 holds an unrelated enemy (id 42), and the target it meant (id 9)
+        // is gone; this client's snapshot of 0xA1 predates stable IDs for it.
+        FakeGame game = new()
+        {
+            State = Snapshots.State(1, Snapshots.Opening(),
+            [
+                Snapshots.Unit(0xB7, Snapshots.Americans, Snapshots.Htnk, uniqueId: 6),
+                Snapshots.Unit(0xA1, Snapshots.Americans, Snapshots.Htnk),
+                Snapshots.Unit(0x99, Snapshots.Soviets, Snapshots.Smcv, uniqueId: 42),
+            ]),
+        };
+        await using FakeRa2yrcppServer server = new(game.Handle);
+        await using Ra2yrcppCommandSink sink = Sink(server);
+
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => sink.SendAsync(Command(Ra2yrcppCommandSink.Attack, "{\"objects\":[183],\"unique_ids\":[6],\"target\":153,\"target_unique_id\":9}"), CancellationToken.None));
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => sink.SendAsync(Command(Ra2yrcppCommandSink.Deploy, "{\"objects\":[161],\"unique_ids\":[5]}"), CancellationToken.None));
+
+        Assert.Empty(game.Orders);
+    }
+
+    [Fact]
+    public async Task ARulesIdWinsOverAnotherTypesDisplayNameInProduction()
+    {
+        FakeGame game = new()
+        {
+            Types =
+            [
+                new ObjectTypeClass { Name = "HTNK", Id = "XTNK", PointerSelf = 0x2001, Type = AbstractType.Unittype },
+                new ObjectTypeClass { Name = "Rhino Heavy Tank", Id = "HTNK", PointerSelf = Snapshots.Htnk, Type = AbstractType.Unittype },
+            ],
+        };
+        await using FakeRa2yrcppServer server = new(game.Handle);
+        await using Ra2yrcppCommandSink sink = Sink(server);
+
+        await sink.SendAsync(Command(Ra2yrcppCommandSink.Produce, "{\"type\":\"HTNK\"}"), CancellationToken.None);
+
+        Assert.Equal(Snapshots.Htnk, Assert.IsType<ProduceOrder>(Assert.Single(game.Orders)).ObjectType.PointerSelf);
+    }
+
+    [Fact]
     public async Task ProductionFindsATypeByItsRulesIdWhenItsNameIsDisplayText()
     {
         FakeGame game = new() { Types = Snapshots.ForkTypes };

@@ -151,12 +151,13 @@ public sealed class Ra2yrcppCommandSink : IPlayerCommandSink, IAsyncDisposable
         uint[]? seen = UniqueIds(arguments, requested.Length);
         // The controller's addresses may come from another client's memory
         // (the capture client), where the same object lives elsewhere; its
-        // stable ID names the object on this client. Without one, the address
-        // must be this house's and unchanged.
+        // stable ID names the object on this client, and an ID that does not
+        // resolve here drops the object rather than trusting a foreign
+        // address. Without an ID the address must be this house's.
         uint? Resolve(uint address, uint seenId)
         {
-            if (seenId != 0 && byId.TryGetValue(seenId, out uint local)) return local;
-            return owned.TryGetValue(address, out uint id) && (seenId == 0 || id == 0) ? address : null;
+            if (seenId != 0) return byId.TryGetValue(seenId, out uint local) ? local : null;
+            return owned.ContainsKey(address) ? address : null;
         }
         uint[] addresses = requested
             .Select((address, i) => Resolve(address, seen?[i] ?? 0))
@@ -169,8 +170,11 @@ public sealed class Ra2yrcppCommandSink : IPlayerCommandSink, IAsyncDisposable
         uint[] ids = addresses.Select(a => owned[a]).ToArray();
         if (ids.All(static id => id != 0)) order.ObjectUniqueIds.AddRange(ids);
         uint targetId = target != 0 && arguments.TryGetProperty("target_unique_id", out JsonElement tid) && tid.TryGetUInt32(out uint parsed) ? parsed : 0;
-        if (targetId != 0 && state.Objects.FirstOrDefault(o => o.UniqueId == targetId && !o.InLimbo) is { } byStableId)
+        if (targetId != 0)
         {
+            // Never fall back to the foreign address: here it may hold an unrelated object.
+            Ra2Yrproto.Ra2Yr.Object byStableId = state.Objects.FirstOrDefault(o => o.UniqueId == targetId && !o.InLimbo)
+                ?? throw new InvalidOperationException($"{action}: target {targetId} is not on the map in the latest snapshot");
             order.TargetObject = byStableId.PointerSelf;
             order.TargetUniqueId = targetId;
         }
@@ -195,12 +199,11 @@ public sealed class Ra2yrcppCommandSink : IPlayerCommandSink, IAsyncDisposable
         if (types.Count == 0)
         {
             ReadValue read = await Client.RunAsync(new ReadValue { Data = new StorageValue { InitialGameState = new GameState() } }, cancellationToken).ConfigureAwait(false);
-            foreach (ObjectTypeClass type in read.Data?.InitialGameState?.ObjectTypes ?? [])
-            {
-                // Controllers name types by rules ID; older fork builds only report the name.
-                if (!string.IsNullOrEmpty(type.Id)) types.TryAdd(type.Id, type);
-                types.TryAdd(type.Name, type);
-            }
+            ObjectTypeClass[] reported = [.. read.Data?.InitialGameState?.ObjectTypes ?? []];
+            // Controllers name types by rules ID, so every ID goes in before any
+            // display name can claim the same key; older fork builds only report names.
+            foreach (ObjectTypeClass type in reported.Where(static t => !string.IsNullOrEmpty(t.Id))) types.TryAdd(type.Id, type);
+            foreach (ObjectTypeClass type in reported) types.TryAdd(type.Name, type);
         }
         if (!types.TryGetValue(name, out ObjectTypeClass? found)) throw new ArgumentException($"unknown object type {name}");
         await SubmitAsync(new ProduceOrder { ObjectType = found, Action = action }, cancellationToken).ConfigureAwait(false);
