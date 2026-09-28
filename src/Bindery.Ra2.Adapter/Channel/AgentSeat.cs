@@ -126,6 +126,17 @@ public interface IPlayerController
 }
 
 /// <summary>
+/// A controller that wants to hear how each of its orders went. The seat
+/// calls it after every order: <c>error</c> is null when the order was sent,
+/// a <see cref="CommandOutcomeUnknownException"/> when its result was lost,
+/// and the failure otherwise.
+/// </summary>
+public interface ICommandFeedback
+{
+    void Completed(PlayerCommand command, Exception? error);
+}
+
+/// <summary>
 /// The per-player command channel into the game. It is bound to one house;
 /// the observer client has no sink at all.
 /// </summary>
@@ -251,6 +262,7 @@ public sealed class AgentSeat : IAsyncDisposable
                 }
                 foreach (PlayerCommand command in step.Commands)
                 {
+                    Exception? outcome = null;
                     try
                     {
                         await commands.SendAsync(command, cancellationToken).ConfigureAwait(false);
@@ -261,14 +273,17 @@ public sealed class AgentSeat : IAsyncDisposable
                     {
                         // Neither sent nor failed: the game may still carry it out.
                         unknown++;
+                        outcome = exception;
                         await WriteAsync(trace, DecisionTraceKind.CommandOutcomeUnknown, observation.EventId, $"{command.Kind}: {exception.Message}", command.Arguments, cancellationToken).ConfigureAwait(false);
                     }
                     catch (Exception exception) when (exception is not OperationCanceledException)
                     {
                         // One rejected order is a decision worth keeping, not a reason to leave the seat.
                         failed++;
+                        outcome = exception;
                         await WriteAsync(trace, DecisionTraceKind.CommandFailed, observation.EventId, $"{command.Kind}: {exception.Message}", command.Arguments, cancellationToken).ConfigureAwait(false);
                     }
+                    (controller as ICommandFeedback)?.Completed(command, outcome);
                 }
                 if (observation.EventType == Ra2TelemetryEventTypes.MatchEnded)
                 {

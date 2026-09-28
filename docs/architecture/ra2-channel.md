@@ -220,7 +220,8 @@ recorded on the match and leaves the trace on disk.
   `RulePlaybookPlanner` is the deterministic baseline.
 - An `IRoutineController` turns the current playbook into orders on every
   observation. `IdleRoutineController` issues none and stays the default;
-  `DeployMcvRoutineController` deploys the opening MCV (see below).
+  `DeployMcvRoutineController` deploys the opening MCV and
+  `BuildOrderRoutineController` builds on from it (see below).
 - Triggers, drops and planner failures go into the trace as
   `controller_note` entries, next to each `playbook_revised`.
 
@@ -296,6 +297,17 @@ in-process fake of the service.
 - `DeployMcvRoutineController`: the first routine that issues orders. It
   deploys the house's opening MCV once, and `IdleRoutineController` stays the
   default.
+- `BuildOrderRoutineController` (seat routine `build_order`): the MCV deploy,
+  then, once the house's Construction Yard is placed, `produce` for a power
+  plant, barracks and refinery one at a time (`GAPOWR`, `GAPILE`, `GAREFN`
+  for a `GACNST` yard; `NAPOWR`, `NAHAND`, `NAREFN` for `NACNST`). On
+  `ra2.production.completed` it sends `place_building` for the next of 48
+  candidate cells 3 to 8 cells from the yard. A refused placement, or a
+  building still in the factory 3 s after the order, moves to the next cell
+  on the next observation; after 12 tries, or a refused `produce`, it adds a
+  `controller_note` and holds. The seat reports every order's outcome to a
+  controller that implements `ICommandFeedback`, and `PlaybookController`
+  passes it on to its routine.
 - Channel tool: `liveTelemetry` reads one client's service instead of a
   recording, and `agentSeat` puts the rules playbook controller in one player
   seat with live commands into that player's client

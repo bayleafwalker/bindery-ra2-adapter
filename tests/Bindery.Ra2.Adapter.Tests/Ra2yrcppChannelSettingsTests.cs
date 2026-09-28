@@ -2,6 +2,7 @@
 using System.Text.Json;
 using Bindery.Ra2.Adapter.Channel;
 using Bindery.Ra2.Adapter.Ra2yrcpp;
+using Google.Protobuf;
 using Ra2Yrproto.Commands;
 using Ra2Yrproto.Ra2Yr;
 using Xunit;
@@ -119,6 +120,45 @@ public sealed class Ra2yrcppChannelSettingsTests
             UnitOrder order = Assert.IsType<UnitOrder>(Assert.Single(game.Orders));
             Assert.Equal(UnitAction.Deploy, order.Action);
             Assert.Equal([0xA1u], order.ObjectAddresses);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ABuildOrderSeatDeploysTheMcvAndThenStartsThePowerPlantThroughTheLiveSink()
+    {
+        FakeGame game = new();
+        await using FakeRa2yrcppServer server = new(game.Handle);
+        Ra2yrcppAgentSeatSettings settings = new()
+        {
+            House = "Americans",
+            ClientInstanceId = "machine-a",
+            Routine = Ra2yrcppAgentSeatSettings.BuildOrderRoutine,
+        };
+        settings.Validate();
+        (AgentSeat seat, Ra2yrcppCommandSink commands) = settings.CreateSeat(Launch(settings.ToAssignment(), "Americans", $"{server.Uri.Host}:{server.Uri.Port}"));
+        await using Ra2yrcppCommandSink _ = commands;
+        string directory = Path.Combine(Path.GetTempPath(), "bindery-seat-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string recording = Path.Combine(directory, "telemetry.ndjson");
+            await File.WriteAllLinesAsync(recording,
+            [
+                Line(1, Ra2TelemetryEventTypes.MatchStarted, "{}"),
+                Line(2, Ra2TelemetryEventTypes.UnitCreated, "{\"house\":\"Americans\",\"type\":\"AMCV\",\"object\":161,\"visible_to\":[\"Americans\"]}"),
+                Line(3, Ra2TelemetryEventTypes.BuildingPlaced, "{\"house\":\"Americans\",\"type\":\"GACNST\",\"object\":4097,\"x\":2688,\"y\":5248,\"z\":0,\"visible_to\":[\"Americans\"]}"),
+            ]);
+
+            AgentSeatSummary summary = await seat.RunAsync(new NdjsonTelemetrySource(recording), directory);
+
+            Assert.Equal(2, summary.CommandsSent);
+            IMessage[] orders = game.Orders.ToArray();
+            Assert.Equal(UnitAction.Deploy, Assert.IsType<UnitOrder>(orders[0]).Action);
+            Assert.Equal(Snapshots.Gapowr, Assert.IsType<ProduceOrder>(orders[1]).ObjectType.PointerSelf);
         }
         finally
         {
