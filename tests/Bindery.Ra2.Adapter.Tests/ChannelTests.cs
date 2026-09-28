@@ -166,7 +166,23 @@ public sealed class ChannelTests
             new ChannelMatchResult(Evidence(complete: true), TelemetryObserved: 0, TelemetryEnded: false));
 
         Assert.Equal(ChannelMatchOutcome.Incomplete, record.Outcome);
-        Assert.Contains("no telemetry", record.Failure);
+        Assert.Contains("saw no events", record.Failure);
+    }
+
+    [Fact]
+    public void AnEmptyTelemetryStreamCarriesTheSourcesOwnIssue()
+    {
+        // Zero events does not prove the game quit: a source that failed
+        // (or a wrong endpoint) also sees nothing. Say what was seen, and why
+        // if the source knows.
+        ChannelMatchContext context = new("channel-1", 1, "MAP01.MAP", playerView, null);
+        ChannelMatchRecord record = ChannelRunner.FromResult(Request(1), context, DateTimeOffset.UtcNow,
+            new ChannelMatchResult(Evidence(complete: true), TelemetryObserved: 0, TelemetryEnded: false, TelemetryIssue: "returned no object type classes 5 times"));
+
+        Assert.Equal(ChannelMatchOutcome.Incomplete, record.Outcome);
+        Assert.Contains("saw no events", record.Failure);
+        Assert.Contains("returned no object type classes", record.Failure);
+        Assert.DoesNotContain("frame", record.Failure);
     }
 
     [Fact]
