@@ -41,7 +41,8 @@ from capturing a rendered participant or observer window.
    tracker, and appends it to `channel-matches.ndjson`.
 6. The channel starts the next match after the holding interval. It stops and
    releases the output when the budget is spent, a drain is requested
-   (`RequestDrain`), two matches in a row fail, or it is cancelled.
+   (`RequestDrain`), two matches in a row do not complete (`Failed` or
+   `Incomplete`), or it is cancelled.
 
 The room stream is the primary playback path. MediaMTX receives OBS's single
 RTMP publish and serves it over WebRTC, HLS and RTSP. Twitch receives a copy
@@ -59,13 +60,18 @@ event count, whether the stream reached `ra2.match.ended`, and any telemetry
 failure.
 
 `Completed` requires the live runner's lifecycle-complete flag, no client
-failure and no desync dump. Anything short of that is `Incomplete`; a match
+failure (a game exit code in the NTSTATUS error range counts as one), no
+desync dump and, when telemetry is attached, at least one telemetry event. Anything short of that is `Incomplete`; a match
 that could not be prepared is `Failed`. `Winner` stays null unless the
 telemetry names one: the `winner` field of `ra2.match.ended`, or, after the
 match ends, the single joined house that was never defeated. Exit codes
 cannot name a winner, because Yuri's Revenge exits the same way for both
 sides. A telemetry, tracker or agent failure is recorded on the match and
-never turns a played match into a failed one. A channel record never upgrades the qualification flags
+never turns a played match into a failed one. One exception: attached
+telemetry that saw no events at all is no evidence that anything was played
+(a game that quit on frame 0 looks the same), so that match is `Incomplete`
+with the failure "the attached telemetry saw no events"; two such matches in a
+row stop the channel, so a misconfigured telemetry endpoint stops it too. A channel record never upgrades the qualification flags
 in the evidence it points to.
 
 ### Overlay, audio and the experiment report
