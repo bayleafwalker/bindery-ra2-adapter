@@ -80,7 +80,7 @@ if (-not (Test-Path $sm) -or -not (Get-FileHash $sm).Hash.StartsWith($want)) { C
 # Per-run telemetry: move the previous record/log aside so counts belong to this run.
 if ($RunId) {
   $pre = "$lab\runs\$RunId\pre-$side"; New-Item -ItemType Directory -Force $pre | Out-Null
-  foreach ($f in 'ra2yrcpp.record', 'ra2yrcpp.log') { $p = Join-Path $app $f; if (Test-Path $p) { Move-Item -Force $p $pre } }
+  foreach ($f in 'ra2yrcpp.record', 'ra2yrcpp.log', 'DDrawCompat-gamemd.log') { $p = Join-Path $app $f; if (Test-Path $p) { Move-Item -Force $p $pre } }
 }
 foreach ($f in 'libra2yrcpp.dll', 'zlib1.dll', 'ra2yrcpp.json', 'spawnmap.ini', 'gamemd.exe') {
   "{0,-16} {1}" -f $f, (Get-FileHash (Join-Path $app $f)).Hash.Substring(0, 16)

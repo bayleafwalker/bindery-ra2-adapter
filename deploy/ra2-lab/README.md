@@ -97,6 +97,25 @@ played, check the telemetry, not only the harness:
   played: the control plane winds down cleanly around a game that quit on frame 0.
 - Syringe reports exit code 3 for a normal QuickExit ending too, so the exit
   code does not distinguish a played match from a failed one.
+- A game that dies at startup shows an NTSTATUS exit code in
+  `syringe-client-*.log` (e.g. `C00000FD`, a stack overflow); the harness then
+  records that client as failed. The startup stack overflows seen so far were
+  inside the game tree's `DDRAW.dll` (DDrawCompat 0.5.4, offset 0x1C104).
+  `ddrawcompat-client-*.log` keeps DDrawCompat's own log for each run.
+  Crash dumps need Windows Error Reporting LocalDumps for `gamemd.exe`. The
+  harness does not set it: it is a manual step, once per guest:
+
+  ```sh
+  ra2-vm-exec <dom> '$k = "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\gamemd.exe"; New-Item -Path $k -Force | Out-Null; New-ItemProperty -Path $k -Name DumpFolder -PropertyType ExpandString -Value "C:\Bindery\dumps" -Force | Out-Null; New-ItemProperty -Path $k -Name DumpType -PropertyType DWord -Value 2 -Force | Out-Null; New-ItemProperty -Path $k -Name DumpCount -PropertyType DWord -Value 5 -Force | Out-Null'
+  ```
+
+  Revert with
+  `ra2-vm-exec <dom> 'Remove-Item -Recurse "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps"'`.
+  WER may not write a dump while Syringe is attached as the debugger.
+- A module that faults at a randomised address can be named on the same boot:
+  DLL bases stay fixed per boot, so the 32-bit module list of a running
+  `gamemd.exe` (`C:\Windows\SysWOW64\WindowsPowerShell\v1.0\powershell.exe`,
+  `(Get-Process gamemd).Modules`) shows which module holds the address.
 
 `PREPARE_STAGE=2 lab-run.sh --stage 1` plays the stage-1 shape on the fork DLL,
 which separates the DLL from the agent seat when stage 2 fails.
