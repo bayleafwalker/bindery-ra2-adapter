@@ -314,6 +314,9 @@ collect() {
   for side in a b; do
     gx $side "Get-Content C:\\Bindery\\appliances\\client-$side\\ra2yrcpp.log -EA SilentlyContinue" 120 > "$out/ra2yrcpp-client-$side.log" 2>&1 || true
     gx $side "Get-Content C:\\Bindery\\appliances\\client-$side\\syringe.log -EA SilentlyContinue" 120 > "$out/syringe-client-$side.log" 2>&1 || true
+    gx $side "Get-Content C:\\Bindery\\appliances\\client-$side\\DDrawCompat-gamemd.log -EA SilentlyContinue" 120 > "$out/ddrawcompat-client-$side.log" 2>&1 || true
+    # WER LocalDumps for gamemd.exe (README): list, never copy -- a full dump is large.
+    gx $side "Get-ChildItem C:\\Bindery\\dumps -Filter *.dmp -EA SilentlyContinue | % { '{0} {1} {2}' -f \$_.LastWriteTime.ToString('s'), \$_.Length, \$_.FullName }" 60 > "$out/dumps-client-$side.txt" 2>&1 || true
   done
   # Tokens must not reach evidence: scrub anything that looks like one.
   # grep exits 1 when nothing matches -- the normal case -- which pipefail would turn into a failed run.
