@@ -160,10 +160,13 @@ public sealed class ChannelRunner
                 await records.WriteAsync(record, cancellationToken).ConfigureAwait(false);
                 matches.Add(record);
 
-                consecutiveFailures = record.Outcome == ChannelMatchOutcome.Failed ? consecutiveFailures + 1 : 0;
+                // Incomplete counts too: a crashed seat or telemetry that saw
+                // nothing is as broken as a failed launch, and must not run
+                // unattended to the match budget.
+                consecutiveFailures = record.Outcome == ChannelMatchOutcome.Completed ? 0 : consecutiveFailures + 1;
                 if (consecutiveFailures >= ChannelRequest.MaximumConsecutiveFailures)
                 {
-                    stopReason = $"{consecutiveFailures} consecutive matches failed";
+                    stopReason = $"{consecutiveFailures} consecutive matches did not complete";
                     break;
                 }
                 if (index == request.MaximumMatches) break;

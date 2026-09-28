@@ -94,6 +94,34 @@ public sealed class ChannelTests
     }
 
     [Fact]
+    public async Task RepeatedIncompleteMatchesAlsoStopTheChannel()
+    {
+        // A seat whose game crashes at startup every match, or telemetry that
+        // never connects, records Incomplete, not Failed: it must not run
+        // unattended to the match budget.
+        ChannelRunner runner = new(new FakeLauncher(_ => Task.FromResult(new ChannelMatchResult(Evidence(complete: true), TelemetryObserved: 0))), new FakeProduction(), new MemorySink(), NoDelay);
+
+        ChannelSessionSummary summary = await runner.RunAsync(Request(5));
+
+        Assert.Equal(ChannelRequest.MaximumConsecutiveFailures, summary.Matches.Count);
+        Assert.All(summary.Matches, static m => Assert.Equal(ChannelMatchOutcome.Incomplete, m.Outcome));
+        Assert.Contains("consecutive", summary.StopReason);
+    }
+
+    [Fact]
+    public async Task ACompletedMatchResetsTheRun()
+    {
+        int call = 0;
+        ChannelRunner runner = new(new FakeLauncher(_ => Task.FromResult(++call % 2 == 1
+            ? new ChannelMatchResult(Evidence(complete: true), TelemetryObserved: 0)
+            : new ChannelMatchResult(Evidence(complete: true)))), new FakeProduction(), new MemorySink(), NoDelay);
+
+        ChannelSessionSummary summary = await runner.RunAsync(Request(4));
+
+        Assert.Equal(4, summary.Matches.Count);
+    }
+
+    [Fact]
     public async Task DrainLetsTheCurrentMatchFinish()
     {
         ChannelRunner? runner = null;
