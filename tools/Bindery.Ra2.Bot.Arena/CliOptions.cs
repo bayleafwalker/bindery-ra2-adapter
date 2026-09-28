@@ -163,7 +163,7 @@ public sealed record CliOptions(
                             throw new ArgumentException($"--knob expects Name=value, got '{spec}'.");
                         }
                         string knob = spec[..eq];
-                        if (!Bindery.Ra2.Bot.Tuning.TuningKnobs.Operational.Any(k => k.Name == knob) && !Bindery.Ra2.Bot.Tuning.TuningKnobs.Features.Any(k => k.Name == knob))
+                        if (!Bindery.Ra2.Bot.Tuning.TuningKnobs.Operational.Any(k => k.Name == knob) && !Bindery.Ra2.Bot.Tuning.TuningKnobs.Features.Any(k => k.Name == knob) && !Bindery.Ra2.Bot.Tuning.TuningKnobs.Diagnostic.Any(k => k.Name == knob))
                         {
                             throw new ArgumentException($"Unknown knob '{knob}'.");
                         }

@@ -40,6 +40,10 @@ namespace Bindery.Ra2.Bot.Features;
 /// enough that a lost refinery shows within a quarter-minute. Must not exceed <see cref="HistorySeconds"/>.
 /// </param>
 /// <param name="LowPowerGraceSeconds">Same de-dup gap, specifically for <see cref="StrategicEventKind.LowPower"/>, which would otherwise re-fire every compile while power stays negative.</param>
+/// <param name="ScoutingCoverageCap">
+/// A diagnostic cap on <see cref="ScoutingFeatures.CoverageFraction"/> for arena experiments. The
+/// default 1.0 changes nothing; not a tuning knob.
+/// </param>
 public sealed record FeatureOptions(
     double HistorySeconds = 65.0,
     double ThreatSearchCells = 60.0,
@@ -53,4 +57,5 @@ public sealed record FeatureOptions(
     double EventDedupWindowSeconds = 20.0,
     double LowPowerGraceSeconds = 30.0,
     double IncomeWindowSeconds = 15.0,
-    double ArmyValueSwingMinValue = 1000.0);
+    double ArmyValueSwingMinValue = 1000.0,
+    double ScoutingCoverageCap = 1.0);

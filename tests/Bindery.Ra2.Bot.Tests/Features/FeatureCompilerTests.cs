@@ -233,4 +233,41 @@ public sealed class FeatureCompilerTests
         // Home was just seen (age 0), Middle was seen 20s ago (stale beyond the 10s window), EnemyStart never seen.
         Assert.Equal(1.0 / 3.0, features.Scouting.CoverageFraction, precision: 6);
     }
+
+    [Fact]
+    public void ScoutingCoverageCap_ClampsReportedCoverage_DefaultLeavesItUnchanged()
+    {
+        FakeRulesDatabase rules = Rules();
+        BeliefModel belief = new(rules, new BeliefOptions());
+        FeatureCompiler compilerDefault = new(rules, new FeatureOptions());
+        FeatureCompiler compilerCapped = new(rules, new FeatureOptions(ScoutingCoverageCap: 0.39));
+
+        BeliefSnapshot fullyScouted = belief.Apply(Frame(
+            0, 5000, [OwnBuilding(1)],
+            visible: new HashSet<RegionId> { TestMaps.Home, TestMaps.Middle, TestMaps.EnemyStart }));
+
+        Assert.Equal(1.0, compilerDefault.Compile(fullyScouted).Scouting.CoverageFraction, precision: 6);
+        Assert.Equal(0.39, compilerCapped.Compile(fullyScouted).Scouting.CoverageFraction, precision: 6);
+    }
+
+    [Fact]
+    public void ScoutingCoverageCap_ForcesAScoutObjective_DespiteFullActualCoverage()
+    {
+        FakeRulesDatabase rules = Rules();
+        BeliefModel belief = new(rules, new BeliefOptions());
+        FeatureCompiler compilerCapped = new(rules, new FeatureOptions(ScoutingCoverageCap: 0.39));
+
+        BeliefSnapshot fullyScouted = belief.Apply(Frame(
+            0, 5000, [OwnBuilding(1)],
+            visible: new HashSet<RegionId> { TestMaps.Home, TestMaps.Middle, TestMaps.EnemyStart }));
+
+        StrategicFeatures capped = compilerCapped.Compile(fullyScouted);
+        Assert.Equal(0.39, capped.Scouting.CoverageFraction, precision: 6);
+
+        // Turtle is not an aggressive posture, so the only way a Scout objective appears here is the
+        // capped coverage falling below the 40% threshold in IntentComposer.Objectives.
+        IReadOnlyList<Objective> objectives =
+            Bindery.Ra2.Bot.Strategy.IntentComposer.Objectives(StrategicPosture.Turtle, capped);
+        Assert.Contains(objectives, static o => o.Kind == ObjectiveKind.Scout);
+    }
 }

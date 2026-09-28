@@ -93,6 +93,7 @@ public sealed partial class FeatureCompiler
             }
         }
         double coverage = total == 0 ? 0.0 : covered / (double)total;
+        coverage = Math.Min(coverage, options.ScoutingCoverageCap);
 
         List<string> unknowns = [];
         bool pastGrace = snapshot.Time.Seconds >= options.EnemyStartUnscoutedGraceSeconds;
