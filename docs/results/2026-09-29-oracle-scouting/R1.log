@@ -1,0 +1,2 @@
+selector-oracle: 1440 matches, 959 wins; leakage probe 0/0 differing frames, 0 fog-violation frames.
+Wrote 1440 match results, 2 leakage probes and report.md to docs/results/2026-09-29-oracle-scouting/R1 in 419s.
