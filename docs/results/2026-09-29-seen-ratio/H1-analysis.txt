@@ -1,0 +1,10 @@
+0.8 selector: 950/1120 (Allied 400/560, Soviet 550/560)
+0.8 selector-oracle: 1014/1120 (Allied 464/560, Soviet 550/560)
+1.0 selector: 950/1120 (Allied 400/560, Soviet 550/560)
+1.0 selector-oracle: 1028/1120 (Allied 489/560, Soviet 539/560)
+paired selector all: 1.0 better 2, worse 2, sign p 1
+paired selector Allied: 1.0 better 1, worse 1, sign p 1
+paired selector Soviet: 1.0 better 1, worse 1, sign p 1
+paired selector-oracle all: 1.0 better 40, worse 26, sign p 0.1089
+paired selector-oracle Allied: 1.0 better 32, worse 7, sign p 7.025e-05
+paired selector-oracle Soviet: 1.0 better 8, worse 19, sign p 0.05224
