@@ -17,6 +17,8 @@ public sealed record OptionKnob(string Name, double Min, double Max, bool Intege
 /// The option knobs the tuner may change, and the only code that reads or writes them by name.
 /// Only knobs with a consumer in the planner or feature compiler are listed: tuning a field nothing reads
 /// would let the search drift it at random and publish the drift as a "tuned" value.
+/// <see cref="Diagnostic"/> knobs are separate: they are never read by the tuner, only settable via
+/// <c>--knob</c> for arena experiments.
 /// </summary>
 /// <remarks>
 /// Deliberately excluded: controller ids, lease
@@ -61,6 +63,15 @@ public static class TuningKnobs
         new("ThreatSearchCells", 20, 120, false, "Travel distance within which an enemy contact counts toward a region's threat."),
         new("SlowestTypicalSpeed", 2, 8, false, "Cells/second used for every ETA and reinforcement estimate."),
         new("ArmyValueSwingThreshold", 0.1, 0.5, false, "Fractional army-value loss over 15 s that raises an army-value-swing event (a replan trigger)."),
+    ];
+
+    /// <summary>
+    /// Knobs settable only via <c>--knob</c>, for arena diagnostics, never by the tuner: excluded from
+    /// <see cref="Operational"/> and <see cref="Features"/> so the search never touches them.
+    /// </summary>
+    public static IReadOnlyList<OptionKnob> Diagnostic { get; } =
+    [
+        new("ScoutingCoverageCap", 0, 1, false, "Caps the reported scouting coverage (diagnostic; never tuned)."),
     ];
 
     /// <summary>Reads a knob's value from <paramref name="options"/>.</summary>
@@ -129,6 +140,7 @@ public static class TuningKnobs
             "ThreatSearchCells" => options.ThreatSearchCells,
             "SlowestTypicalSpeed" => options.SlowestTypicalSpeed,
             "ArmyValueSwingThreshold" => options.ArmyValueSwingThreshold,
+            "ScoutingCoverageCap" => options.ScoutingCoverageCap,
             _ => throw new InvalidDataException($"Unknown feature knob '{name}'."),
         };
     }
@@ -142,6 +154,7 @@ public static class TuningKnobs
             "ThreatSearchCells" => options with { ThreatSearchCells = value },
             "SlowestTypicalSpeed" => options with { SlowestTypicalSpeed = value },
             "ArmyValueSwingThreshold" => options with { ArmyValueSwingThreshold = value },
+            "ScoutingCoverageCap" => options with { ScoutingCoverageCap = value },
             _ => throw new InvalidDataException($"Unknown feature knob '{name}'."),
         };
     }

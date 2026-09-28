@@ -51,4 +51,23 @@ public sealed class ArmKnobTests
         double value = (knob.Min + knob.Max) / 2;
         Assert.Equal(value, TuningKnobs.Get(TuningKnobs.Set(new Bindery.Ra2.Bot.Operations.OperationalOptions(), name, value), name), 6);
     }
+
+    [Fact]
+    public void Diagnostic_knob_flag_parses_but_is_a_diagnostic_not_an_operational_or_feature_knob()
+    {
+        CliOptions options = CliOptions.Parse(["run", "--knob", "ScoutingCoverageCap=0.39"]);
+
+        Assert.Equal(0.39, options.ArmKnobs["ScoutingCoverageCap"]);
+        Assert.Single(TuningKnobs.Diagnostic, k => k.Name == "ScoutingCoverageCap");
+        Assert.DoesNotContain(TuningKnobs.Features, k => k.Name == "ScoutingCoverageCap");
+        Assert.DoesNotContain(TuningKnobs.Operational, k => k.Name == "ScoutingCoverageCap");
+    }
+
+    [Fact]
+    public void ScoutingCoverageCap_round_trips_through_Set_and_Get()
+    {
+        OptionKnob knob = Assert.Single(TuningKnobs.Diagnostic, k => k.Name == "ScoutingCoverageCap");
+        double value = (knob.Min + knob.Max) / 2;
+        Assert.Equal(value, TuningKnobs.Get(TuningKnobs.Set(new Bindery.Ra2.Bot.Features.FeatureOptions(), "ScoutingCoverageCap", value), "ScoutingCoverageCap"), 6);
+    }
 }
