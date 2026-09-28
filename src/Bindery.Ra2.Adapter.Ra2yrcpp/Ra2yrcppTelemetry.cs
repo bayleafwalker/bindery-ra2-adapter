@@ -34,6 +34,13 @@ public sealed record Ra2yrcppEvent(string EventType, JsonElement Payload);
 /// Objects in limbo -- a finished building still in its factory, a unit in a
 /// transport -- are off the map and count as absent. Credits are sampled on
 /// change and at least every heartbeat, so a flat economy still shows.
+///
+/// Each house's factory items are reported as <c>ra2.production.changed</c>
+/// when one appears, crosses a 10% progress step, holds or resumes,
+/// finishes, or leaves the factory (<c>gone</c>), and as
+/// <c>ra2.production.completed</c> once when it finishes. The item is typed
+/// through its limbo object's type class; its address is this client's
+/// memory, so it is never emitted.
 /// </remarks>
 public sealed class Ra2yrcppSnapshotDiff
 {
@@ -47,6 +54,10 @@ public sealed class Ra2yrcppSnapshotDiff
     private readonly Dictionary<string, (long Credits, DateTimeOffset At)> credits = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (int Output, int Drain)> power = new(StringComparer.Ordinal);
     private readonly HashSet<string> defeated = new(StringComparer.Ordinal);
+    private readonly Dictionary<(uint Owner, uint Item), Production> production = [];
+
+    /// <summary>The fork's production steps for a finished item (<c>cfg::PRODUCTION_STEPS</c>).</summary>
+    private const int ProductionSteps = 54;
 
     public Ra2yrcppSnapshotDiff(string? seatHouse = null, IEnumerable<string>? nonPlayerHouses = null, TimeSpan? creditsHeartbeat = null, TimeSpan? winnerGrace = null)
     {
@@ -119,6 +130,8 @@ public sealed class Ra2yrcppSnapshotDiff
             if (Scoped(added.Owner)) events.Add(ObjectEvent(added.IsBuilding ? Ra2TelemetryEventTypes.BuildingPlaced : Ra2TelemetryEventTypes.UnitCreated, added));
         }
 
+        events.AddRange(ProductionEvents(state, owners));
+
         foreach (House house in Players(state).Where(h => Scoped(h.Name)))
         {
             if (!credits.TryGetValue(house.Name, out var last) || last.Credits != house.Money || at - last.At >= heartbeat)
@@ -149,6 +162,51 @@ public sealed class Ra2yrcppSnapshotDiff
             if (at - overSince.Value >= grace) events.Add(End([]));
         }
         return events;
+    }
+
+    private List<Ra2yrcppEvent> ProductionEvents(GameState state, Dictionary<uint, string> owners)
+    {
+        List<Ra2yrcppEvent> events = [];
+        Dictionary<uint, uint> typeOf = state.Objects.GroupBy(static o => o.PointerSelf).ToDictionary(static g => g.Key, static g => g.First().PointerTechnotypeclass);
+        Dictionary<(uint, uint), Production> current = [];
+        foreach (Factory factory in state.Factories)
+        {
+            if (factory.Object == 0 || !owners.TryGetValue(factory.Owner, out string? owner) || nonPlayer.Contains(owner) || !Scoped(owner)) continue;
+            // An item whose type cannot be read yet is picked up on a later snapshot.
+            if (!typeOf.TryGetValue(factory.Object, out uint pointer) || !typeNames.TryGetValue(pointer, out string? type)) continue;
+            int progress = factory.Completed ? 100 : Math.Clamp(factory.ProgressTimer * 100 / ProductionSteps / 10 * 10, 0, 90);
+            // The stable ID keys the item when there is one; the address only stands in, internally.
+            current[(factory.Owner, factory.ObjectUniqueId != 0 ? factory.ObjectUniqueId : factory.Object)] = new Production(owner, type, progress, factory.OnHold, factory.Completed, factory.ObjectUniqueId);
+        }
+        foreach ((var key, Production gone) in production.Where(pair => !current.ContainsKey(pair.Key)).OrderBy(static pair => pair.Key).ToArray())
+        {
+            production.Remove(key);
+            events.Add(ProductionEvent(Ra2TelemetryEventTypes.ProductionChanged, gone, gone: true));
+        }
+        foreach ((var key, Production item) in current.OrderBy(static pair => pair.Key))
+        {
+            production.TryGetValue(key, out Production? last);
+            production[key] = item;
+            if (last != item) events.Add(ProductionEvent(Ra2TelemetryEventTypes.ProductionChanged, item));
+            if (item.Completed && last is not { Completed: true }) events.Add(ProductionEvent(Ra2TelemetryEventTypes.ProductionCompleted, item));
+        }
+        return events;
+    }
+
+    private static Ra2yrcppEvent ProductionEvent(string eventType, Production item, bool gone = false)
+    {
+        JsonObject payload = new()
+        {
+            ["house"] = item.Owner,
+            ["type"] = item.Type,
+            ["progress"] = item.Progress,
+            ["on_hold"] = item.OnHold,
+            ["completed"] = item.Completed,
+        };
+        if (item.UniqueId != 0) payload["unique_id"] = item.UniqueId;
+        if (gone) payload["gone"] = true;
+        payload["visible_to"] = new JsonArray(item.Owner);
+        return new(eventType, Payload(payload));
     }
 
     private Ra2yrcppEvent End(House[] winners)
@@ -185,6 +243,8 @@ public sealed class Ra2yrcppSnapshotDiff
     }
 
     private static JsonElement Payload(JsonObject payload) => JsonSerializer.SerializeToElement(payload);
+
+    private sealed record Production(string Owner, string Type, int Progress, bool OnHold, bool Completed, uint UniqueId);
 
     private sealed record TrackedObject(Ra2Yrproto.Ra2Yr.Object Object, string Owner, string? Type)
     {

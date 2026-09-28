@@ -40,6 +40,12 @@ public sealed class Ra2yrcppAgentSeatSettings
     /// <summary>Deploy the opening MCV once (<see cref="DeployMcvRoutineController"/>).</summary>
     public const string DeployMcvRoutine = "deploy_mcv";
 
+    /// <summary>
+    /// Deploy the opening MCV, then build power, barracks and refinery
+    /// (<see cref="BuildOrderRoutineController"/>).
+    /// </summary>
+    public const string BuildOrderRoutine = "build_order";
+
     /// <summary>The house the seat plays, as the game names it: the player's name.</summary>
     public string House { get; init; } = string.Empty;
 
@@ -54,8 +60,8 @@ public sealed class Ra2yrcppAgentSeatSettings
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(House);
         ArgumentException.ThrowIfNullOrWhiteSpace(ClientInstanceId);
-        if (Routine is not (IdleRoutine or DeployMcvRoutine))
-            throw new ArgumentException($"routine is {IdleRoutine} or {DeployMcvRoutine}, not {Routine}");
+        if (Routine is not (IdleRoutine or DeployMcvRoutine or BuildOrderRoutine))
+            throw new ArgumentException($"routine is {IdleRoutine}, {DeployMcvRoutine} or {BuildOrderRoutine}, not {Routine}");
         ToAssignment().Validate();
     }
 
@@ -84,7 +90,12 @@ public sealed class Ra2yrcppAgentSeatSettings
     private PlaybookController Controller() => new(
         House,
         new RulePlaybookPlanner(),
-        Routine == DeployMcvRoutine ? new DeployMcvRoutineController() : new IdleRoutineController(),
+        Routine switch
+        {
+            DeployMcvRoutine => new DeployMcvRoutineController(),
+            BuildOrderRoutine => new BuildOrderRoutineController(new DeployMcvRoutineController()),
+            _ => new IdleRoutineController(),
+        },
         controllerVersion: ControllerVersion);
 }
 

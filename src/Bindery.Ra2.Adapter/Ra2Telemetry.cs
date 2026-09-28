@@ -20,6 +20,10 @@ public static class Ra2TelemetryEventTypes
     public const string BuildingDestroyed = "ra2.building.destroyed";
     public const string CreditsSampled = "ra2.credits.sampled";
     public const string PowerSampled = "ra2.power.sampled";
+    /// <summary>A house's factory item appeared, moved a progress step, held, finished, or left the factory (<c>gone</c>).</summary>
+    public const string ProductionChanged = "ra2.production.changed";
+    /// <summary>A house's factory item finished: a building is ready to place.</summary>
+    public const string ProductionCompleted = "ra2.production.completed";
     public const string OrderIssued = "ra2.order.issued";
     public const string SelectionChanged = "ra2.selection.changed";
     public const string PlayerDefeated = "ra2.player.defeated";

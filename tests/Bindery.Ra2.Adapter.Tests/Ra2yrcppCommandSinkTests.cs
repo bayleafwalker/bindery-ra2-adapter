@@ -25,6 +25,11 @@ internal sealed class FakeGame
     /// <summary>The type classes ReadValue reports.</summary>
     public ObjectTypeClass[] Types { get; set; } = Snapshots.Types;
 
+    /// <summary>The cells a PlaceQuery reports placeable; null reports none.</summary>
+    public Func<Coordinates, bool>? Placeable { get; set; }
+
+    public ConcurrentQueue<PlaceQuery> Queries { get; } = new();
+
     public CommandResult? Handle(Any command)
     {
         if (command.Is(GetGameState.Descriptor)) return FakeRa2yrcppServer.Ok(new GetGameState { State = State });
@@ -33,6 +38,14 @@ internal sealed class FakeGame
             GameState initial = new();
             initial.ObjectTypes.AddRange(Types);
             return FakeRa2yrcppServer.Ok(new ReadValue { Data = new StorageValue { InitialGameState = initial } });
+        }
+        if (command.Is(PlaceQuery.Descriptor))
+        {
+            PlaceQuery query = command.Unpack<PlaceQuery>();
+            Queries.Enqueue(query);
+            PlaceQuery result = new() { TypeClass = query.TypeClass, HouseClass = query.HouseClass };
+            result.Coordinates.AddRange(query.Coordinates.Where(c => Placeable?.Invoke(c) == true));
+            return FakeRa2yrcppServer.Ok(result);
         }
         IMessage order = command.Is(UnitOrder.Descriptor) ? command.Unpack<UnitOrder>()
             : command.Is(ProduceOrder.Descriptor) ? command.Unpack<ProduceOrder>()
@@ -254,13 +267,17 @@ public sealed class Ra2yrcppCommandSinkTests
         FakeGame game = new();
         game.State.Objects.Add(Snapshots.Unit(0xA5, Snapshots.Americans, Snapshots.Gapowr, AbstractType.Building, limbo: true));
         game.State.Factories.Add(new Factory { Owner = Snapshots.Americans, Object = 0xA5, Completed = true });
+        // The enemy's finished buildings: one of the same type, one the seat has none of.
+        game.State.Objects.Add(Snapshots.Unit(0xB5, Snapshots.Soviets, Snapshots.Gapowr, AbstractType.Building, limbo: true));
         game.State.Factories.Add(new Factory { Owner = Snapshots.Soviets, Object = 0xB5, Completed = true });
+        game.State.Objects.Add(Snapshots.Unit(0xB6, Snapshots.Soviets, Snapshots.Napowr, AbstractType.Building, limbo: true));
+        game.State.Factories.Add(new Factory { Owner = Snapshots.Soviets, Object = 0xB6, Completed = true });
         await using FakeRa2yrcppServer server = new(game.Handle);
         await using Ra2yrcppCommandSink sink = Sink(server);
 
         await sink.SendAsync(Command(Ra2yrcppCommandSink.Produce, "{\"type\":\"GAPOWR\"}"), CancellationToken.None);
-        await sink.SendAsync(Command(Ra2yrcppCommandSink.PlaceBuilding, "{\"object\":165,\"x\":1024,\"y\":2048}"), CancellationToken.None);
-        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => sink.SendAsync(Command(Ra2yrcppCommandSink.PlaceBuilding, "{\"object\":181,\"x\":1,\"y\":1}"), CancellationToken.None));
+        await sink.SendAsync(Command(Ra2yrcppCommandSink.PlaceBuilding, "{\"type\":\"GAPOWR\",\"x\":1024,\"y\":2048}"), CancellationToken.None);
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => sink.SendAsync(Command(Ra2yrcppCommandSink.PlaceBuilding, "{\"type\":\"NAPOWR\",\"x\":1,\"y\":1}"), CancellationToken.None));
         await Assert.ThrowsAnyAsync<ArgumentException>(() => sink.SendAsync(Command(Ra2yrcppCommandSink.Produce, "{\"type\":\"NOSUCH\"}"), CancellationToken.None));
         await Assert.ThrowsAnyAsync<ArgumentException>(() => sink.SendAsync(Command("self_destruct", "{}"), CancellationToken.None));
 
@@ -273,6 +290,140 @@ public sealed class Ra2yrcppCommandSinkTests
         Assert.Equal(0xA5u, place.Building.PointerSelf);
         Assert.Equal(1024, place.Coordinates.X);
         Assert.Equal(2048, place.Coordinates.Y);
+    }
+
+    /// <summary>The seat's client with a finished power plant (0xA7, stable ID 701) waiting in the house's factory.</summary>
+    private static FakeGame FinishedPowerPlant(bool completed = true, uint owner = Snapshots.Americans)
+    {
+        FakeGame game = new() { Types = Snapshots.ForkTypes };
+        game.State.Objects.Add(Snapshots.Unit(0xA7, owner, Snapshots.Gapowr, AbstractType.Building, limbo: true, uniqueId: 701));
+        game.State.Factories.Add(new Factory { Owner = owner, Object = 0xA7, ObjectUniqueId = 701, Completed = completed, ProgressTimer = completed ? 54 : 20 });
+        return game;
+    }
+
+    [Fact]
+    public async Task PlacementFindsTheFinishedBuildingByItsRulesIdOnTheSeatsClient()
+    {
+        FakeGame game = FinishedPowerPlant();
+        await using FakeRa2yrcppServer server = new(game.Handle);
+        await using Ra2yrcppCommandSink sink = Sink(server);
+
+        await sink.SendAsync(Command(Ra2yrcppCommandSink.PlaceBuilding, "{\"type\":\"GAPOWR\",\"x\":1024,\"y\":2048,\"z\":16}"), CancellationToken.None);
+
+        PlaceBuilding place = Assert.IsType<PlaceBuilding>(Assert.Single(game.Orders));
+        Assert.Equal(0xA7u, place.Building.PointerSelf);
+        Assert.Equal(new Coordinates { X = 1024, Y = 2048, Z = 16 }, place.Coordinates);
+    }
+
+    [Fact]
+    public async Task PlacementAmongCellsAsksTheSeatsGameAndTakesTheFirstPlaceableInTheGivenOrder()
+    {
+        FakeGame game = FinishedPowerPlant();
+        game.Placeable = static c => c.X is 1280 or 1536;
+        await using FakeRa2yrcppServer server = new(game.Handle);
+        await using Ra2yrcppCommandSink sink = Sink(server);
+
+        await sink.SendAsync(Command(Ra2yrcppCommandSink.PlaceBuilding,
+            "{\"type\":\"GAPOWR\",\"cells\":[{\"x\":1024,\"y\":2048,\"z\":0},{\"x\":1536,\"y\":2048,\"z\":0},{\"x\":1280,\"y\":2048,\"z\":0}]}"), CancellationToken.None);
+
+        PlaceQuery query = Assert.Single(game.Queries);
+        Assert.Equal(3, query.Coordinates.Count);
+        Assert.Equal(game.Types.First(static t => t.Id == "GAPOWR" || t.Name == "GAPOWR").PointerSelf, query.TypeClass);
+        Assert.Equal(game.State.Houses.Single(static h => h.CurrentPlayer).Self, query.HouseClass);
+        PlaceBuilding place = Assert.IsType<PlaceBuilding>(Assert.Single(game.Orders));
+        Assert.Equal(new Coordinates { X = 1536, Y = 2048, Z = 0 }, place.Coordinates);
+    }
+
+    [Fact]
+    public async Task PlacementWithNoPlaceableCellIsRefusedWithoutPlacing()
+    {
+        FakeGame game = FinishedPowerPlant();
+        await using FakeRa2yrcppServer server = new(game.Handle);
+        await using Ra2yrcppCommandSink sink = Sink(server);
+
+        InvalidOperationException refused = await Assert.ThrowsAsync<InvalidOperationException>(() => sink.SendAsync(Command(Ra2yrcppCommandSink.PlaceBuilding,
+            "{\"type\":\"GAPOWR\",\"cells\":[{\"x\":1024,\"y\":2048,\"z\":0}]}"), CancellationToken.None));
+
+        Assert.Contains("no placeable cell", refused.Message, StringComparison.Ordinal);
+        Assert.Single(game.Queries);
+        Assert.Empty(game.Orders);
+    }
+
+    [Fact]
+    public async Task PlacementSendsTheFactoryItemsStableIdSoTheForkCanCheckIt()
+    {
+        FakeGame game = FinishedPowerPlant();
+        await using FakeRa2yrcppServer server = new(game.Handle);
+        await using Ra2yrcppCommandSink sink = Sink(server);
+
+        await sink.SendAsync(Command(Ra2yrcppCommandSink.PlaceBuilding, "{\"type\":\"GAPOWR\",\"unique_id\":701,\"x\":1024,\"y\":2048}"), CancellationToken.None);
+
+        Assert.Equal(701u, Assert.IsType<PlaceBuilding>(Assert.Single(game.Orders)).Building.UniqueId);
+    }
+
+    [Fact]
+    public async Task PlacementRefusesAnotherHousesFinishedBuilding()
+    {
+        FakeGame game = FinishedPowerPlant(owner: Snapshots.Soviets);
+        await using FakeRa2yrcppServer server = new(game.Handle);
+        await using Ra2yrcppCommandSink sink = Sink(server);
+
+        InvalidOperationException refused = await Assert.ThrowsAsync<InvalidOperationException>(() => sink.SendAsync(Command(Ra2yrcppCommandSink.PlaceBuilding, "{\"type\":\"GAPOWR\",\"x\":1024,\"y\":2048}"), CancellationToken.None));
+
+        Assert.Equal("no finished GAPOWR in a factory of Americans", refused.Message);
+        Assert.Empty(game.Orders);
+    }
+
+    [Fact]
+    public async Task PlacementRefusesABuildingStillInProduction()
+    {
+        FakeGame game = FinishedPowerPlant(completed: false);
+        await using FakeRa2yrcppServer server = new(game.Handle);
+        await using Ra2yrcppCommandSink sink = Sink(server);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => sink.SendAsync(Command(Ra2yrcppCommandSink.PlaceBuilding, "{\"type\":\"GAPOWR\",\"x\":1024,\"y\":2048}"), CancellationToken.None));
+
+        Assert.Empty(game.Orders);
+    }
+
+    [Fact]
+    public async Task PlacementRefusesAStableIdThatIsNotTheFinishedBuildings()
+    {
+        FakeGame game = FinishedPowerPlant();
+        await using FakeRa2yrcppServer server = new(game.Handle);
+        await using Ra2yrcppCommandSink sink = Sink(server);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => sink.SendAsync(Command(Ra2yrcppCommandSink.PlaceBuilding, "{\"type\":\"GAPOWR\",\"unique_id\":702,\"x\":1024,\"y\":2048}"), CancellationToken.None));
+
+        Assert.Empty(game.Orders);
+    }
+
+    [Fact]
+    public async Task PlacementRefusesTwoFinishedBuildingsOfTheTypeAsAmbiguous()
+    {
+        FakeGame game = FinishedPowerPlant();
+        game.State.Objects.Add(Snapshots.Unit(0xA8, Snapshots.Americans, Snapshots.Gapowr, AbstractType.Building, limbo: true, uniqueId: 702));
+        game.State.Factories.Add(new Factory { Owner = Snapshots.Americans, Object = 0xA8, ObjectUniqueId = 702, Completed = true });
+        await using FakeRa2yrcppServer server = new(game.Handle);
+        await using Ra2yrcppCommandSink sink = Sink(server);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => sink.SendAsync(Command(Ra2yrcppCommandSink.PlaceBuilding, "{\"type\":\"GAPOWR\",\"x\":1024,\"y\":2048}"), CancellationToken.None));
+        await sink.SendAsync(Command(Ra2yrcppCommandSink.PlaceBuilding, "{\"type\":\"GAPOWR\",\"unique_id\":702,\"x\":1024,\"y\":2048}"), CancellationToken.None);
+
+        Assert.Equal(0xA8u, Assert.IsType<PlaceBuilding>(Assert.Single(game.Orders)).Building.PointerSelf);
+    }
+
+    [Fact]
+    public async Task PlacementByAnObjectAddressIsRefusedBecauseAddressesDifferBetweenClients()
+    {
+        FakeGame game = FinishedPowerPlant();
+        await using FakeRa2yrcppServer server = new(game.Handle);
+        await using Ra2yrcppCommandSink sink = Sink(server);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => sink.SendAsync(Command(Ra2yrcppCommandSink.PlaceBuilding, "{\"object\":167,\"x\":1024,\"y\":2048}"), CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentException>(() => sink.SendAsync(Command(Ra2yrcppCommandSink.PlaceBuilding, "{\"type\":\"GAPOWR\",\"object\":167,\"x\":1024,\"y\":2048}"), CancellationToken.None));
+
+        Assert.Empty(game.Orders);
     }
 
     [Fact]

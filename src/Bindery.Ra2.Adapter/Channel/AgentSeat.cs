@@ -90,7 +90,12 @@ public static class PlayerCommandKinds
     public const string Attack = "attack";
     /// <summary><c>{type, action?: begin|hold|cancel}</c></summary>
     public const string Produce = "produce";
-    /// <summary><c>{object, x, y, z?}</c>: a finished building from one of the house's factories.</summary>
+    /// <summary>
+    /// <c>{type, x, y, z?, unique_id?}</c>: the house's finished building of that
+    /// type (rules ID or name), found in one of its factories on the seat's
+    /// client; <c>unique_id</c> picks one when several are finished. An
+    /// object address is refused, because addresses differ between clients.
+    /// </summary>
     public const string PlaceBuilding = "place_building";
 }
 
@@ -118,6 +123,17 @@ public interface IPlayerController
     string ControllerVersion { get; }
 
     Task<ControllerStep> ObserveAsync(RawObservation observation, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// A controller that wants to hear how each of its orders went. The seat
+/// calls it after every order: <c>error</c> is null when the order was sent,
+/// a <see cref="CommandOutcomeUnknownException"/> when its result was lost,
+/// and the failure otherwise.
+/// </summary>
+public interface ICommandFeedback
+{
+    void Completed(PlayerCommand command, Exception? error);
 }
 
 /// <summary>
@@ -246,6 +262,7 @@ public sealed class AgentSeat : IAsyncDisposable
                 }
                 foreach (PlayerCommand command in step.Commands)
                 {
+                    Exception? outcome = null;
                     try
                     {
                         await commands.SendAsync(command, cancellationToken).ConfigureAwait(false);
@@ -256,14 +273,17 @@ public sealed class AgentSeat : IAsyncDisposable
                     {
                         // Neither sent nor failed: the game may still carry it out.
                         unknown++;
+                        outcome = exception;
                         await WriteAsync(trace, DecisionTraceKind.CommandOutcomeUnknown, observation.EventId, $"{command.Kind}: {exception.Message}", command.Arguments, cancellationToken).ConfigureAwait(false);
                     }
                     catch (Exception exception) when (exception is not OperationCanceledException)
                     {
                         // One rejected order is a decision worth keeping, not a reason to leave the seat.
                         failed++;
+                        outcome = exception;
                         await WriteAsync(trace, DecisionTraceKind.CommandFailed, observation.EventId, $"{command.Kind}: {exception.Message}", command.Arguments, cancellationToken).ConfigureAwait(false);
                     }
+                    (controller as ICommandFeedback)?.Completed(command, outcome);
                 }
                 if (observation.EventType == Ra2TelemetryEventTypes.MatchEnded)
                 {

@@ -28,6 +28,11 @@ public sealed record PlayerViewSummary(
     int EnemySightings,
     IReadOnlyList<string> DefeatedHouses);
 
+/// <summary>One of the house's own factory items, as its production events last reported it.</summary>
+/// <param name="Progress">Percent done, in the telemetry's steps.</param>
+/// <param name="UniqueId">The item's stable ID, when the fork reports one.</param>
+public sealed record OwnProductionItem(string Type, int Progress, bool OnHold, bool Completed, uint? UniqueId);
+
 /// <summary>
 /// What one house has been allowed to see so far, built only from
 /// observations its <see cref="PlayerObservationFilter"/> admitted. It never
@@ -39,6 +44,7 @@ public sealed class PlayerView
     private readonly Dictionary<string, int> ownUnits = new(StringComparer.Ordinal);
     private readonly SortedSet<string> ownBuildings = new(StringComparer.Ordinal);
     private readonly SortedSet<string> defeated = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, OwnProductionItem> ownProduction = new(StringComparer.Ordinal);
 
     public PlayerView(string house, PayloadFields? fields = null, TimeSpan? economyWindow = null)
     {
@@ -61,6 +67,9 @@ public sealed class PlayerView
     public int EnemySightings { get; private set; }
 
     public long? Credits => credits.Count == 0 ? null : credits[^1].Credits;
+
+    /// <summary>The house's items in its factories now, by type; an item leaves when it is placed or cancelled.</summary>
+    public IReadOnlyDictionary<string, OwnProductionItem> OwnProduction => ownProduction;
 
     /// <summary>Credit change across the economy window, once the window is covered.</summary>
     public long? CreditsChangeOverWindow
@@ -109,6 +118,19 @@ public sealed class PlayerView
             case Ra2TelemetryEventTypes.BuildingPlaced when own && TypeOf(observation) is { } type:
                 ownBuildings.Add(type);
                 break;
+            case Ra2TelemetryEventTypes.ProductionChanged or Ra2TelemetryEventTypes.ProductionCompleted when own && TypeOf(observation) is { } type:
+                if (ReadBool(observation.Payload, "gone"))
+                {
+                    ownProduction.Remove(type);
+                    break;
+                }
+                ownProduction[type] = new OwnProductionItem(
+                    type,
+                    (int)(ReadLong(observation.Payload, "progress") ?? 0),
+                    ReadBool(observation.Payload, "on_hold"),
+                    ReadBool(observation.Payload, "completed"),
+                    ReadLong(observation.Payload, Fields.UniqueId) is { } id and > 0 and <= uint.MaxValue ? (uint)id : null);
+                break;
             case Ra2TelemetryEventTypes.PlayerDefeated when Owner(observation) is { } house:
                 defeated.Add(house);
                 break;
@@ -139,6 +161,11 @@ public sealed class PlayerView
         && value.TryGetInt64(out long number)
             ? number
             : null;
+
+    private static bool ReadBool(JsonElement payload, string field) =>
+        payload.ValueKind == JsonValueKind.Object
+        && payload.TryGetProperty(field, out JsonElement value)
+        && value.ValueKind == JsonValueKind.True;
 }
 
 /// <summary>Names a meaningful moment -- one worth revising the plan for.</summary>
@@ -344,6 +371,181 @@ public sealed class DeployMcvRoutineController(IEnumerable<string>? mcvTypes = n
 }
 
 /// <summary>
+/// A routine that hears how its orders went and explains itself in the
+/// trace. <see cref="PlaybookController"/> forwards the seat's outcomes to
+/// it and traces its notes as <c>controller_note</c> entries.
+/// </summary>
+public interface IRoutineFeedback
+{
+    /// <summary>One of the routine's orders ran: <paramref name="error"/> is null when the game took it.</summary>
+    void Completed(PlayerCommand command, Exception? error);
+
+    /// <summary>Notes since the last call.</summary>
+    IReadOnlyList<string> TakeNotes();
+}
+
+/// <summary>
+/// The opening build order: once the house's Construction Yard stands,
+/// produce a power plant, barracks and refinery one at a time, and place
+/// each where it fits near the yard.
+/// </summary>
+/// <remarks>
+/// The <c>opening</c> routine (the MCV deploy) runs first on every
+/// observation. The yard's type picks the faction: <c>GACNST</c> builds
+/// <c>GAPOWR</c>, <c>GAPILE</c>, <c>GAREFN</c>; <c>NACNST</c> builds
+/// <c>NAPOWR</c>, <c>NAHAND</c>, <c>NAREFN</c>. Another yard is noted and
+/// left alone.
+///
+/// A finished building (<c>ra2.production.completed</c> for the house) is
+/// placed with every cell of <see cref="CandidateOffsets"/> around the yard,
+/// in order: the seat's game says which of them the building fits on, and it
+/// goes on the first. A placement the game refuses, or one whose building is
+/// still waiting in the factory <c>placementTimeout</c> (3 s) after the
+/// order, is asked again on the next observation (a unit may have moved). The building leaving the factory
+/// counts as placed and starts the next item. After
+/// <see cref="MaximumPlacementTries"/> the routine notes it and holds; so it
+/// does when a produce order is refused. Time is observation time, so a
+/// replay makes the same decisions.
+/// </remarks>
+public sealed class BuildOrderRoutineController : IRoutineController, IRoutineFeedback
+{
+    public const int MaximumPlacementTries = 12;
+
+    public const int CellLeptons = 256;
+
+    private static readonly Dictionary<string, string[]> orders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["GACNST"] = ["GAPOWR", "GAPILE", "GAREFN"],
+        ["NACNST"] = ["NAPOWR", "NAHAND", "NAREFN"],
+    };
+
+    private readonly IRoutineController? opening;
+    private readonly TimeSpan placementTimeout;
+    private readonly List<string> notes = [];
+    private string[]? order;
+    private (int X, int Y, int Z) yard;
+    private int step;
+    private bool producing;
+    private PlayerCommand? placement;
+    private DateTimeOffset placedAt;
+    private bool placementFailed;
+    private int tries;
+    private bool holding;
+
+    public BuildOrderRoutineController(IRoutineController? opening = null, TimeSpan? placementTimeout = null)
+    {
+        this.opening = opening;
+        this.placementTimeout = placementTimeout ?? TimeSpan.FromSeconds(3);
+    }
+
+    /// <summary>
+    /// Cells offered around the yard: every cell 2 to 8 cells out, ring by
+    /// ring, nearest first within a ring, then by angle from east (280
+    /// cells, under the fork's 1024-cell PlaceQuery limit).
+    /// </summary>
+    public static IReadOnlyList<(int X, int Y)> CandidateOffsets { get; } = Candidates();
+
+    public IReadOnlyList<PlayerCommand> Decide(Playbook playbook, PlayerView view, RawObservation observation)
+    {
+        ArgumentNullException.ThrowIfNull(view);
+        ArgumentNullException.ThrowIfNull(observation);
+        IReadOnlyList<PlayerCommand> first = opening?.Decide(playbook, view, observation) ?? [];
+        return Build(view, observation) is { } next ? [.. first, next] : first;
+    }
+
+    private PlayerCommand? Build(PlayerView view, RawObservation observation)
+    {
+        if (holding || view.StartedAt is null) return null;
+        if (order is null)
+        {
+            if (observation.EventType != Ra2TelemetryEventTypes.BuildingPlaced || !view.IsOwn(observation) || view.TypeOf(observation) is not { } type || !type.EndsWith("CNST", StringComparison.OrdinalIgnoreCase))
+                return null;
+            if (!orders.TryGetValue(type, out order) || Coordinates(observation.Payload) is not { } at)
+            {
+                order = null;
+                Hold($"build order: no opening for a {type} yard; holding");
+                return null;
+            }
+            yard = at;
+        }
+        if (placement is not null && step < order.Length && !view.OwnProduction.ContainsKey(order[step]))
+        {
+            // The building left the factory: placed.
+            placement = null;
+            tries = 0;
+            step++;
+            producing = false;
+        }
+        if (step >= order.Length) return null;
+        string item = order[step];
+        if (!producing)
+        {
+            producing = true;
+            return new PlayerCommand(PlayerCommandKinds.Produce, JsonSerializer.SerializeToElement(new { type = item }));
+        }
+        if (!view.OwnProduction.TryGetValue(item, out OwnProductionItem? current) || !current.Completed) return null;
+        if (placement is not null && !placementFailed && observation.ReceivedAt - placedAt < placementTimeout) return null;
+        if (tries >= MaximumPlacementTries)
+        {
+            Hold($"build order: {item} not placed after {MaximumPlacementTries} tries; holding");
+            return null;
+        }
+        tries++;
+        object[] cells = [.. CandidateOffsets.Select(o => new { x = Centre(yard.X, o.X), y = Centre(yard.Y, o.Y), z = yard.Z })];
+        object arguments = current.UniqueId is { } id
+            ? new { type = item, cells, unique_id = id }
+            : new { type = item, cells };
+        placement = new PlayerCommand(PlayerCommandKinds.PlaceBuilding, JsonSerializer.SerializeToElement(arguments));
+        placedAt = observation.ReceivedAt;
+        placementFailed = false;
+        return placement;
+    }
+
+    public void Completed(PlayerCommand command, Exception? error)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        // An order whose outcome is unknown may still run; only the factory tells.
+        if (error is null or CommandOutcomeUnknownException || holding) return;
+        if (ReferenceEquals(command, placement)) placementFailed = true;
+        else if (command.Kind == PlayerCommandKinds.Produce && order is not null && step < order.Length)
+            Hold($"build order: producing {order[step]} failed ({error.Message}); holding");
+    }
+
+    public IReadOnlyList<string> TakeNotes()
+    {
+        string[] taken = [.. notes];
+        notes.Clear();
+        return taken;
+    }
+
+    private void Hold(string note)
+    {
+        holding = true;
+        notes.Add(note);
+    }
+
+    /// <summary>The centre of the cell <paramref name="offset"/> cells from the one holding <paramref name="leptons"/>.</summary>
+    private static int Centre(int leptons, int offset) => (leptons / CellLeptons + offset) * CellLeptons + CellLeptons / 2;
+
+    private static (int X, int Y, int Z)? Coordinates(JsonElement payload) =>
+        payload.TryGetProperty("x", out JsonElement x) && x.TryGetInt32(out int cx)
+        && payload.TryGetProperty("y", out JsonElement y) && y.TryGetInt32(out int cy)
+            ? (cx, cy, payload.TryGetProperty("z", out JsonElement z) && z.TryGetInt32(out int cz) ? cz : 0)
+            : null;
+
+    private static (int X, int Y)[] Candidates()
+    {
+        static double Turn(int x, int y) => Math.Atan2(y, x) is var a && a < 0 ? a + 2 * Math.PI : Math.Atan2(y, x);
+        return [.. Enumerable.Range(-8, 17)
+            .SelectMany(static x => Enumerable.Range(-8, 17).Select(y => (X: x, Y: y)))
+            .Where(static c => Math.Max(Math.Abs(c.X), Math.Abs(c.Y)) >= 2)
+            .OrderBy(static c => Math.Max(Math.Abs(c.X), Math.Abs(c.Y)))
+            .ThenBy(static c => c.X * c.X + c.Y * c.Y)
+            .ThenBy(static c => Turn(c.X, c.Y))];
+    }
+}
+
+/// <summary>
 /// The two-speed controller: a planner revises the playbook at meaningful
 /// events, and a deterministic routine controller issues orders from
 /// whichever playbook is current.
@@ -355,7 +557,7 @@ public sealed class DeployMcvRoutineController(IEnumerable<string>? mcvTypes = n
 /// than none. Cooldowns run on observation time, so replaying a recording
 /// makes the same decisions.
 /// </remarks>
-public sealed class PlaybookController : IPlayerController
+public sealed class PlaybookController : IPlayerController, ICommandFeedback
 {
     private readonly IPlaybookPlanner planner;
     private readonly IRoutineController routine;
@@ -431,8 +633,12 @@ public sealed class PlaybookController : IPlayerController
         }
 
         IReadOnlyList<PlayerCommand> commands = routine.Decide(Current, View, observation);
+        if (routine is IRoutineFeedback feedback) notes.AddRange(feedback.TakeNotes());
         return Task.FromResult(new ControllerStep(commands, revision, notes.Count == 0 ? null : notes));
     }
+
+    /// <summary>Passes an order's outcome to a routine that listens for it.</summary>
+    public void Completed(PlayerCommand command, Exception? error) => (routine as IRoutineFeedback)?.Completed(command, error);
 
     /// <summary>Waits for an in-flight plan, for tests and for the end of a match.</summary>
     public async Task SettleAsync()

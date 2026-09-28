@@ -202,8 +202,8 @@ recorded on the match and leaves the trace on disk.
 `PlaybookController` is that two-speed loop:
 
 - A `PlayerView` remembers only what the seat's filter admitted: its own
-  credits trend, own units by type, own buildings, enemy sightings, and
-  defeats.
+  credits trend, own units by type, own buildings, own factory items by
+  type (`OwnProduction`), enemy sightings, and defeats.
 - **Triggers** name the meaningful moments:
   - `opening`;
   - `new_threat`: an enemy object came into view, with a 60 s cooldown;
@@ -220,7 +220,8 @@ recorded on the match and leaves the trace on disk.
   `RulePlaybookPlanner` is the deterministic baseline.
 - An `IRoutineController` turns the current playbook into orders on every
   observation. `IdleRoutineController` issues none and stays the default;
-  `DeployMcvRoutineController` deploys the opening MCV (see below).
+  `DeployMcvRoutineController` deploys the opening MCV and
+  `BuildOrderRoutineController` builds on from it (see below).
 - Triggers, drops and planner failures go into the trace as
   `controller_note` entries, next to each `playbook_revised`.
 
@@ -271,6 +272,11 @@ in-process fake of the service.
   winner before it emits `ra2.match.ended`. That makes the **observer
   client's service the preferred telemetry endpoint**: its game is not over
   when a player's is.
+- Production: each house's factory items become `ra2.production.changed`
+  (`house`, rules `type`, `progress` in 10% steps, `on_hold`, `completed`,
+  `unique_id`, and `gone` when the item leaves the factory) and, once per
+  item, `ra2.production.completed`, with `visible_to: [house]`. The type
+  comes from the item's limbo object; its address is never emitted.
 - `GetGameState` releases the fork's single-step mode. With `single_step`
   configured, the game advances one step per poll, so the poll cadence
   paces the game.
@@ -278,13 +284,37 @@ in-process fake of the service.
   `current_player` house is the seat's house. A different house refuses the
   seat for good. It drops object addresses that the latest snapshot does not
   show as the house's, and it maps `PlayerCommandKinds` to `UnitOrder`,
-  `ProduceOrder` and `PlaceBuilding`. The fork's observer refusal arrives as
+  `ProduceOrder` and `PlaceBuilding`. `place_building` names a type, not an
+  address (`{type, x, y, z?, unique_id?}`, or `cells: [{x, y, z}, ...]` in
+  place of `x`/`y`): the sink finds the house's one
+  finished building of that type in limbo in its own factory on the seat's
+  client and sends that address with the factory item's stable ID. None, or
+  more than one without a `unique_id`, is refused before the game; the fork
+  then runs the game's proximity and `CanPlaceHere` checks and returns an
+  error when the cell is not legal. With `cells`, the sink first asks the
+  seat's game (`PlaceQuery`, which runs the same two checks) which cells the
+  building fits on and places it on the first of them in the given order;
+  none is refused before the game. The guest's `allowedCommands` includes
+  `PlaceQuery`. The fork's observer refusal arrives as
   a failed command in the trace. An order whose result never comes back
   (a timeout after it was sent) is traced as `command_outcome_unknown`, not
   failed, because the fork may already have queued it.
 - `DeployMcvRoutineController`: the first routine that issues orders. It
   deploys the house's opening MCV once, and `IdleRoutineController` stays the
   default.
+- `BuildOrderRoutineController` (seat routine `build_order`): the MCV deploy,
+  then, once the house's Construction Yard is placed, `produce` for a power
+  plant, barracks and refinery one at a time (`GAPOWR`, `GAPILE`, `GAREFN`
+  for a `GACNST` yard; `NAPOWR`, `NAHAND`, `NAREFN` for `NACNST`). On
+  `ra2.production.completed` it sends `place_building` with every cell 2 to 8
+  cells from the yard (280, nearest first), and the game picks the first the
+  building fits on. Blind single cells lost the live barracks to 12
+  `CanPlaceHere` refusals in a row (run 20260928-183205-s2). A refused
+  placement, or a building still in the factory 3 s after the order, is
+  asked again on the next observation; after 12 tries, or a refused `produce`, it adds a
+  `controller_note` and holds. The seat reports every order's outcome to a
+  controller that implements `ICommandFeedback`, and `PlaybookController`
+  passes it on to its routine.
 - Channel tool: `liveTelemetry` reads one client's service instead of a
   recording, and `agentSeat` puts the rules playbook controller in one player
   seat with live commands into that player's client

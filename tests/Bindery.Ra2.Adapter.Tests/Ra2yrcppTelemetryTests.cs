@@ -223,6 +223,102 @@ public sealed class Ra2yrcppTelemetryTests
         Assert.True(filter.Admits(Observation(Assert.Single(events, e => e.EventType == Ra2TelemetryEventTypes.UnitCreated && Text(e, "house") == "Americans"))));
     }
 
+    /// <summary>
+    /// A snapshot with each house's power plant in its factory: the Americans'
+    /// at 0xA7 (stable ID 701), the Soviets' at 0xB7 (801), in limbo as the
+    /// fork reports a factory item (measured in the s4b lab capture).
+    /// </summary>
+    private static GameState Producing(uint frame, int americanTimer, int sovietTimer = 10, bool americanHold = false, bool americanGone = false)
+    {
+        GameState state = Snapshots.State(frame, Snapshots.Opening(), [Snapshots.Unit(0xA1, Snapshots.Americans, Snapshots.Amcv), Snapshots.Unit(0xB1, Snapshots.Soviets, Snapshots.Smcv)]);
+        if (!americanGone)
+        {
+            state.Objects.Add(Snapshots.Unit(0xA7, Snapshots.Americans, Snapshots.Gapowr, AbstractType.Building, limbo: true, uniqueId: 701));
+            state.Factories.Add(new Factory { Owner = Snapshots.Americans, Object = 0xA7, ObjectUniqueId = 701, ProgressTimer = americanTimer, OnHold = americanHold, Completed = americanTimer == 54 });
+        }
+        state.Objects.Add(Snapshots.Unit(0xB7, Snapshots.Soviets, Snapshots.Napowr, AbstractType.Building, limbo: true, uniqueId: 801));
+        state.Factories.Add(new Factory { Owner = Snapshots.Soviets, Object = 0xB7, ObjectUniqueId = 801, ProgressTimer = sovietTimer, Completed = sovietTimer == 54 });
+        return state;
+    }
+
+    private static bool IsProduction(Ra2yrcppEvent e) => e.EventType is Ra2TelemetryEventTypes.ProductionChanged or Ra2TelemetryEventTypes.ProductionCompleted;
+
+    [Fact]
+    public void ProductionIsReportedByRulesTypeToItsOwnHouseAndNeverCarriesAnAddress()
+    {
+        Ra2yrcppSnapshotDiff diff = Diff();
+        List<Ra2yrcppEvent> events = [.. diff.Next(Producing(1, 20), start), .. diff.Next(Producing(2, 54, sovietTimer: 54), start.AddSeconds(1)), .. diff.Next(Producing(3, 54, sovietTimer: 54, americanGone: true), start.AddSeconds(2))];
+
+        Ra2yrcppEvent first = events.First(e => e.EventType == Ra2TelemetryEventTypes.ProductionChanged && Text(e, "house") == "Americans");
+        Assert.Equal("GAPOWR", Text(first, "type"));
+        Assert.Equal(30, first.Payload.GetProperty("progress").GetInt32());
+        Assert.False(first.Payload.GetProperty("on_hold").GetBoolean());
+        Assert.False(first.Payload.GetProperty("completed").GetBoolean());
+        Assert.Equal(701u, first.Payload.GetProperty("unique_id").GetUInt32());
+        Assert.Equal(["Americans"], first.Payload.GetProperty("visible_to").EnumerateArray().Select(static v => v.GetString()));
+        Assert.Contains(events, e => e.EventType == Ra2TelemetryEventTypes.ProductionCompleted && Text(e, "house") == "Soviets");
+        List<Ra2yrcppEvent> production = [.. events.Where(IsProduction)];
+        Assert.NotEmpty(production);
+        // The factory item's address is the reading client's memory, meaningless to another client.
+        foreach (Ra2yrcppEvent e in production)
+        {
+            foreach (JsonProperty field in e.Payload.EnumerateObject())
+            {
+                Assert.DoesNotContain(field.Name, new[] { "object", "pointer_self", "address" });
+                if (field.Value.ValueKind == JsonValueKind.Number) Assert.DoesNotContain(field.Value.GetInt64(), new long[] { 0xA7, 0xB7 });
+            }
+        }
+        // The filter withholds the enemy's production from the seat.
+        PlayerObservationFilter filter = new("Americans");
+        List<Ra2yrcppEvent> admitted = [.. production.Where(e => filter.Admits(Observation(e)))];
+        Assert.NotEmpty(admitted);
+        Assert.All(admitted, e => Assert.Equal("Americans", Text(e, "house")));
+        Assert.Contains(production, e => Text(e, "house") == "Soviets");
+    }
+
+    [Fact]
+    public void ASeatScopedDiffReportsOnlyTheSeatsOwnProduction()
+    {
+        Ra2yrcppSnapshotDiff diff = Diff("Americans");
+        List<Ra2yrcppEvent> events = [.. diff.Next(Producing(1, 20), start), .. diff.Next(Producing(2, 54, sovietTimer: 54), start.AddSeconds(1))];
+
+        Assert.Contains(events, e => e.EventType == Ra2TelemetryEventTypes.ProductionCompleted && Text(e, "house") == "Americans");
+        Assert.DoesNotContain(events, e => IsProduction(e) && Text(e, "house") != "Americans");
+    }
+
+    [Fact]
+    public void ProductionProgressIsReportedInTenPercentStepsAndHoldsAtOnce()
+    {
+        Ra2yrcppSnapshotDiff diff = Diff("Americans");
+        int Changes(GameState state, int second) => diff.Next(state, start.AddSeconds(second)).Count(static e => e.EventType == Ra2TelemetryEventTypes.ProductionChanged);
+
+        Assert.Equal(1, Changes(Producing(1, 20), 0));
+        // 37% to 38%: the same 10% step.
+        Assert.Equal(0, Changes(Producing(2, 21), 1));
+        // 38% to 50%.
+        Assert.Equal(1, Changes(Producing(3, 27), 2));
+        Assert.Equal(1, Changes(Producing(4, 27, americanHold: true), 3));
+        Assert.Equal(0, Changes(Producing(5, 27, americanHold: true), 4));
+    }
+
+    [Fact]
+    public void CompletionFiresOnceAndTheItemLeavingTheFactoryIsReportedGone()
+    {
+        Ra2yrcppSnapshotDiff diff = Diff("Americans");
+        List<Ra2yrcppEvent> events = [];
+        for (int i = 0; i < 4; i++) events.AddRange(diff.Next(Producing((uint)(i + 1), 50 + i), start.AddSeconds(i)));
+        events.AddRange(diff.Next(Producing(10, 54), start.AddSeconds(10)));
+        events.AddRange(diff.Next(Producing(11, 54), start.AddSeconds(11)));
+        events.AddRange(diff.Next(Producing(12, 54, americanGone: true), start.AddSeconds(12)));
+
+        Ra2yrcppEvent completed = Assert.Single(events, static e => e.EventType == Ra2TelemetryEventTypes.ProductionCompleted);
+        Assert.Equal("GAPOWR", Text(completed, "type"));
+        Assert.Equal(701u, completed.Payload.GetProperty("unique_id").GetUInt32());
+        Ra2yrcppEvent gone = events.Last(static e => e.EventType == Ra2TelemetryEventTypes.ProductionChanged);
+        Assert.True(gone.Payload.GetProperty("gone").GetBoolean());
+        Assert.Equal("GAPOWR", Text(gone, "type"));
+    }
+
     [Fact]
     public async Task TheSourcePollsGameStateUntilTheMatchEndsWithTypeNamesFromTheInitialState()
     {
