@@ -266,6 +266,20 @@ public sealed class SpawnMatchTests
     }
 
     [Fact]
+    public void TheLastExitLineOfARealLogDecides()
+    {
+        // The real layout: CRLF lines, first-chance exceptions, lines after the exit.
+        const string log = "[02:45:13] SyringeDebugger::HandleException: Exception (Code: 0xE06D7363 at 0x7556AED4)!\r\n" +
+                           "[02:45:14] SyringeDebugger::Run: Done with exit code 3 (3).\r\n" +
+                           "[02:45:16] SyringeDebugger::Run: Done with exit code C0000005 (3221225477).\r\n" +
+                           "\r\n[02:45:16] WinMain: SyringeDebugger::Run finished.\r\n[02:45:16] WinMain: Exiting on success.\r\n";
+
+        RunObservation exitCode = Assert.Single(SpawnerLogObservations.Read(log), o => o.Kind == RunObservation.HostedExitCode);
+        Assert.True(exitCode.Notable);
+        Assert.StartsWith("Done with exit code C0000005 (3221225477).", exitCode.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AKilledGameIsNotReportedAsACrash()
     {
         // The lab's timeout stops the process: Syringe records FFFFFFFF.
