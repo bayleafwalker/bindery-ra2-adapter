@@ -24,4 +24,23 @@ All pass -> the Full vocabulary earns a played held-out tier comparison under it
 Any failure -> the Full-vocabulary line closes for worker-fast: `Parameters` stays adopted, no third prompt.
 
 ## Outcome
-Not run yet.
+Run once at a60af92 (`docs/results/2026-09-29-llm-shadow-short-rationale/commit`), worker-fast on the local endpoint,
+24 matches (17 wins), 434 shadow proposals; `metrics.txt`, decision logs in `run/decisions.tar.xz` (+ `.sha256`;
+the metrics reproduce from the extracted archive).
+
+Decision: **every gate and criterion passes**, so the Full vocabulary earns a played held-out tier comparison under
+its own pre-registration (not started here).
+
+| Criterion | Threshold | Measured | Result |
+|---|---|---|---|
+| G1 validity | >= 0.90 | 0.993 (431/434) | pass |
+| G2 fog rejections | = 0 | 0 | pass |
+| G3 p95 latency | <= 20 s | 8.35 s (p50 6.91 s) | pass |
+| N1 shadow entropy | >= selector 0.182 + 0.15 | 0.569 | pass |
+| N2 authority use | >= 0.25 | 0.836 (235/281) | pass |
+| N3 explainability | >= 0.80 | 0.891 (384/431) | pass |
+| N4 adaptability | >= selector 0.0875 | 0.521 (25/48) | pass |
+
+Reported only: median rationale 153 characters (558 last run); 1 of 431 over 400 (365 of 427 last run), 3 over the
+prompt's 300; 46 cite no number (11 last run) and 0 are empty, so N3's remaining misses are ungrounded, not long ones.
+Posture changes within N2: 0 of 235, as last time: N2 is carried by objectives, parameters, composition and regions.
