@@ -82,3 +82,56 @@ rhino-rush >= 30% of Claude's pooled Soviet proposals, a threshold set after see
 the per-cell mechanism check above (rhino-rush the top playbook in most Claude-worse cells), and the sign-test
 p condition is stated as a threshold instead of one example. Pilot counts corrected (201 Primary, not 210; 1 API
 failure among 6 failed records).
+
+## Amendment: the 20-cell test's model and scope (2026-09-29 19:49, before the test's first match)
+The first launch (18:43, API, `claude-opus-5`, `--seeds 4`, both arms) was stopped at ~18:47 before any match
+finished, because it would have spent ~$110 of a limited API budget, half of it on Allied cells the rule does not
+use. API spend for the whole pilot line ends at $13.39. Two changes, nothing else:
+- **Model:** `gpt-6-luna` through OpenCode Go (a flat subscription), via `ocgo_proxy.py`, a local forwarder that
+  adds the key and the `x-opencode-session` header and translates chat/completions to the Responses API that the
+  GPT models require. The question becomes: does an affordable model that could actually play repeat worker-fast's
+  Soviet mistake, and does it hold up against the selector? Luna was chosen on a 4-cell pilot on the same cells as
+  attempt 3 (`luna-pilot/`, 19:07-19:47): 4 of 4 won, 177 Primary proposals, 0 rejected, 3 superseded, 0 API
+  failures, median latency 11 s (p90 15 s), ~$0.04. Its Soviet proposals were all `generic-expand` (58 of 58),
+  none rhino-rush. Other candidates probed: Kimi K2.7 Code (pilot at the same time: median 57 s, ~12% upstream
+  5xx; too slow for play), DeepSeek V4 Flash and Qwen3.7 Plus (valid JSON but not piloted), MiniMax M3 and
+  DeepSeek V4.1 Flash (no valid structured output), GLM-5.3 Flash (70 s per call).
+- **Scope:** Soviet cells only, via the new `--seed-list 2,4` (#34): 20 LLM and 20 selector matches, main at 852e625.
+The decision rule is unchanged. With 0% rhino-rush in the pilot the guard branch is unlikely; the test mainly
+separates "holds up as Soviet" (next build: perception / attack gate) from "loses for another reason" (read the
+losing logs first).
+
+## Outcome of the 20-cell Soviet test (19:50-21:43, `gpt-6-luna` via OpenCode Go, build 852e625)
+Counted. 40 matches: `llm-t1` (Luna) and `selector`, interleaved per cell, Soviet only (seeds 2 and 4), both
+held-out maps, five held-out opponents (`twenty-cell-luna/`). Delivery: 614 Primary proposals from the model, 1
+failed call (`claude.timeout`), median latency 9.5 s (p90 13.2 s); the forwarder served 885 calls with no upstream
+error, ~$1.08 at list price inside the flat plan (pilot included).
+
+| | Luna | Selector |
+|---|---|---|
+| Wins (of 20) | 20 (all by elimination) | 17 (all by elimination) |
+
+Paired: Luna better on 3 cells (ai-armor:hard fortress-choke seed 2, ai-horde:hard fortress-choke seeds 2 and 4, all
+three won by Luna and lost by the selector), worse on 0, same winner on 17. Worse minus better = -3 <= 2, so the rule's
+second branch applies: **Luna holds up against the selector as Soviet; the next build is perception / attack gate,
+and the Soviet playbook guard is kept for local-model (worker-fast) deployments only, not built now.** Luna's Soviet
+proposals: generic-expand 558, soviet-rhino-rush 29 (4.7%), soviet-flak-mix 27; the rhino-rush mechanism that sank
+worker-fast (70%) and marked Claude's one loss (38% pooled) does not appear.
+
+Limits, read before generalising: 17 of 20 cells are won by both arms, so the test can show Luna not worse but
+has little room to show it better outside the hard opponents; one faction, one model, one day; the A/A floor for
+a live model (17% of cells changing winner) was measured on worker-fast, not Luna. All wins being eliminations
+answers the concern that an economy-first policy might only win on timeout.
+Luna being better on 3 cells is within the noise a live model shows (17% of 20 is ~3.4 cells changing winner),
+so read the result as "not worse", not as "better". Luna's wins are slower: ~600 s against ~330 s for the selector
+on the cells both won (limit 1200 s). The run's `commit` file names 0b09466, the amendment commit before its rebase
+onto later main; its code is 852e625's.
+
+Also recorded: `kimi-pilot/` (Kimi K2.7 Code, same 4 cells as attempt 3): not a model result. 141 of 144 calls
+failed as `claude.timeout` (median upstream latency ~57 s, ~12% upstream 5xx), 3 proposals landed; the selector
+fallback played the matches, hence its "3 of 4". The arena now labels such arms (#37).
+
+Corrections after independent review (2026-09-29 ~22:00; the amendment text above is kept as committed before the
+run): the Luna pilot cost ~$0.27 at list price, not ~$0.04 (219 forwarder calls, 1.77M input and 0.18M output
+tokens); Kimi's upstream 5xx rate in the archived forwarder log is 10 of 185 calls (5.4%), not ~12%. Neither changes
+the model choice or the decision.
