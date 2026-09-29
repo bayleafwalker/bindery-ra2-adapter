@@ -536,6 +536,21 @@ public static class Program
         IReadOnlyList<DecisionRecord> recorded;
         using (StreamReader reader = new(ndjsonPath)) recorded = DecisionLogCodec.ReadAll(reader);
 
+        // The files are loaded again from their recorded paths: refuse if their contents are no longer what the match was played on.
+        if (manifest.Fingerprint is { } fingerprint)
+        {
+            if (fingerprint.TryGetValue("playbooks", out string? recordedPlaybooks) && manifest.PlaybookFiles is { Count: > 0 } files)
+            {
+                foreach (string file in files) if (!File.Exists(file)) throw new ArgumentException($"No playbook file at {file}.");
+                string now = ArenaScheduling.PlaybooksHash(files);
+                if (now != recordedPlaybooks) throw new ArgumentException($"playbook files changed since the match: recorded {recordedPlaybooks}, now {now}.");
+            }
+            if (fingerprint.TryGetValue("rules", out string? recordedRules) && manifest.RulesFile is { } rulesFile && File.Exists(rulesFile))
+            {
+                string now = ArenaScheduling.RulesHash(rulesFile);
+                if (now != recordedRules) throw new ArgumentException($"rules file changed since the match: recorded {recordedRules}, now {now}.");
+            }
+        }
         (IRulesDatabase rules, IPlaybookLibrary playbooks, _) = LoadRules(manifest.RulesFile, manifest.PlaybookFiles ?? []);
         // No model is ever asked: a fake context keeps credential resolution out of a replay entirely.
         ArenaRunContext context = new(llmFake: true, manifest.LlmLatencySeconds);

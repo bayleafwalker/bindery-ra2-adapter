@@ -57,9 +57,8 @@ public static class ArenaScheduling
         return Fingerprints.GetValue(options, static o => new SortedDictionary<string, string>(StringComparer.Ordinal)
         {
             ["code"] = CodeIdentity(),
-            ["rules"] = o.RulesPath is null ? Sha(Encoding.UTF8.GetBytes(RulesDatabase.EmbeddedFixtureJson(RulesDatabase.FixtureFile))) : Sha(File.ReadAllBytes(o.RulesPath)),
-            // The files' contents in order: a changed or reordered set changes what the LLM is offered.
-            ["playbooks"] = o.PlaybookFiles.Count == 0 ? "" : Sha([.. o.PlaybookFiles.SelectMany(static f => File.ReadAllBytes(f))]),
+            ["rules"] = RulesHash(o.RulesPath),
+            ["playbooks"] = PlaybooksHash(o.PlaybookFiles),
             ["knobs"] = string.Join(",", o.ArmKnobs.OrderBy(static k => k.Key, StringComparer.Ordinal).Select(static k => string.Create(CultureInfo.InvariantCulture, $"{k.Key}={k.Value:R}"))),
             ["llmModel"] = o.LlmModel,
             ["llmEndpoint"] = o.LlmEndpoint is null ? "" : Uri.TryCreate(o.LlmEndpoint, UriKind.Absolute, out Uri? u) ? $"{u.Scheme}://{u.Host}:{u.Port}{u.AbsolutePath}" : "(unparsed)",
@@ -70,6 +69,17 @@ public static class ArenaScheduling
             ["seedList"] = o.SeedList is null ? "" : string.Join(",", o.SeedList),
         });
     }
+
+    /// <summary>SHA-256 of the rules file's contents, else of the embedded fixture.</summary>
+    public static string RulesHash(string? rulesPath) =>
+        rulesPath is null ? Sha(Encoding.UTF8.GetBytes(RulesDatabase.EmbeddedFixtureJson(RulesDatabase.FixtureFile))) : Sha(File.ReadAllBytes(rulesPath));
+
+    /// <summary>
+    /// SHA-256 over the <c>--playbooks</c> files' contents, "" for none. The library is sorted by id, so the flag order
+    /// does not matter: the files' own hashes are sorted before they are hashed together. A changed set changes what the LLM is offered.
+    /// </summary>
+    public static string PlaybooksHash(IReadOnlyList<string> files) =>
+        files.Count == 0 ? "" : Sha(Encoding.UTF8.GetBytes(string.Join(";", files.Select(static f => Sha(File.ReadAllBytes(f))).Order(StringComparer.Ordinal))));
 
     private static string Sha(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
 

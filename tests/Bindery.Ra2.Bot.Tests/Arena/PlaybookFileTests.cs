@@ -122,4 +122,29 @@ public sealed class PlaybookFileTests : IDisposable
         WriteExtra("fp.json", "allied-induced-2", "Edited.");
         Assert.NotEqual(before, ArenaScheduling.Fingerprint(CliOptions.Parse([.. args, "--playbooks", extra]))["playbooks"]);
     }
+
+    [Fact]
+    public void The_fingerprint_does_not_depend_on_flag_order()
+    {
+        string a = WriteExtra("o1.json", "allied-induced-3");
+        string b = WriteExtra("o2.json", "allied-induced-4");
+        Assert.Equal(ArenaScheduling.PlaybooksHash([a, b]), ArenaScheduling.PlaybooksHash([b, a]));
+        Assert.NotEqual(ArenaScheduling.PlaybooksHash([a, b]), ArenaScheduling.PlaybooksHash([a]));
+    }
+
+    [Fact]
+    public void Replay_refuses_playbook_files_that_changed_since_the_match()
+    {
+        string extra = WriteExtra("replay.json", "allied-induced-5");
+        string dir = Path.Combine(root, "replay-run");
+        Assert.Equal(0, Program.Main(["run", "--arms", "selector", "--maps", "training", "--opponents", "ai-rush", "--seeds", "1",
+            "--max-seconds", "30", "--playbooks", extra, "--out", dir]));
+        string log = Directory.GetFiles(Path.Combine(dir, "decisions"), "*.ndjson").Order().First();
+
+        Assert.True(Program.ReplayMatch(log).Equal);
+
+        WriteExtra("replay.json", "allied-induced-5", "Edited after the match.");
+        ArgumentException ex = Assert.Throws<ArgumentException>(() => Program.ReplayMatch(log));
+        Assert.Contains("playbook files changed since the match", ex.Message);
+    }
 }
