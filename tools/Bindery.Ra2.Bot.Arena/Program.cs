@@ -172,12 +172,13 @@ public static class Program
             {
                 armResults[0] = RunJob(jobs[0], options, rules, factory, log => logs[0] = log);
                 start = 1;
-                if (context.LlmSkipReason is null && logs.TryGetValue(0, out IReadOnlyList<DecisionRecord>? firstLog)
-                    && AllPrimaryProposalsFailed(firstLog) is { } allFailed)
+                // An all-failed first match skips this arm only; a missing credential (context-wide) skips every LLM arm.
+                string? armReason = context.LlmSkipReason;
+                if (armReason is null && logs.TryGetValue(0, out IReadOnlyList<DecisionRecord>? firstLog))
                 {
-                    context.MarkLlmSkipped(allFailed);
+                    armReason = AllPrimaryProposalsFailed(firstLog, arm.ToString());
                 }
-                if (context.LlmSkipReason is { } reason)
+                if (armReason is { } reason)
                 {
                     skipped.Add(new SkippedArm(arm.ToString(), reason));
                     Console.WriteLine($"{arm}: {reason}");
@@ -250,14 +251,22 @@ public static class Program
     /// Primary <c>strategy.proposal</c> (every decision then fell back to the selector, so the arm's results would not
     /// measure the model); null when at least one Primary proposal succeeded or none was attempted.
     /// </summary>
-    public static string? AllPrimaryProposalsFailed(IReadOnlyList<DecisionRecord> log)
+    public static string? AllPrimaryProposalsFailed(IReadOnlyList<DecisionRecord> log, string arm = "llm")
     {
         int failed = 0;
         string? firstError = null;
+        string? claudeError = null;
         foreach (DecisionRecord record in log)
         {
-            if (record.Data.ValueKind != JsonValueKind.Object
-                || !record.Data.TryGetProperty("role", out JsonElement role) || role.ValueKind != JsonValueKind.String || role.GetString() != "Primary")
+            if (record.Data.ValueKind != JsonValueKind.Object) continue;
+            // The strategist's own failure record (no role) carries the real error; the scheduler's Primary record
+            // only says no_opinion.
+            if (record.Kind == DecisionRecordKinds.ProposalFailed && !record.Data.TryGetProperty("role", out _))
+            {
+                claudeError ??= ReadText(record.Data, "detail") ?? ReadText(record.Data, "code");
+                continue;
+            }
+            if (!record.Data.TryGetProperty("role", out JsonElement role) || role.ValueKind != JsonValueKind.String || role.GetString() != "Primary")
             {
                 continue;
             }
@@ -266,15 +275,17 @@ public static class Program
             failed++;
             if (firstError is null)
             {
-                string? message = record.Data.TryGetProperty("message", out JsonElement m) && m.ValueKind == JsonValueKind.String ? m.GetString() : null;
-                string? code = record.Data.TryGetProperty("reason", out JsonElement c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null;
-                firstError = string.IsNullOrWhiteSpace(message) ? code ?? "no message" : message;
+                firstError = ReadText(record.Data, "message") ?? ReadText(record.Data, "reason") ?? "no message";
             }
         }
         if (failed == 0) return null;
-        string error = firstError!.Length > 200 ? firstError[..200] + "..." : firstError;
-        return string.Create(CultureInfo.InvariantCulture, $"skipped: 0 of {failed} model proposals succeeded in the first match ({error})");
+        string best = claudeError ?? firstError!;
+        string error = best.Length > 200 ? best[..200] + "..." : best;
+        return string.Create(CultureInfo.InvariantCulture, $"skipped: {arm}: 0 of {failed} model proposals succeeded in the first match ({error})");
     }
+
+    private static string? ReadText(JsonElement data, string name) =>
+        data.TryGetProperty(name, out JsonElement v) && v.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(v.GetString()) ? v.GetString() : null;
 
     /// <summary>
     /// The rules every side plays on and the playbooks fitted to their roster: the embedded approximate fixture and
