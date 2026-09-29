@@ -68,6 +68,14 @@ public static class Program
                 }
                 return result.Equal ? 0 : 2;
             }
+            if (args.Length > 0 && args[0] == "playbooks")
+            {
+                if (args.Length is not (2 or 4) || args[1] != "export" || (args.Length == 4 && args[2] != "--out")) throw new ArgumentException("Usage: arena playbooks export [--out <playbooks.json>]");
+                string json = ExportPlaybooksJson();
+                if (args.Length == 4) File.WriteAllText(args[3], json);
+                else Console.WriteLine(json);
+                return 0;
+            }
             if (args.Length > 0 && args[0] == "analyze")
             {
                 if (args.Length < 2) throw new ArgumentException("Usage: arena analyze <out>/decisions/<match>.ndjson [--out <report.md>] [--narrate] [--llm-fake]");
@@ -107,7 +115,7 @@ public static class Program
     private static void Run(CliOptions options)
     {
         Stopwatch wall = Stopwatch.StartNew();
-        (IRulesDatabase rules, IPlaybookLibrary playbooks, IReadOnlyList<RosterChange> rosterChanges) = LoadRules(options.RulesPath);
+        (IRulesDatabase rules, IPlaybookLibrary playbooks, IReadOnlyList<RosterChange> rosterChanges) = LoadRules(options.RulesPath, options.PlaybookFiles);
         ArenaRunContext context = new(options.LlmFake, options.LlmLatencySeconds, options.LlmEndpoint, options.LlmModel) { ArmKnobs = options.ArmKnobs };
         BotAgentFactory factory = new(rules, playbooks, context);
         foreach (ArmSpec arm in options.ArmSpecs())
@@ -320,15 +328,52 @@ public static class Program
     /// the default playbooks when <paramref name="rulesPath"/> is null, else that rules JSON and the default playbooks
     /// adapted to it (<see cref="PlaybookRosterAdapter"/>; the playbooks were authored against the fixture).
     /// </summary>
-    public static (IRulesDatabase Rules, IPlaybookLibrary Playbooks, IReadOnlyList<RosterChange> Changes) LoadRules(string? rulesPath)
+    public static (IRulesDatabase Rules, IPlaybookLibrary Playbooks, IReadOnlyList<RosterChange> Changes) LoadRules(string? rulesPath, IReadOnlyList<string>? playbookFiles = null)
     {
-        PlaybookLibrary authored = PlaybookLibrary.LoadDefault();
+        PlaybookLibrary authored = MergePlaybookFiles(PlaybookLibrary.LoadDefault(), playbookFiles ?? []);
         if (rulesPath is null) return (RulesDatabase.LoadEmbeddedFixture(), authored, []);
         if (!File.Exists(rulesPath)) throw new ArgumentException($"No rules file at {rulesPath}.");
         RulesDatabase rules = RulesDatabase.LoadJson(File.ReadAllText(rulesPath));
         RosterAdaptation adapted = PlaybookRosterAdapter.Adapt(authored.All, rules, RulesDatabase.LoadEmbeddedFixture());
         return (rules, adapted.Library, adapted.Changes);
     }
+
+    /// <summary>
+    /// <paramref name="baseLibrary"/> plus every playbook of each <c>--playbooks</c> file, in order, as one library.
+    /// A file that is missing or malformed, or an id already taken (by the base or an earlier file), is an
+    /// <see cref="ArgumentException"/> naming the id and file.
+    /// </summary>
+    public static PlaybookLibrary MergePlaybookFiles(PlaybookLibrary baseLibrary, IReadOnlyList<string> files)
+    {
+        ArgumentNullException.ThrowIfNull(baseLibrary);
+        ArgumentNullException.ThrowIfNull(files);
+        if (files.Count == 0) return baseLibrary;
+        List<Playbook> merged = [.. baseLibrary.All];
+        HashSet<string> taken = new(merged.Select(static p => p.Id), StringComparer.Ordinal);
+        foreach (string file in files)
+        {
+            if (!File.Exists(file)) throw new ArgumentException($"No playbook file at {file}.");
+            PlaybookLibrary loaded;
+            try
+            {
+                loaded = PlaybookLibrary.LoadJson(File.ReadAllText(file));
+            }
+            catch (Exception ex) when (ex is InvalidDataException or System.Text.Json.JsonException)
+            {
+                throw new ArgumentException($"Playbook file {file} is not a valid playbook document: {ex.Message}");
+            }
+            foreach (Playbook playbook in loaded.All)
+            {
+                if (!taken.Add(playbook.Id)) throw new ArgumentException($"Duplicate playbook id '{playbook.Id}' in {file}: already defined by the default library or an earlier --playbooks file.");
+                merged.Add(playbook);
+            }
+        }
+        return new PlaybookLibrary(merged);
+    }
+
+    /// <summary>The default library (tuned parameters applied) as <see cref="PlaybookDocument"/> JSON, the format <c>--playbooks</c> loads.</summary>
+    public static string ExportPlaybooksJson() =>
+        System.Text.Json.JsonSerializer.Serialize(new PlaybookDocument(PlaybookLibrary.LoadDefault().All), new System.Text.Json.JsonSerializerOptions(BotJson.Options) { WriteIndented = true });
 
     /// <summary>
     /// The adoption rule (<see cref="VocabularyAdoption.Decide"/>) applied to a run's tier arms: for each tier arm and
@@ -454,7 +499,8 @@ public static class Program
                 MatchManifest.CurrentSchema, job.Arm, job.Opponent, job.Map.Map.MapId, job.Split, job.Seed, options.MaxSeconds,
                 options.Benchmark, options.LlmLatencySeconds, job.Arm.Name == "distilled" ? context.DistillSource : null,
                 played.Players["arm"].DecisionLogHash, played.Winner, played.Reason, played.DurationSeconds,
-                options.RulesPath is null ? null : Path.GetFullPath(options.RulesPath), played, ArenaScheduling.Fingerprint(options));
+                options.RulesPath is null ? null : Path.GetFullPath(options.RulesPath), played, ArenaScheduling.Fingerprint(options),
+                options.PlaybookFiles.Count == 0 ? null : [.. options.PlaybookFiles.Select(static f => Path.GetFullPath(f))]);
             MatchManifest.Write(Path.Combine(options.OutDir, "decisions"), manifest, captured);
         }
         return played;
@@ -490,7 +536,22 @@ public static class Program
         IReadOnlyList<DecisionRecord> recorded;
         using (StreamReader reader = new(ndjsonPath)) recorded = DecisionLogCodec.ReadAll(reader);
 
-        (IRulesDatabase rules, IPlaybookLibrary playbooks, _) = LoadRules(manifest.RulesFile);
+        // The files are loaded again from their recorded paths: refuse if their contents are no longer what the match was played on.
+        if (manifest.Fingerprint is { } fingerprint)
+        {
+            if (fingerprint.TryGetValue("playbooks", out string? recordedPlaybooks) && manifest.PlaybookFiles is { Count: > 0 } files)
+            {
+                foreach (string file in files) if (!File.Exists(file)) throw new ArgumentException($"No playbook file at {file}.");
+                string now = ArenaScheduling.PlaybooksHash(files);
+                if (now != recordedPlaybooks) throw new ArgumentException($"playbook files changed since the match: recorded {recordedPlaybooks}, now {now}.");
+            }
+            if (fingerprint.TryGetValue("rules", out string? recordedRules) && manifest.RulesFile is { } rulesFile && File.Exists(rulesFile))
+            {
+                string now = ArenaScheduling.RulesHash(rulesFile);
+                if (now != recordedRules) throw new ArgumentException($"rules file changed since the match: recorded {recordedRules}, now {now}.");
+            }
+        }
+        (IRulesDatabase rules, IPlaybookLibrary playbooks, _) = LoadRules(manifest.RulesFile, manifest.PlaybookFiles ?? []);
         // No model is ever asked: a fake context keeps credential resolution out of a replay entirely.
         ArenaRunContext context = new(llmFake: true, manifest.LlmLatencySeconds);
         BotAgentFactory factory = new(rules, playbooks, context);

@@ -186,10 +186,16 @@ LLM arm still run per arm, after the interleaved ones; default order unchanged).
 `--seed-list 2,4` plays exactly those seeds instead of 1..`--seeds` (the arm is Soviet on even
 seeds and Allied on odd ones; west on 1-2, 5-6, ..., east on 3-4, 7-8, ...), e.g. a Soviet-only test at half
 the matches.
+`--playbooks <file.json>` (repeatable) loads operator- or machine-authored playbook sets
+(`PlaybookDocument` JSON) next to the 12 built-in ones; every component of every arm (prompt catalogue,
+validator, selector, distilled strategist, replay) uses the merged library. A duplicate playbook id is
+refused with an error naming the id and file, and the files' SHA-256 is part of the resume fingerprint.
+`arena playbooks export [--out <file>]` writes the default library (tuned parameters applied) in that format,
+the reference for authoring or inducing a set.
 `--resume` reruns an interrupted or extended run into the same `--out`: matches whose
 `.match.json` is already there are loaded, not replayed, and only the missing ones run;
 a record that disagrees with its job (arm, opponent, map, split, seed, benchmark,
-`--max-seconds`, and a run fingerprint: code identity, rules hash, `--knob`s, LLM model,
+`--max-seconds`, and a run fingerprint: code identity, rules hash, `--playbooks` hash, `--knob`s, LLM model,
 endpoint and latency, `--dataset` hash) is refused with an error naming the differing field.
 A partly recorded `bandit` arm is refused (it learns across matches in order); a complete
 one is loaded without being re-trained, so its leakage probe (which runs on the fresh, untrained

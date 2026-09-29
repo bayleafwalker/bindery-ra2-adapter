@@ -33,6 +33,9 @@ public sealed class ArenaRunContext
 
     public bool LlmFake { get; }
 
+    /// <summary>Sees each request the <c>--llm-fake</c> client receives (tests read the prompt the model would be given).</summary>
+    public Action<ModelRequest>? LlmRequestObserver { get; init; }
+
     /// <summary>Simulated game-time latency for LLM answers; null uses measured wall latency (fake: 4 s).</summary>
     public double? LlmLatencySeconds { get; }
 
@@ -85,7 +88,7 @@ public sealed class ArenaRunContext
     /// </summary>
     public IMessageClient? CreateClient()
     {
-        if (LlmFake) return new FakeMessageClient();
+        if (LlmFake) return new FakeMessageClient { RequestObserver = LlmRequestObserver };
         if (LlmSkipReason is not null) return null;
         if (LlmEndpoint is not null)
             return new OpenAiCompatibleMessageClient(new Uri(LlmEndpoint), LlmModel, Environment.GetEnvironmentVariable("BINDERY_BOT_LLM_API_KEY"));

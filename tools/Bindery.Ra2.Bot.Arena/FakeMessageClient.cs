@@ -44,11 +44,15 @@ public sealed class FakeMessageClient : IMessageClient
 
     public int Calls { get; private set; }
 
+    /// <summary>Called with every request before it is answered.</summary>
+    public Action<ModelRequest>? RequestObserver { get; init; }
+
     public Task<ModelReply> CompleteAsync(ModelRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
         Calls++;
+        RequestObserver?.Invoke(request);
         if (string.Equals(request.SystemPrompt, PostGameNarrator.SystemPrompt, StringComparison.Ordinal)) return Task.FromResult(Narrate(request));
         JsonNode match = JsonNode.Parse(request.UserContent[0].Text)!;
         JsonNode situation = JsonNode.Parse(request.UserContent[^1].Text)!;

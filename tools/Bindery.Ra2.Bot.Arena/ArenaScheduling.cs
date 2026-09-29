@@ -49,7 +49,7 @@ public static class ArenaScheduling
     /// What besides the job itself decides a match's result, recorded with each match and compared by <c>--resume</c> so a
     /// resumed run cannot silently mix runs: code identity (MVIDs of the arena, bot, sim and Claude assemblies), SHA-256 of the
     /// rules (file contents, else the embedded fixture), the arm knobs, LLM model, endpoint (host and path only, no credentials)
-    /// and latency, and the distillation dataset's SHA-256, and the <c>--seed-list</c>.
+    /// and latency, the distillation dataset's SHA-256, the <c>--seed-list</c>, and the <c>--playbooks</c> files' SHA-256 ("" for none).
     /// </summary>
     public static IReadOnlyDictionary<string, string> Fingerprint(CliOptions options)
     {
@@ -57,7 +57,8 @@ public static class ArenaScheduling
         return Fingerprints.GetValue(options, static o => new SortedDictionary<string, string>(StringComparer.Ordinal)
         {
             ["code"] = CodeIdentity(),
-            ["rules"] = o.RulesPath is null ? Sha(Encoding.UTF8.GetBytes(RulesDatabase.EmbeddedFixtureJson(RulesDatabase.FixtureFile))) : Sha(File.ReadAllBytes(o.RulesPath)),
+            ["rules"] = RulesHash(o.RulesPath),
+            ["playbooks"] = PlaybooksHash(o.PlaybookFiles),
             ["knobs"] = string.Join(",", o.ArmKnobs.OrderBy(static k => k.Key, StringComparer.Ordinal).Select(static k => string.Create(CultureInfo.InvariantCulture, $"{k.Key}={k.Value:R}"))),
             ["llmModel"] = o.LlmModel,
             ["llmEndpoint"] = o.LlmEndpoint is null ? "" : Uri.TryCreate(o.LlmEndpoint, UriKind.Absolute, out Uri? u) ? $"{u.Scheme}://{u.Host}:{u.Port}{u.AbsolutePath}" : "(unparsed)",
@@ -68,6 +69,17 @@ public static class ArenaScheduling
             ["seedList"] = o.SeedList is null ? "" : string.Join(",", o.SeedList),
         });
     }
+
+    /// <summary>SHA-256 of the rules file's contents, else of the embedded fixture.</summary>
+    public static string RulesHash(string? rulesPath) =>
+        rulesPath is null ? Sha(Encoding.UTF8.GetBytes(RulesDatabase.EmbeddedFixtureJson(RulesDatabase.FixtureFile))) : Sha(File.ReadAllBytes(rulesPath));
+
+    /// <summary>
+    /// SHA-256 over the <c>--playbooks</c> files' contents, "" for none. The library is sorted by id, so the flag order
+    /// does not matter: the files' own hashes are sorted before they are hashed together. A changed set changes what the LLM is offered.
+    /// </summary>
+    public static string PlaybooksHash(IReadOnlyList<string> files) =>
+        files.Count == 0 ? "" : Sha(Encoding.UTF8.GetBytes(string.Join(";", files.Select(static f => Sha(File.ReadAllBytes(f))).Order(StringComparer.Ordinal))));
 
     private static string Sha(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
 
@@ -121,7 +133,7 @@ public static class ArenaScheduling
         {
             foreach ((string key, string expected) in Fingerprint(options))
             {
-                Check($"fingerprint.{key}", m.Fingerprint.GetValueOrDefault(key, key == "seedList" ? "" : null!), expected);
+                Check($"fingerprint.{key}", m.Fingerprint.GetValueOrDefault(key, key is "seedList" or "playbooks" ? "" : null!), expected);
             }
         }
         if (job.Arm.Name == "distilled" && options.Dataset is not null) Check("distillSource", m.DistillSource, Path.GetFileName(options.Dataset));

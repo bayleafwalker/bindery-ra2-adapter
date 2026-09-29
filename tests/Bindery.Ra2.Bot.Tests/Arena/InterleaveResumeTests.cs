@@ -209,7 +209,7 @@ public sealed class InterleaveResumeTests : IDisposable
         string dir = Run("fp-stable", "selector");
         MatchManifest manifest = MatchManifest.Load(Manifest(dir, "selector_ai-rush_twin-valley_1"));
 
-        Assert.Equal(["code", "dataset", "knobs", "llmEndpoint", "llmLatency", "llmModel", "rules", "seedList"], manifest.Fingerprint!.Keys.OrderBy(static k => k, StringComparer.Ordinal));
+        Assert.Equal(["code", "dataset", "knobs", "llmEndpoint", "llmLatency", "llmModel", "playbooks", "rules", "seedList"], manifest.Fingerprint!.Keys.OrderBy(static k => k, StringComparer.Ordinal));
         Assert.Equal(64, manifest.Fingerprint["rules"].Length);
         Assert.Equal(ArenaScheduling.CodeIdentity(), manifest.Fingerprint["code"]);
     }
