@@ -31,7 +31,8 @@ public sealed record SkippedArm(string Arm, string Reason);
 /// <see cref="MinDistillExamples"/> examples the arm is skipped with the reason recorded. The bandit's
 /// matches run sequentially in a fixed order because it learns across them; other arms run in
 /// parallel. A live LLM arm runs its first match alone and is skipped with the recorded reason if no
-/// credential resolved.
+/// credential resolved or if none of that match's Primary model proposals succeeded (see
+/// <see cref="AllPrimaryProposalsFailed"/>); the first match is then not counted.
 /// </remarks>
 public static class Program
 {
@@ -171,7 +172,13 @@ public static class Program
             {
                 armResults[0] = RunJob(jobs[0], options, rules, factory, log => logs[0] = log);
                 start = 1;
-                if (context.LlmSkipReason is { } reason)
+                // An all-failed first match skips this arm only; a missing credential (context-wide) skips every LLM arm.
+                string? armReason = context.LlmSkipReason;
+                if (armReason is null && logs.TryGetValue(0, out IReadOnlyList<DecisionRecord>? firstLog))
+                {
+                    armReason = AllPrimaryProposalsFailed(firstLog, arm.ToString());
+                }
+                if (armReason is { } reason)
                 {
                     skipped.Add(new SkippedArm(arm.ToString(), reason));
                     Console.WriteLine($"{arm}: {reason}");
@@ -238,6 +245,47 @@ public static class Program
 
         Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"Wrote {ordered.Count} match results, {probes.Count} leakage probes and report.md to {options.OutDir} in {wall.Elapsed.TotalSeconds:0}s."));
     }
+
+    /// <summary>
+    /// The skip reason when a live LLM arm's first match logged Primary <c>strategy.proposal_failed</c> records and no
+    /// Primary <c>strategy.proposal</c> (every decision then fell back to the selector, so the arm's results would not
+    /// measure the model); null when at least one Primary proposal succeeded or none was attempted.
+    /// </summary>
+    public static string? AllPrimaryProposalsFailed(IReadOnlyList<DecisionRecord> log, string arm = "llm")
+    {
+        int failed = 0;
+        string? firstError = null;
+        string? claudeError = null;
+        foreach (DecisionRecord record in log)
+        {
+            if (record.Data.ValueKind != JsonValueKind.Object) continue;
+            // The strategist's own failure record (no role) carries the real error; the scheduler's Primary record
+            // only says no_opinion.
+            if (record.Kind == DecisionRecordKinds.ProposalFailed && !record.Data.TryGetProperty("role", out _))
+            {
+                claudeError ??= ReadText(record.Data, "detail") ?? ReadText(record.Data, "code");
+                continue;
+            }
+            if (!record.Data.TryGetProperty("role", out JsonElement role) || role.ValueKind != JsonValueKind.String || role.GetString() != "Primary")
+            {
+                continue;
+            }
+            if (record.Kind == DecisionRecordKinds.Proposal) return null;
+            if (record.Kind != DecisionRecordKinds.ProposalFailed) continue;
+            failed++;
+            if (firstError is null)
+            {
+                firstError = ReadText(record.Data, "message") ?? ReadText(record.Data, "reason") ?? "no message";
+            }
+        }
+        if (failed == 0) return null;
+        string best = claudeError ?? firstError!;
+        string error = best.Length > 200 ? best[..200] + "..." : best;
+        return string.Create(CultureInfo.InvariantCulture, $"skipped: {arm}: 0 of {failed} model proposals succeeded in the first match ({error})");
+    }
+
+    private static string? ReadText(JsonElement data, string name) =>
+        data.TryGetProperty(name, out JsonElement v) && v.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(v.GetString()) ? v.GetString() : null;
 
     /// <summary>
     /// The rules every side plays on and the playbooks fitted to their roster: the embedded approximate fixture and
