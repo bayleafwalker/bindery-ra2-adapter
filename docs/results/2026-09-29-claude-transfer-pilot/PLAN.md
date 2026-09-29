@@ -100,3 +100,29 @@ use. API spend for the whole pilot line ends at $13.39. Two changes, nothing els
 The decision rule is unchanged. With 0% rhino-rush in the pilot the guard branch is unlikely; the test mainly
 separates "holds up as Soviet" (next build: perception / attack gate) from "loses for another reason" (read the
 losing logs first).
+
+## Outcome of the 20-cell Soviet test (19:50-21:43, `gpt-6-luna` via OpenCode Go, build 852e625)
+Counted. 40 matches: `llm-t1` (Luna) and `selector`, interleaved per cell, Soviet only (seeds 2 and 4), both
+held-out maps, five held-out opponents (`twenty-cell-luna/`). Delivery: 614 Primary proposals from the model, 1
+failed call (`claude.timeout`), median latency 9.5 s (p90 13.2 s); the forwarder served 885 calls with no upstream
+error, ~$1.08 at list price inside the flat plan (pilot included).
+
+| | Luna | Selector |
+|---|---|---|
+| Wins (of 20) | 20 (all by elimination) | 17 (all by elimination) |
+
+Paired: Luna better on 3 cells (ai-armor:hard fortress-choke seed 2, ai-horde:hard fortress-choke seeds 2 and 4, all
+three won by Luna and lost by the selector), worse on 0, same winner on 17. Worse minus better = -3 <= 2, so the rule's
+second branch applies: **Luna holds up against the selector as Soviet; the next build is perception / attack gate,
+and the Soviet playbook guard is kept for local-model (worker-fast) deployments only, not built now.** Luna's Soviet
+proposals: generic-expand 558, soviet-rhino-rush 29 (4.7%), soviet-flak-mix 27; the rhino-rush mechanism that sank
+worker-fast (70%) and marked Claude's one loss (38% pooled) does not appear.
+
+Limits, read before generalising: 17 of 20 cells are won by both arms, so the test can show Luna not worse but
+has little room to show it better outside the hard opponents; one faction, one model, one day; the A/A floor for
+a live model (17% of cells changing winner) was measured on worker-fast, not Luna. All wins being eliminations
+answers the concern that an economy-first policy might only win on timeout.
+
+Also recorded: `kimi-pilot/` (Kimi K2.7 Code, same 4 cells as attempt 3): not a model result. 141 of 144 calls
+failed as `claude.timeout` (median upstream latency ~57 s, ~12% upstream 5xx), 3 proposals landed; the selector
+fallback played the matches, hence its "3 of 4". The arena now labels such arms (#37).

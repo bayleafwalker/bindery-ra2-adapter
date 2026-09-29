@@ -1,0 +1,53 @@
+{
+  "probes": [
+    {
+      "arm": "llm-t1",
+      "map": "open-steppe",
+      "seed": 1,
+      "perturbedAtSeconds": 90,
+      "statesMatchedBeforePerturbation": true,
+      "framesCompared": 243,
+      "differences": 243,
+      "note": "stopped at 106 s: the arm saw a legitimate difference",
+      "comparedSeconds": 16.2,
+      "fogViolations": 0
+    },
+    {
+      "arm": "llm-t1",
+      "map": "open-steppe",
+      "seed": 1,
+      "perturbedAtSeconds": 240,
+      "statesMatchedBeforePerturbation": false,
+      "framesCompared": 0,
+      "differences": 0,
+      "note": "stopped at 240 s: the arm saw a legitimate difference",
+      "comparedSeconds": 0,
+      "fogViolations": 0
+    },
+    {
+      "arm": "selector",
+      "map": "open-steppe",
+      "seed": 1,
+      "perturbedAtSeconds": 90,
+      "statesMatchedBeforePerturbation": true,
+      "framesCompared": 671,
+      "differences": 0,
+      "note": "stopped at 135 s: the arm saw a legitimate difference",
+      "comparedSeconds": 44.733333333333334,
+      "fogViolations": 0
+    },
+    {
+      "arm": "selector",
+      "map": "open-steppe",
+      "seed": 1,
+      "perturbedAtSeconds": 240,
+      "statesMatchedBeforePerturbation": true,
+      "framesCompared": 1,
+      "differences": 0,
+      "note": "stopped at 240 s: the arm saw a legitimate difference",
+      "comparedSeconds": 0.06666666666666667,
+      "fogViolations": 0
+    }
+  ],
+  "skipped": []
+}
