@@ -414,16 +414,17 @@ public static class Program
     private static ObservationMode ModeOf(ArmSpec arm) => arm.Oracle ? ObservationMode.Oracle : ObservationMode.Belief;
 
     private static List<(ArmSpec Arm, string Opponent, SimMap Map, string Split, int Seed)> Jobs(ArmSpec arm, CliOptions options, List<(SimMap Map, string Split)> maps) =>
-        Jobs(arm, options.Opponents, options.Seeds, maps);
+        Jobs(arm, options.Opponents, options.Seeds, maps, options.SeedList);
 
-    private static List<(ArmSpec Arm, string Opponent, SimMap Map, string Split, int Seed)> Jobs(ArmSpec arm, IReadOnlyList<string> opponents, int seeds, List<(SimMap Map, string Split)> maps)
+    private static List<(ArmSpec Arm, string Opponent, SimMap Map, string Split, int Seed)> Jobs(ArmSpec arm, IReadOnlyList<string> opponents, int seeds, List<(SimMap Map, string Split)> maps, IReadOnlyList<int>? seedList = null)
     {
+        IReadOnlyList<int> played = seedList ?? [.. Enumerable.Range(1, seeds)];
         List<(ArmSpec, string, SimMap, string, int)> jobs = [];
         foreach (string opponent in opponents)
         {
             foreach ((SimMap map, string split) in maps)
             {
-                for (int seed = 1; seed <= seeds; seed++) jobs.Add((arm, opponent, map, split, seed));
+                foreach (int seed in played) jobs.Add((arm, opponent, map, split, seed));
             }
         }
         return jobs;

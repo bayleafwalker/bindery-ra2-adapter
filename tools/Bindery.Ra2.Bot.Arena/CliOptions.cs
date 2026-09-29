@@ -20,7 +20,7 @@ public sealed record CliOptions(
     public const double DefaultMaxSeconds = 1200;
 
     public const string Usage =
-        "Usage: arena run --arms a,b --maps training|heldout|all --opponents ai-rush,ai-balanced[:easy|:medium|:hard],rush,turtle,live-rush,ai-horde,...|all|training|heldout --seeds N --out <dir> " +
+        "Usage: arena run --arms a,b --maps training|heldout|all --opponents ai-rush,ai-balanced[:easy|:medium|:hard],rush,turtle,live-rush,ai-horde,...|all|training|heldout --seeds N [--seed-list 2,4,...] --out <dir> " +
         "[--oracle [both|all]] [--llm-fake | --llm-endpoint <openai-compatible base url> [--llm-model <id>]] [--max-seconds N] [--dataset <decisions.ndjson>] [--llm-latency <game seconds>] [--trace <dir>] " +
         "[--interleave] [--resume] [--benchmark standard|contested] [--opponent-income X] [--opponent-credits N] [--combat-noise F] [--allied-income X] [--allied-credits N] [--baseline <arm>] [--no-decisions] [--write-adoption <path>] [--personality aggressive,turtle,tech,harasser,none] [--rules <rules.json>] [--knob Name=value ...]\n" +
         "       (arms: selector, bandit, llm-shadow, llm, llm+fast, distilled, llm-t0..llm-t3 or tiers, all; any with -oracle)\n" +
@@ -64,6 +64,12 @@ public sealed record CliOptions(
     /// A complete bandit arm is loaded without being re-trained (its leakage probe may differ); an LLM arm skipped after all-failed first-match proposals keeps its record, so it stays skipped until that record is deleted.
     /// </summary>
     public bool Resume { get; init; }
+
+    /// <summary>
+    /// <c>--seed-list 2,4</c>: play exactly these seeds instead of 1..<see cref="Seeds"/> (the arm is Allied on odd seeds and Soviet
+    /// on even ones, west on seeds 1-2, 5-6, ... and east on 3-4, 7-8, ...), e.g. a Soviet-only test; null plays 1..N.
+    /// </summary>
+    public IReadOnlyList<int>? SeedList { get; init; }
 
     /// <summary><c>none</c> (belief frames unless an arm is named <c>*-oracle</c>), <c>all</c> (the legacy <c>--oracle</c>) or <c>both</c>.</summary>
     public string OracleMode { get; init; } = "none";
@@ -138,6 +144,7 @@ public sealed record CliOptions(
         bool writeDecisions = true;
         bool interleave = false;
         bool resume = false;
+        List<int>? seedList = null;
         string? writeAdoption = null;
         List<string?> personalities = [null];
         string? rulesPath = null;
@@ -196,6 +203,10 @@ public sealed record CliOptions(
                 case "--no-decisions": writeDecisions = false; break;
                 case "--interleave": interleave = true; break;
                 case "--resume": resume = true; break;
+                case "--seed-list":
+                    seedList = [.. Next(args, ref i).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(static v => int.Parse(v, CultureInfo.InvariantCulture))];
+                    if (seedList.Count == 0 || seedList.Any(static v => v < 1) || seedList.Distinct().Count() != seedList.Count) throw new ArgumentException("--seed-list takes distinct positive seeds, e.g. 2,4.");
+                    break;
                 case "--write-adoption": writeAdoption = Next(args, ref i); break;
                 case "--rules": rulesPath = Next(args, ref i); break;
                 case "--personality":
@@ -249,6 +260,7 @@ public sealed record CliOptions(
             WriteDecisions = writeDecisions,
             Interleave = interleave,
             Resume = resume,
+            SeedList = seedList,
             WriteAdoption = writeAdoption,
             PersonalityList = personalities,
             RulesPath = rulesPath,
