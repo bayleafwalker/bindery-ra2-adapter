@@ -34,6 +34,11 @@ public sealed record ArmyFeatures(
 /// rests on; <see cref="ArmyValueConfidence"/> is in [0, 1].
 /// </summary>
 /// <param name="SuperweaponKnown">An enemy superweapon has been seen, launched, or shown by its public timer.</param>
+/// <param name="ValueByClass">
+/// Confidence-weighted value of the seen enemy army by unit class (<see cref="EntityKind"/>: Infantry, Vehicle,
+/// Aircraft, Naval; buildings never appear), from belief only, using the same contacts and weights as
+/// <see cref="EstimatedArmyValue"/>. Null only in hand-built fixtures.
+/// </param>
 /// <param name="TechLastSeenAgeSeconds">
 /// Seconds since each <see cref="KnownTech"/> type (production buildings included) was last seen; null only in
 /// hand-built fixtures.
@@ -47,7 +52,8 @@ public sealed record EnemyFeatures(
     double NewestObservationAgeSeconds,
     double MedianObservationAgeSeconds,
     bool SuperweaponKnown,
-    IReadOnlyDictionary<string, double>? TechLastSeenAgeSeconds = null);
+    IReadOnlyDictionary<string, double>? TechLastSeenAgeSeconds = null,
+    IReadOnlyDictionary<EntityKind, double>? ValueByClass = null);
 
 /// <summary>One superweapon's countdown as a feature.</summary>
 /// <param name="ChargeFraction">Charge in [0, 1].</param>
@@ -59,10 +65,16 @@ public sealed record SuperweaponFeatures(IReadOnlyList<SuperweaponTimer> Own, IR
 
 public enum RegionControl { Own, Contested, Enemy, Neutral, Unknown }
 
+/// <param name="OwnedRegions">
+/// Regions where we hold a structure or combat units and no enemy contact with confidence of at least 0.2 is
+/// remembered; harvesters and other non-combat units do not count. Null only in hand-built fixtures (the
+/// <see cref="RegionControl.Own"/> count stands in).
+/// </param>
 public sealed record MapControlFeatures(
     IReadOnlyDictionary<RegionId, RegionControl> Control,
     IReadOnlyList<RegionId> ExpansionCandidates,
-    double OwnedOreFraction);
+    double OwnedOreFraction,
+    int? OwnedRegions = null);
 
 public sealed record ScoutingFeatures(
     double CoverageFraction,

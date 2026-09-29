@@ -33,6 +33,9 @@ public sealed class ArenaRunContext
 
     public bool LlmFake { get; }
 
+    /// <summary>Offer the LLM arms the extended condition metrics (<c>--extended-metrics</c>).</summary>
+    public bool ExtendedMetrics { get; init; }
+
     /// <summary>Sees each request the <c>--llm-fake</c> client receives (tests read the prompt the model would be given).</summary>
     public Action<ModelRequest>? LlmRequestObserver { get; init; }
 
@@ -364,6 +367,7 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
         IMessageClient client = context.CreateClient() ?? new UnavailableClient(context.LlmSkipReason ?? "skipped: no credential");
         ClaudeStrategistOptions options = mode == StrategistMode.Refine ? ClaudeStrategistOptions.ForRefine() : new ClaudeStrategistOptions();
         if (tier is { } t) options = options with { Vocabulary = t };
+        if (context.ExtendedMetrics) options = options with { ExtendedConditionMetrics = true };
         // An OpenAI-compatible endpoint serves one configured model for both roles; the arm reports that model, not
         // the Claude default, so no summary can credit a local model's play to Claude.
         if (context.LlmEndpoint is not null && !context.LlmFake) options = options with { Model = context.LlmModel };

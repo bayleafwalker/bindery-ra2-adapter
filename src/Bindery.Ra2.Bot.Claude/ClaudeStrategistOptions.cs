@@ -54,6 +54,13 @@ public sealed record ClaudeStrategistOptions
     /// </summary>
     public bool EnableServerFallbacks { get; init; } = true;
 
+    /// <summary>
+    /// Offer the model the enemy-composition and map-control condition metrics (<see cref="ConditionMetrics.Extended"/>)
+    /// in the system prompt, the situation's conditionMetrics and the output schema. Off by default so prompts and
+    /// schemas are byte-identical to those of earlier runs.
+    /// </summary>
+    public bool ExtendedConditionMetrics { get; init; }
+
     /// <summary>Free-text style guidance (e.g. "aggressive, favours early pressure"); passed as data, not instructions.</summary>
     public string? Personality { get; init; }
 

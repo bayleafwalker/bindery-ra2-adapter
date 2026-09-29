@@ -12,12 +12,14 @@ public sealed partial class FeatureCompiler
         List<EnemyContact> army = [.. alive.Where(static c => c.Kind != EntityKind.Building && CombatRoles.Contains(c.Role))];
         double weightedValue = 0, totalValue = 0;
         Dictionary<UnitRole, double> composition = [];
+        Dictionary<EntityKind, double> byClass = [];
         foreach (EnemyContact c in army)
         {
             double contribution = c.Value * c.Confidence;
             weightedValue += contribution;
             totalValue += c.Value;
             composition[c.Role] = composition.GetValueOrDefault(c.Role) + contribution;
+            byClass[c.Kind] = byClass.GetValueOrDefault(c.Kind) + contribution;
         }
         armyValueCurrent = weightedValue;
 
@@ -61,6 +63,6 @@ public sealed partial class FeatureCompiler
 
         return new EnemyFeatures(
             Trend.Flat(armyValueCurrent), confidence, composition, knownTech, knownProduction,
-            newestAge, medianAge, superweaponKnown, techAges);
+            newestAge, medianAge, superweaponKnown, techAges, byClass);
     }
 }

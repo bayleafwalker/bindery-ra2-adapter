@@ -120,11 +120,14 @@ public static class IntentDraftSchema
     /// <summary>The schema as compact JSON text; identical on every call so the API's schema cache and the prompt cache both hit.</summary>
     public static string Json { get; } = Build().ToJsonString();
 
-    /// <summary>A fresh mutable copy of the schema tree.</summary>
-    public static JsonObject Build()
+    /// <summary>The schema whose metric enum also lists <see cref="ConditionMetrics.Extended"/>.</summary>
+    public static string JsonExtended { get; } = Build(extendedMetrics: true).ToJsonString();
+
+    /// <summary>A fresh mutable copy of the schema tree. Without <paramref name="extendedMetrics"/> the metric enum is the original list.</summary>
+    public static JsonObject Build(bool extendedMetrics = false)
     {
         JsonObject condition = Closed(
-            ("metric", StringEnum<ConditionMetric>()),
+            ("metric", new JsonObject { ["type"] = "string", ["enum"] = new JsonArray([.. ConditionMetrics.Offered(extendedMetrics).Select(m => (JsonNode?)m.ToString())]) }),
             ("op", StringEnum<Comparison>()),
             ("threshold", Type("number")),
             ("regionId", Nullable("integer")));

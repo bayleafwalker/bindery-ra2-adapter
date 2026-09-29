@@ -24,7 +24,7 @@ public sealed record CliOptions(
     public const string Usage =
         "Usage: arena run --arms a,b --maps training|heldout|all --opponents ai-rush,ai-balanced[:easy|:medium|:hard],rush,turtle,live-rush,ai-horde,...|all|training|heldout --seeds N [--seed-list 2,4,...] --out <dir> " +
         "[--oracle [both|all]] [--llm-fake | --llm-endpoint <openai-compatible base url> [--llm-model <id>]] [--max-seconds N] [--dataset <decisions.ndjson>] [--llm-latency <game seconds>] [--trace <dir>] " +
-        "[--interleave] [--resume] [--benchmark standard|contested] [--opponent-income X] [--opponent-credits N] [--combat-noise F] [--allied-income X] [--allied-credits N] [--baseline <arm>] [--no-decisions] [--write-adoption <path>] [--max-llm-failure-rate F] [--personality aggressive,turtle,tech,harasser,none] [--rules <rules.json>] [--playbooks <playbooks.json> ...] [--knob Name=value ...]\n" +
+        "[--interleave] [--resume] [--benchmark standard|contested] [--opponent-income X] [--opponent-credits N] [--combat-noise F] [--allied-income X] [--allied-credits N] [--baseline <arm>] [--no-decisions] [--write-adoption <path>] [--max-llm-failure-rate F] [--personality aggressive,turtle,tech,harasser,none] [--rules <rules.json>] [--playbooks <playbooks.json> ...] [--knob Name=value ...] [--extended-metrics]\n" +
         "       (arms: selector, bandit, llm-shadow, llm, llm+fast, distilled, llm-t0..llm-t3 or tiers, all; any with -oracle)\n" +
         "       arena playbooks export [--out <playbooks.json>]  (the default library as a PlaybookDocument, the format --playbooks loads)\n" +
         "       arena replay <out>/decisions/<match>.ndjson [--out <replayed.ndjson>]\n" +
@@ -51,6 +51,9 @@ public sealed record CliOptions(
     /// library for every component of every arm; <c>--playbooks</c>, repeatable. An id that is already taken is refused.
     /// </summary>
     public IReadOnlyList<string> PlaybookFiles { get; init; } = [];
+
+    /// <summary>Offer LLM arms the enemy-composition and map-control condition metrics (<c>--extended-metrics</c>).</summary>
+    public bool ExtendedMetrics { get; init; }
 
     /// <summary><c>--knob Name=value</c> overrides (tuning knob names), applied to arms, never to pinned or live-* opponents.</summary>
     public IReadOnlyDictionary<string, double> ArmKnobs { get; init; } = new Dictionary<string, double>(StringComparer.Ordinal);
@@ -143,6 +146,7 @@ public sealed record CliOptions(
         bool oracle = false;
         string oracleMode = "none";
         bool llmFake = false;
+        bool extendedMetrics = false;
         string? llmEndpoint = null;
         string llmModel = "worker-fast";
         double maxSeconds = DefaultMaxSeconds;
@@ -188,6 +192,7 @@ public sealed record CliOptions(
                     oracle = oracleMode == "all";
                     break;
                 case "--llm-fake": llmFake = true; break;
+                case "--extended-metrics": extendedMetrics = true; break;
                 case "--llm-endpoint": llmEndpoint = Next(args, ref i); break;
                 case "--llm-model": llmModel = Next(args, ref i); break;
                 case "--max-seconds": maxSeconds = double.Parse(Next(args, ref i), CultureInfo.InvariantCulture); break;
@@ -294,6 +299,7 @@ public sealed record CliOptions(
             ArmKnobs = knobs,
             LlmEndpoint = llmFake && llmEndpoint is not null ? throw new ArgumentException("--llm-fake and --llm-endpoint are exclusive.") : llmEndpoint,
             LlmModel = llmModel,
+            ExtendedMetrics = extendedMetrics,
         };
     }
 

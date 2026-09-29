@@ -39,6 +39,15 @@ public sealed record ConditionResult(Condition Condition, bool Holds, double Val
 /// (enemy value with zero own value yields the cap; zero enemy value yields 0). No base threats yields 0.</item>
 /// <item><see cref="ConditionMetric.LossesValue15s"/>: <c>Army.LossesValue.Delta15s</c>, the value lost
 /// in the last 15 seconds.</item>
+/// <item><see cref="ConditionMetric.EnemyAirShare"/>, <see cref="ConditionMetric.EnemyVehicleShare"/>,
+/// <see cref="ConditionMetric.EnemyInfantryShare"/>: <c>Enemy.ValueByClass</c> for Aircraft, Vehicle, Infantry
+/// over the sum of all classes (naval included in the denominator). The class is the contact's
+/// <see cref="EntityKind"/>, and value is confidence-weighted like the army estimate. The shares are 0 unless the
+/// seen army value is at least <see cref="EnemyShareFloor"/>: one scout is a sample of one, not a composition.</item>
+/// <item><see cref="ConditionMetric.EnemyArmyConfidence"/>: <c>Enemy.ArmyValueConfidence</c> (0 with no army contact).</item>
+/// <item><see cref="ConditionMetric.OwnedRegions"/>: <c>MapControl.OwnedRegions</c>, the regions where we have a
+/// structure or combat units and no enemy contact at confidence >= 0.2 is remembered (harvesters and other
+/// non-combat units do not count); without that field, the count of <see cref="RegionControl.Own"/> regions.</item>
 /// </list>
 /// A NaN measurement makes the condition false with a <c>condition.nan</c> issue: an
 /// undefined quantity must never satisfy an attack condition or fire a trigger.
@@ -47,6 +56,12 @@ public static class ConditionEvaluator
 {
     /// <summary>Upper bound for every ratio metric, so "no enemy seen" is a finite, comparable number.</summary>
     public const double RatioCap = 10.0;
+
+    /// <summary>
+    /// Seen enemy army value (confidence-weighted, same unit as <c>EnemyArmyValueEstimate</c>) below which the class
+    /// shares read 0. About three cheap combat units at retail costs; a single sighting must not read as a composition.
+    /// </summary>
+    public const double EnemyShareFloor = 600.0;
 
     public const string RegionRequiredCode = "condition.region_required";
     public const string NotANumberCode = "condition.nan";
@@ -80,6 +95,11 @@ public static class ConditionEvaluator
             ConditionMetric.ScoutingAgeSeconds => features.Scouting.RegionAgeSeconds.TryGetValue(region!.Value, out double age) ? age : double.PositiveInfinity,
             ConditionMetric.BaseThreatRatio => BaseThreatRatio(features),
             ConditionMetric.LossesValue15s => features.Army.LossesValue.Delta15s,
+            ConditionMetric.EnemyAirShare => ClassShare(features, EntityKind.Aircraft),
+            ConditionMetric.EnemyVehicleShare => ClassShare(features, EntityKind.Vehicle),
+            ConditionMetric.EnemyInfantryShare => ClassShare(features, EntityKind.Infantry),
+            ConditionMetric.EnemyArmyConfidence => features.Enemy.ArmyValueConfidence,
+            ConditionMetric.OwnedRegions => features.MapControl.OwnedRegions ?? features.MapControl.Control.Values.Count(static c => c == RegionControl.Own),
             _ => double.NaN,
         };
 
@@ -89,6 +109,18 @@ public static class ConditionEvaluator
             return false;
         }
         return true;
+    }
+
+    /// <summary>Value share of one enemy class among all seen enemy army value; 0 when the seen value is under <see cref="EnemyShareFloor"/>.</summary>
+    public static double ClassShare(StrategicFeatures features, EntityKind kind)
+    {
+        ArgumentNullException.ThrowIfNull(features);
+        IReadOnlyDictionary<EntityKind, double>? byClass = features.Enemy.ValueByClass;
+        if (byClass is null) return 0;
+        double total = 0;
+        foreach (double v in byClass.Values) total += Math.Max(v, 0);
+        if (total < EnemyShareFloor) return 0;
+        return Math.Max(byClass.GetValueOrDefault(kind), 0) / total;
     }
 
     /// <summary>Own army value over the enemy estimate, capped; see the type remarks.</summary>
