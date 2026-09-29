@@ -72,6 +72,7 @@ public static class TuningKnobs
     public static IReadOnlyList<OptionKnob> Diagnostic { get; } =
     [
         new("ScoutingCoverageCap", 0, 1, false, "Caps the reported scouting coverage (diagnostic; never tuned)."),
+        new("BaseSightingWeightCap", 0, 1, false, "Caps the base-sighting term of the attack gate's evidence weight (diagnostic; never tuned)."),
     ];
 
     /// <summary>Reads a knob's value from <paramref name="options"/>.</summary>
@@ -94,6 +95,7 @@ public static class TuningKnobs
             "ReinforceSquadTargetSize" => options.ReinforceSquadTargetSize,
             "ScoutRevisitSeconds" => options.ScoutRevisitSeconds,
             "MinAttackForceRatio" => options.MinAttackForceRatio,
+            "BaseSightingWeightCap" => options.BaseSightingWeightCap,
             "SeenAttackForceRatio" => options.SeenAttackForceRatio,
             "EnemyPriorValuePerSecond" => options.EnemyPriorValuePerSecond,
             "EnemyPriorMaxValue" => options.EnemyPriorMaxValue,
@@ -123,6 +125,7 @@ public static class TuningKnobs
             "ReinforceSquadTargetSize" => options with { ReinforceSquadTargetSize = i },
             "ScoutRevisitSeconds" => options with { ScoutRevisitSeconds = value },
             "MinAttackForceRatio" => options with { MinAttackForceRatio = value },
+            "BaseSightingWeightCap" => options with { BaseSightingWeightCap = value },
             "SeenAttackForceRatio" => options with { SeenAttackForceRatio = value },
             "EnemyPriorValuePerSecond" => options with { EnemyPriorValuePerSecond = value },
             "EnemyPriorMaxValue" => options with { EnemyPriorMaxValue = value },

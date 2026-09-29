@@ -12,13 +12,15 @@ public static class EnemyArmyBound
     /// <summary>
     /// Weight in [0, 1] of the sighted estimate: the army sighting's confidence, fading linearly to 0 as it ages, or
     /// the freshness of the last look at a known enemy base region, whichever is higher. A base seen recently with no
-    /// army in it is evidence of a small army, not an absence of evidence.
+    /// army in it is evidence of a small army, not an absence of evidence. The base term alone is capped at
+    /// <see cref="OperationalOptions.BaseSightingWeightCap"/>; the army sighting is not.
     /// </summary>
     /// <param name="baseSeenAgeSeconds">Seconds since a known enemy base region was last seen; infinity when none is known.</param>
     public static double EvidenceWeight(EnemyFeatures enemy, double baseSeenAgeSeconds, OperationalOptions options)
     {
         double army = Math.Clamp(enemy.ArmyValueConfidence, 0, 1) * Freshness(enemy.NewestObservationAgeSeconds, options);
-        return Math.Max(army, Freshness(baseSeenAgeSeconds, options));
+        double baseTerm = Math.Min(Freshness(baseSeenAgeSeconds, options), Math.Clamp(options.BaseSightingWeightCap, 0, 1));
+        return Math.Max(army, baseTerm);
     }
 
     private static double Freshness(double ageSeconds, OperationalOptions options) =>
