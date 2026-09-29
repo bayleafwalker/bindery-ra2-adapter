@@ -17,7 +17,8 @@ public sealed class ExtendedMetricsPromptTests
 
     private static readonly string[] NewNames = [.. ConditionMetrics.Extended.Select(m => m.ToString())];
 
-    private static string Hash(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
+    // Line endings are normalised: a Windows checkout gives the raw-string prompt sources CRLF, which is not a content change.
+    private static string Hash(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text.Replace("\r\n", "\n"))));
 
     private static string ConditionMetricsJson(string situation)
     {
