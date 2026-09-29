@@ -68,7 +68,7 @@ public sealed class IntentDraftSchemaTests
 
         Assert.Equal(Enum.GetNames<StrategicPosture>(), props.GetProperty("posture").GetProperty("enum").EnumerateArray().Select(e => e.GetString()!).ToArray());
         JsonElement condition = props.GetProperty("abortTriggers").GetProperty("items").GetProperty("properties");
-        Assert.Equal(Enum.GetNames<ConditionMetric>(), condition.GetProperty("metric").GetProperty("enum").EnumerateArray().Select(e => e.GetString()!).ToArray());
+        Assert.Equal(ConditionMetrics.Offered(extended: false).Select(m => m.ToString()).ToArray(), condition.GetProperty("metric").GetProperty("enum").EnumerateArray().Select(e => e.GetString()!).ToArray());
         Assert.Equal(Enum.GetNames<Comparison>(), condition.GetProperty("op").GetProperty("enum").EnumerateArray().Select(e => e.GetString()!).ToArray());
     }
 

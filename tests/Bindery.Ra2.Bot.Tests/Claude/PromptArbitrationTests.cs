@@ -197,7 +197,7 @@ public sealed class PromptArbitrationTests
     public void Every_condition_metric_is_defined_and_its_current_value_given()
     {
         StrategistContext context = ClaudeFixtures.Context();
-        IntentPrompt prompt = new IntentPromptBuilder().Build(context, StrategistMode.Strategic);
+        IntentPrompt prompt = new IntentPromptBuilder().Build(context, StrategistMode.Strategic, extendedMetrics: true);
 
         foreach (ConditionMetric metric in Enum.GetValues<ConditionMetric>())
         {

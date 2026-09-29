@@ -32,6 +32,18 @@ public enum ConditionMetric
     ScoutingAgeSeconds,
     BaseThreatRatio,
     LossesValue15s,
+    // Appended after the original metrics; none needs a region. The LLM prompt lists them only when
+    // ClaudeStrategistOptions.ExtendedConditionMetrics is on.
+    /// <summary>Aircraft share of the seen enemy army value, in [0, 1]; 0 when no army is seen.</summary>
+    EnemyAirShare,
+    /// <summary>Vehicle share of the seen enemy army value, in [0, 1]; 0 when no army is seen.</summary>
+    EnemyVehicleShare,
+    /// <summary>Infantry share of the seen enemy army value, in [0, 1]; 0 when no army is seen.</summary>
+    EnemyInfantryShare,
+    /// <summary>Confidence in the enemy army estimate, in [0, 1]; 0 when no army is seen.</summary>
+    EnemyArmyConfidence,
+    /// <summary>Number of regions where we hold presence and no enemy is known to be.</summary>
+    OwnedRegions,
 }
 
 public enum Comparison { Lt, Le, Gt, Ge }

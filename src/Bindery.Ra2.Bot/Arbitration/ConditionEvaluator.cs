@@ -39,6 +39,13 @@ public sealed record ConditionResult(Condition Condition, bool Holds, double Val
 /// (enemy value with zero own value yields the cap; zero enemy value yields 0). No base threats yields 0.</item>
 /// <item><see cref="ConditionMetric.LossesValue15s"/>: <c>Army.LossesValue.Delta15s</c>, the value lost
 /// in the last 15 seconds.</item>
+/// <item><see cref="ConditionMetric.EnemyAirShare"/>, <see cref="ConditionMetric.EnemyVehicleShare"/>,
+/// <see cref="ConditionMetric.EnemyInfantryShare"/>: <c>Enemy.ValueByClass</c> for Aircraft, Vehicle, Infantry
+/// over the sum of all classes (naval included in the denominator); 0 when nothing is seen. The class is the
+/// contact's <see cref="EntityKind"/>, and value is confidence-weighted like the army estimate.</item>
+/// <item><see cref="ConditionMetric.EnemyArmyConfidence"/>: <c>Enemy.ArmyValueConfidence</c> (0 with no army contact).</item>
+/// <item><see cref="ConditionMetric.OwnedRegions"/>: regions with <see cref="RegionControl.Own"/> in
+/// <c>MapControl.Control</c>, i.e. we have an entity there and no live enemy contact is remembered there.</item>
 /// </list>
 /// A NaN measurement makes the condition false with a <c>condition.nan</c> issue: an
 /// undefined quantity must never satisfy an attack condition or fire a trigger.
@@ -80,6 +87,11 @@ public static class ConditionEvaluator
             ConditionMetric.ScoutingAgeSeconds => features.Scouting.RegionAgeSeconds.TryGetValue(region!.Value, out double age) ? age : double.PositiveInfinity,
             ConditionMetric.BaseThreatRatio => BaseThreatRatio(features),
             ConditionMetric.LossesValue15s => features.Army.LossesValue.Delta15s,
+            ConditionMetric.EnemyAirShare => ClassShare(features, EntityKind.Aircraft),
+            ConditionMetric.EnemyVehicleShare => ClassShare(features, EntityKind.Vehicle),
+            ConditionMetric.EnemyInfantryShare => ClassShare(features, EntityKind.Infantry),
+            ConditionMetric.EnemyArmyConfidence => features.Enemy.ArmyValueConfidence,
+            ConditionMetric.OwnedRegions => features.MapControl.Control.Values.Count(static c => c == RegionControl.Own),
             _ => double.NaN,
         };
 
@@ -89,6 +101,18 @@ public static class ConditionEvaluator
             return false;
         }
         return true;
+    }
+
+    /// <summary>Value share of one enemy class among all seen enemy army value; 0 when nothing is seen.</summary>
+    public static double ClassShare(StrategicFeatures features, EntityKind kind)
+    {
+        ArgumentNullException.ThrowIfNull(features);
+        IReadOnlyDictionary<EntityKind, double>? byClass = features.Enemy.ValueByClass;
+        if (byClass is null) return 0;
+        double total = 0;
+        foreach (double v in byClass.Values) total += Math.Max(v, 0);
+        if (total <= 0) return 0;
+        return Math.Max(byClass.GetValueOrDefault(kind), 0) / total;
     }
 
     /// <summary>Own army value over the enemy estimate, capped; see the type remarks.</summary>

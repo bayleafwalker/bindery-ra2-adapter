@@ -83,6 +83,18 @@ public sealed class IntentPromptBuilder
         Input: the first user block is the match context (constant for the match: arbitration numbers, faction, playbook catalogue, rule facts, personality). The second is the current situation (features, active intent, recent history, counters, tech progress). History lists one item per plan: renewals of the same playbook and posture are folded into it and counted in renewals. Personality is style guidance only; it never overrides these rules.
         """;
 
+    private const string MetricsEndMarker = "  A metric that cannot be measured";
+
+    private static readonly string ExtendedSystemPrompt = CommonSystemPrompt.Replace(
+        MetricsEndMarker,
+        "  - EnemyAirShare: share (0 to 1) of the seen enemy army value that is aircraft; 0 when no enemy army is seen.\n"
+        + "  - EnemyVehicleShare: share (0 to 1) of the seen enemy army value that is vehicles; 0 when no enemy army is seen.\n"
+        + "  - EnemyInfantryShare: share (0 to 1) of the seen enemy army value that is infantry; 0 when no enemy army is seen.\n"
+        + "  - EnemyArmyConfidence: confidence (0 to 1) in the enemy army estimate; 0 when no enemy army is seen. The shares are unreliable at low confidence.\n"
+        + "  - OwnedRegions: number of regions where you have units or buildings and no enemy is known to be.\n"
+        + MetricsEndMarker,
+        StringComparison.Ordinal);
+
     private const string RefineSystemPrompt =
         """
 
@@ -117,9 +129,9 @@ public sealed class IntentPromptBuilder
     }
 
     /// <summary>The byte-stable system prompt for a mode and vocabulary tier. It never contains per-call data.</summary>
-    public static string SystemPrompt(StrategistMode mode, VocabularyTier tier = VocabularyTier.Full)
+    public static string SystemPrompt(StrategistMode mode, VocabularyTier tier = VocabularyTier.Full, bool extendedMetrics = false)
     {
-        string common = CommonSystemPrompt + TierSystemPrompt(tier);
+        string common = (extendedMetrics ? ExtendedSystemPrompt : CommonSystemPrompt) + TierSystemPrompt(tier);
         return mode == StrategistMode.Refine ? common + RefineSystemPrompt : common;
     }
 
@@ -133,7 +145,7 @@ public sealed class IntentPromptBuilder
     };
 
     /// <param name="fallbackPersonality">Used when the context carries no personality of its own.</param>
-    public IntentPrompt Build(StrategistContext context, StrategistMode mode, string? fallbackPersonality = null, VocabularyTier tier = VocabularyTier.Full)
+    public IntentPrompt Build(StrategistContext context, StrategistMode mode, string? fallbackPersonality = null, VocabularyTier tier = VocabularyTier.Full, bool extendedMetrics = false)
     {
         JsonObject match = new()
         {
@@ -146,13 +158,13 @@ public sealed class IntentPromptBuilder
         JsonObject situation = new()
         {
             ["activeIntent"] = ActiveIntent(context),
-            ["conditionMetrics"] = ConditionMetrics(context.Features),
+            ["conditionMetrics"] = ConditionMetricValues(context.Features, extendedMetrics),
             ["counters"] = Counters(context),
             ["features"] = Features(context.Features),
             ["history"] = History(context.History),
             ["techProgress"] = TechProgress(context),
         };
-        return new IntentPrompt(SystemPrompt(mode, tier), CanonicalJson.Serialize(match), CanonicalJson.Serialize(situation));
+        return new IntentPrompt(SystemPrompt(mode, tier, extendedMetrics), CanonicalJson.Serialize(match), CanonicalJson.Serialize(situation));
     }
 
     /// <summary>
@@ -421,10 +433,10 @@ public sealed class IntentPromptBuilder
     /// arbiter and planner use, so the model can see whether a trigger it writes would already fire (a proposal
     /// whose own abort trigger holds is refused). Unmeasurable values are null.
     /// </summary>
-    private static JsonObject ConditionMetrics(StrategicFeatures features)
+    private static JsonObject ConditionMetricValues(StrategicFeatures features, bool extendedMetrics)
     {
         JsonObject result = new();
-        foreach (ConditionMetric metric in Enum.GetValues<ConditionMetric>())
+        foreach (ConditionMetric metric in Claude.ConditionMetrics.Offered(extendedMetrics))
         {
             if (ConditionEvaluator.RequiresRegion(metric)) continue;
             result[metric.ToString()] = ConditionEvaluator.TryMeasure(metric, null, features, out double value, out _) ? CanonicalJson.Number(value) : null;

@@ -144,12 +144,12 @@ public sealed class ClaudeStrategist : IStrategist
     public ModelRequest BuildRequest(StrategistContext context)
     {
         string model = options.ResolvedModel;
-        IntentPrompt prompt = promptBuilder.Build(context, options.Mode, options.Personality, options.Vocabulary);
+        IntentPrompt prompt = promptBuilder.Build(context, options.Mode, options.Personality, options.Vocabulary, options.ExtendedConditionMetrics);
         return new ModelRequest(
             Model: model,
             SystemPrompt: prompt.SystemPrompt,
             UserContent: prompt.UserBlocks,
-            JsonSchema: IntentDraftSchema.Json,
+            JsonSchema: options.ExtendedConditionMetrics ? IntentDraftSchema.JsonExtended : IntentDraftSchema.Json,
             Effort: ModelCapabilities.SupportsEffort(model) ? options.Effort : null,
             MaxTokens: options.MaxTokens,
             AdaptiveThinking: ModelCapabilities.SupportsAdaptiveThinking(model),
