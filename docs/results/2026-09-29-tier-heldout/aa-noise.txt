@@ -1,0 +1,10 @@
+A/A noise floor: llm-t1 (worker-fast, Parameters) played twice on the same cells (attempt 1 in aborted-1/, attempt 2 in run/)
+cells played in both: 30; winner changed: 5 (17%)
+match score is win 1 / draw 1/2 / loss 0, so these are the pairs that differ from model nondeterminism alone (the sim is seeded)
+  flipped: ('ai-horde:easy', 'fortress-choke', 1) 0 timeout -> 1 elimination
+  flipped: ('ai-horde:easy', 'fortress-choke', 7) 1 elimination -> 0 timeout
+  flipped: ('ai-horde:medium', 'fortress-choke', 3) 0 timeout -> 1 elimination
+  flipped: ('ai-horde:medium', 'fortress-choke', 5) 0 timeout -> 1 elimination
+  flipped: ('ai-horde:medium', 'fortress-choke', 6) 1 timeout -> 0 elimination
+
+attempt 2 llm-t1: 81 matches, 40 won, 41 lost (llm-t2/llm-t3 never started)

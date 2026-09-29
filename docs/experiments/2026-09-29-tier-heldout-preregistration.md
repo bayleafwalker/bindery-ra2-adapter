@@ -22,4 +22,22 @@ reported, not decided on: wins per arm and faction, validity and latency per tie
 model, no change to the rule, no extra seeds after the run.
 
 ## Outcome
-Not run yet.
+**Stopped before any comparison; no adoption decision.** Parameters stays, as the embedded record already says (no
+evidence recorded). The run was stopped by operator direction on 2026-09-29 at 15:10 after 81 of 288 matches.
+
+- Attempt 1 (19:50 on 2026-09-28, at fadce59) was killed by a host reboot after 30 llm-t1 matches, with nothing scored.
+  Its decision logs are in `aborted-1/`. Attempt 2 restarted from scratch at 08:05 with the unchanged `run.sh` and
+  reached 81 llm-t1 matches (41 won, 40 lost). The arms ran in sequence, so llm-t2 and llm-t3 never started, and neither
+  pre-registered comparison has a single pair.
+- Why stopped: the design ran arms in sequence with no resume. That meant about 30 hours of local GPU (the model server
+  serves one request at a time, about 9 matches an hour) and an overnight machine, all before a single pair could be
+  scored. The decision it would inform is scoped to worker-fast, not the model the strategist uses in play, and nothing
+  is waiting on it. A 30-minute pilot should come first.
+- Measured from the two attempts, reported rather than decided on (`aa-noise.txt`): llm-t1 played twice on the same 30
+  cells changed winner in 5 (17%). The simulator is seeded, so this is the model's own nondeterminism, and the binary
+  match score means 17% of pairs differ from noise alone. At 96 pairs that allows roughly a 10-point win-rate gain to be
+  detected; at the 27 pairs per comparison an interleaved design would have had after 81 matches, only effects of
+  roughly 20 points or more.
+
+Any follow-up comparison is a new pre-registration: arms interleaved per cell, resumable, preceded by a pilot, and
+tied to the model and decision it informs.
