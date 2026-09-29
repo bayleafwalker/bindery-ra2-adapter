@@ -26,3 +26,9 @@ with no match scored. It is kept as `attempt-1-subscription/` and not counted. T
 Anthropic client (no `--llm-endpoint`) with an API key, so the model is the strategist's production default
 `claude-opus-5` (`ClaudeStrategistOptions.DefaultStrategicModel`), the model that actually plays. Same arm, cells,
 and decision rule as above.
+
+Attempt 2 (17:52, API, `claude-opus-5`): not counted. Every one of the 139 Primary requests was refused with
+`invalid_request_error`: the API key is not scoped to a workspace and requests lacked `anthropic-workspace-id`, so all
+four matches were played by the selector fallback (its "3 of 4 wins" is not a Claude result). Kept as
+`attempt-2-unscoped-key/`. The next attempt sets `ANTHROPIC_CUSTOM_HEADERS=anthropic-workspace-id: <id>` (read by the
+Anthropic SDK) or uses a workspace-scoped key; nothing else changes.
