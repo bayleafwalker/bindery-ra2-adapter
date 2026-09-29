@@ -34,12 +34,17 @@ counted, and the series resumed from run 35 once the guests were back and the pr
 `infra.log`. Analysis: `docs/results/2026-09-29-defer-service-ab/analysis.txt`; per-run logs in `run-logs.tar.xz`.
 
 - A (service at ExeRun): 0 crash, 60 ok, 0 unknown launches; 30 of 30 runs completed.
-- B (`deferServiceStart: true`): 0 crash, 60 ok, 0 unknown launches; 29 of 30 runs completed (run 14 hit the
-  40-minute match cap with both clients running, so it has no completion evidence and counts as not completed).
-- P1: 0 of 60 against 0 of 60, Fisher exact p = 1.0: **fails**.
-- P2: 96.7% against 100%, within 10 points: passes. Validity holds (0 unknown launches per arm).
+- B (`deferServiceStart: true`): 0 crash; the classifier recorded 60 ok, but run 14 (20260928-204252-s1) never
+  launched a game: its `syringe-client-{a,b}.log` are byte-identical to run 13's (the guest logs are not cleared
+  between runs, so the classifier read run 13's exit codes), relay traffic and telemetry were zero, and the harness
+  ran to the 40-minute cap with no exit. Corrected, B is 58 ok and 2 unknown launches; `results.tsv` stays the
+  classifier's unchanged output and `analysis.txt` gives both counts. 29 of 30 runs completed (run 14 did not).
+- P1: 0 of 60 against 0 of 58 (0 of 60 as classified), Fisher exact p = 1.0: **fails**.
+- P2: 96.7% against 100%, within 10 points: passes. Validity holds (A 0, B 2 unknown launches; at most 6 allowed).
 
 Decision, as pre-registered: `deferServiceStart` is not adopted; the lab default stays off. The fork branch
 `bayleafwalker/ra2yrcpp` `feat/defer-service-start` (58a5438) never had a PR opened, so there is none to close; it
-stays unmerged. Also reported, not decided on: the startup crash did not occur in either arm (0 of 120 launches,
-against about 2 of 20 before), so this series could not have shown an effect of the deferral.
+stays unmerged. Also reported, not decided on: the startup crash did not occur in either arm (0 of 118 launches,
+against about 2 of 20 before), so this series could not have shown an effect of the deferral. Pipeline weakness for
+any rerun: `lab-run.sh` should clear the guest syringe logs before a launch so a failed start cannot inherit the
+previous run's exit codes.
