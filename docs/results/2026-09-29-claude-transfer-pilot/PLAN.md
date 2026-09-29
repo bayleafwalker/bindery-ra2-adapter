@@ -34,9 +34,11 @@ four matches were played by the selector fallback (its "3 of 4 wins" is not a Cl
 Anthropic SDK) or uses a workspace-scoped key; nothing else changes.
 
 ## Outcome (attempt 3, 17:57-18:39, API, `claude-opus-5` with the workspace header)
-Counted. All 4 matches were played by Claude: 210 Primary proposals, all accepted by validation, 6 failed calls
-(2 and 4 in the two Allied matches; the selector fallback covered those gaps), median latency ~10 s (p90 ~14 s),
-about $10.75 in API cost (`run/`, `run.log`).
+Counted. All 4 matches were played by Claude: 201 Primary proposals (195 validated, all accepted; 6 arrived late and
+were discarded), 6 `proposal_failed` records of which 1 was an API failure (`claude.server_error`, 503) and 5 were
+`superseded`/`no_opinion` (4 in Allied fortress-choke seed 1, 2 in Allied open-steppe seed 1), median latency ~10 s
+(p90 ~14 s), about $10.75 in API cost (`run/`, `run.log`). The selector fallback also proposed in gaps, including 7
+times in Soviet open-steppe seed 2 (6 after an abort request, 3 of them rhino-rush); the table counts Claude only.
 
 Soviet Primary proposals (the decision input):
 
@@ -55,21 +57,28 @@ Reported, not decided on: against the selector on the same 4 cells (`selector-sa
 and Soviet open-steppe seed 2, the rhino-rush-heavy match (Claude lost on timeout; the selector won by elimination
 at 336 s). Allied play: allied-grizzly-timing 63, allied-boom 39, generic-defend 9, allied-ifv-mix 1 over 2 wins.
 
-## The 20-cell test (defined before it is run, 2026-09-29 ~18:55)
+## The 20-cell test (defined before it is run, 2026-09-29 ~18:55; rule amended ~19:15 before any result was read)
 Cells: Soviet only, seeds 2 and 4 (west and east start), both held-out maps, the five held-out opponents not used in
 the pilot: `ai-horde:easy, ai-horde:hard, ai-armor:easy, ai-armor:medium, ai-armor:hard` (2 x 2 x 5 = 20). Arms
 `llm-t1` (API, `claude-opus-5`, workspace header, as attempt 3) and `selector`, same build, contested benchmark. The
 arena plays the arm as Soviet on even seeds, so `--seeds 4` runs seeds 1-4; only the 20 even-seed cells count, the
-Allied cells are reported but not decided on. Estimated cost ~$110 for 40 LLM matches (both factions), ~1-1.5 h.
+Allied cells are reported but not decided on. Estimated cost ~$110 for 40 LLM matches (both factions, ~$2.69 each), ~2-2.5 h (the first LLM match runs alone, then
+up to 16 in parallel; the pilot's 4 took 42 min).
 
 Paired comparison on the 20 Soviet cells (Claude better / worse / same winner as the selector), and the pooled
 rhino-rush share of Claude's Soviet Primary proposals. The A/A floor for a live model is 17% of cells changing winner
 (tier-heldout `aa-noise.txt`), ~3 of 20.
-- Claude worse on at least 6 more cells than it is better (e.g. 7 vs 1; one-sided sign p <= 0.035) and rhino-rush
-  >= 30% of its Soviet proposals: the playbook mechanism holds for the model that plays; the next build is the
-  Soviet playbook guard.
+- Claude worse on at least 6 more cells than it is better, with one-sided sign p <= 0.05 on the discordant cells
+  (6 vs 0 p 0.016, 7 vs 1 p 0.035; 8 vs 2 p 0.055 does not qualify), and rhino-rush Claude's most-proposed playbook in
+  the majority of the cells where it is worse: the playbook mechanism holds for the model that plays; the next build
+  is the Soviet playbook guard.
 - worse minus better <= 2: Claude holds up against the selector as Soviet; the next build is perception / attack
   gate, and the playbook guard is kept for local-model (worker-fast) deployments only, not built now.
-- otherwise (3-5, or >= 6 with rhino-rush < 30%): the loss is not explained by playbook choice alone; the next build
+- otherwise (3-5, or >= 6 without the sign-test or rhino-rush condition): the loss is not explained by playbook choice alone; the next build
   is perception / attack gate, and the Soviet losing matches' decision logs are read to name the mechanism before
   any guard.
+Amendment (~19:15, after independent review, before any 20-cell result was read): the first version required
+rhino-rush >= 30% of Claude's pooled Soviet proposals, a threshold set after seeing the pilot's 38%; it is replaced by
+the per-cell mechanism check above (rhino-rush the top playbook in most Claude-worse cells), and the sign-test
+p condition is stated as a threshold instead of one example. Pilot counts corrected (201 Primary, not 210; 1 API
+failure among 6 failed records).
