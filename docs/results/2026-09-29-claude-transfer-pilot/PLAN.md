@@ -57,7 +57,7 @@ Reported, not decided on: against the selector on the same 4 cells (`selector-sa
 and Soviet open-steppe seed 2, the rhino-rush-heavy match (Claude lost on timeout; the selector won by elimination
 at 336 s). Allied play: allied-grizzly-timing 63, allied-boom 39, generic-defend 9, allied-ifv-mix 1 over 2 wins.
 
-## The 20-cell test (defined before it is run, 2026-09-29 ~18:55; rule amended ~19:15 before any result was read)
+## The 20-cell test (defined before it is run, 2026-09-29 18:42, launched ~18:43; rule amended 18:44, before any match finished)
 Cells: Soviet only, seeds 2 and 4 (west and east start), both held-out maps, the five held-out opponents not used in
 the pilot: `ai-horde:easy, ai-horde:hard, ai-armor:easy, ai-armor:medium, ai-armor:hard` (2 x 2 x 5 = 20). Arms
 `llm-t1` (API, `claude-opus-5`, workspace header, as attempt 3) and `selector`, same build, contested benchmark. The
@@ -77,7 +77,7 @@ rhino-rush share of Claude's Soviet Primary proposals. The A/A floor for a live 
 - otherwise (3-5, or >= 6 without the sign-test or rhino-rush condition): the loss is not explained by playbook choice alone; the next build
   is perception / attack gate, and the Soviet losing matches' decision logs are read to name the mechanism before
   any guard.
-Amendment (~19:15, after independent review, before any 20-cell result was read): the first version required
+Amendment (18:44, after independent review, before any 20-cell result was read): the first version required
 rhino-rush >= 30% of Claude's pooled Soviet proposals, a threshold set after seeing the pilot's 38%; it is replaced by
 the per-cell mechanism check above (rhino-rush the top playbook in most Claude-worse cells), and the sign-test
 p condition is stated as a threshold instead of one example. Pilot counts corrected (201 Primary, not 210; 1 API
