@@ -38,6 +38,7 @@ public sealed class BotRuntime : IDisposable
     private IReadOnlyList<SquadOrder> squads = [];
     private GameTime? lastPlanTime;
     private string? lastPlanIntentId;
+    private int lastPlanPhase;
     private GameTime lastOperationalEventTime = new(long.MinValue);
     private long? lastTacticalFrame;
 
@@ -120,12 +121,13 @@ public sealed class BotRuntime : IDisposable
         SchedulerTickReport report = Scheduler.Tick(belief, features);
 
         List<GameCommand> commands = [];
-        StrategicIntent? intent = Arbiter.Active;
+        StrategicIntent? intent = Arbiter.EffectiveIntent;
         bool operationalEvent = NewOperationalEvent(features);
         if (intent is not null
             && (lastPlanTime is null
                 || report.IntentChanged
                 || !string.Equals(lastPlanIntentId, intent.IntentId, StringComparison.Ordinal)
+                || lastPlanPhase != Arbiter.PhaseIndex
                 || operationalEvent
                 || now.SecondsSince(lastPlanTime.Value) >= options.OperationalCadenceSeconds))
         {
@@ -204,6 +206,7 @@ public sealed class BotRuntime : IDisposable
         GameTime now = belief.Time;
         lastPlanTime = now;
         lastPlanIntentId = intent.IntentId;
+        lastPlanPhase = Arbiter.PhaseIndex;
         OperationalPlan plan;
         try
         {

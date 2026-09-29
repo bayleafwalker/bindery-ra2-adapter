@@ -205,7 +205,7 @@ public sealed class IntentPromptBuilder
                     ["description"] = p.Description,
                 });
             }
-            catalogue.Add(new JsonObject
+            JsonObject entry = new()
             {
                 ["id"] = playbook.Id,
                 ["description"] = playbook.Description,
@@ -217,7 +217,9 @@ public sealed class IntentPromptBuilder
                 ["attackConditions"] = Conditions(playbook.AttackConditions),
                 ["abortTriggers"] = Conditions(playbook.AbortTriggers),
                 ["parameters"] = parameters,
-            });
+            };
+            if (playbook.Phases is { Count: > 0 } phases) entry["phases"] = Phases(phases);
+            catalogue.Add(entry);
         }
         return catalogue;
     }
@@ -450,7 +452,7 @@ public sealed class IntentPromptBuilder
             parameters[p.Key] = CanonicalJson.Number(p.Value);
         }
 
-        return new JsonObject
+        JsonObject result = new()
         {
             ["intentId"] = intent.IntentId,
             ["source"] = intent.Source.ToString(),
@@ -471,10 +473,28 @@ public sealed class IntentPromptBuilder
             ["minCommitRemainingSeconds"] = minCommit is { } m ? CanonicalJson.Number(Math.Max(0, m - active)) : null,
             // Whether posture and threat episode allow the base-threat override (IntentArbiter.Decide); the ratio
             // itself is in conditionMetrics.
-            ["baseThreatOverrideAvailable"] = intent.Posture is not (StrategicPosture.Defend or StrategicPosture.Turtle)
+            ["baseThreatOverrideAvailable"] = (context.Phase?.Effective.Posture ?? intent.Posture) is not (StrategicPosture.Defend or StrategicPosture.Turtle)
                 && context.BaseThreatOverrideSpent != true,
             ["expiresInSeconds"] = CanonicalJson.Number(Math.Max(0, intent.ExpiresAt.SecondsSince(now))),
         };
+        // Only for a phased playbook, so other prompts are unchanged. The fields above are the intent's own (start-phase)
+        // values; "phase" is what is being executed now. Proposing the same playbook with the phase's posture is a
+        // renewal that keeps the phase, not a switch.
+        if (context.Phase is { } phase)
+        {
+            StrategicIntent e = phase.Effective;
+            result["phase"] = new JsonObject
+            {
+                ["name"] = phase.Name,
+                ["index"] = phase.Index,
+                ["count"] = phase.Count,
+                ["effectivePosture"] = e.Posture.ToString(),
+                ["effectiveBudget"] = Budget(e.Budget),
+                ["effectiveComposition"] = Composition(e.Composition),
+                ["effectiveAttackConditions"] = Conditions(e.AttackConditions),
+            };
+        }
+        return result;
     }
 
     /// <summary>
@@ -721,6 +741,29 @@ public sealed class IntentPromptBuilder
         foreach (KeyValuePair<UnitRole, double> entry in map.OrderBy(e => e.Key))
         {
             result[entry.Key.ToString()] = CanonicalJson.Number(entry.Value);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// A phased playbook advances by itself, in order and forward only, when a phase's enter conditions all hold; the
+    /// listed overrides replace the intent's own fields while the phase is current. The first phase is the start.
+    /// </summary>
+    private static JsonArray Phases(IReadOnlyList<PlaybookPhase> phases)
+    {
+        JsonArray result = new();
+        foreach (PlaybookPhase phase in phases)
+        {
+            JsonObject item = new()
+            {
+                ["name"] = phase.Name,
+                ["enterWhen"] = Conditions(phase.EnterWhen),
+            };
+            if (phase.Posture is { } posture) item["posture"] = posture.ToString();
+            if (phase.Budget is { } budget) item["budget"] = Budget(budget);
+            if (phase.Composition is { } composition) item["composition"] = Composition(composition);
+            if (phase.AttackConditions is { } attack) item["attackConditions"] = Conditions(attack);
+            result.Add(item);
         }
         return result;
     }

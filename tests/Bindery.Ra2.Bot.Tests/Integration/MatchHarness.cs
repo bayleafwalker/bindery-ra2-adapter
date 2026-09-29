@@ -70,12 +70,13 @@ internal sealed class MatchHarness : IDisposable
         int seed = 1,
         double maxSeconds = 1200,
         IStrategist? armFallback = null,
-        BotOptions? armOptions = null)
+        BotOptions? armOptions = null,
+        IPlaybookLibrary? armPlaybooks = null)
     {
         SimSettings settings = new(seed, maxSeconds, [new SimPlayer(ArmPlayer, Faction.Allied), new SimPlayer(OpponentPlayer, Faction.Soviet)]);
         SkirmishSimulation sim = new(map ?? SimMaps.TwinValley, Rules, settings);
         DecisionLog armLog = new();
-        BotRuntime arm = StandardBot.Create(Rules, Playbooks, armPrimary, armFallback, log: armLog, options: armOptions);
+        BotRuntime arm = StandardBot.Create(Rules, armPlaybooks ?? Playbooks, armPrimary, armFallback, log: armLog, options: armOptions);
         BotRuntime opponent = StandardBot.Create(Rules, Playbooks, new PinnedPlaybookStrategist(Styles[opponentStyle], $"style-{opponentStyle}"));
         return new MatchHarness(sim, arm, armLog, opponent);
     }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using System.Text.Json;
+using Bindery.Ra2.Bot.Arbitration;
 
 namespace Bindery.Ra2.Bot.Playbooks;
 
@@ -83,11 +84,7 @@ public sealed class PlaybookLibrary : IPlaybookLibrary
             if (p.Description is null) return $"{where} has no description.";
             if (p.Factions is null || p.Factions.Count == 0) return $"{where} has no factions.";
             if (p.Budget is null) return $"{where} has no budget.";
-            double[] shares = [p.Budget.Economy, p.Budget.Army, p.Budget.Tech, p.Budget.Defense];
-            if (shares.Any(static v => !double.IsFinite(v) || v < 0) || Math.Abs(shares.Sum() - 1) > 0.01)
-            {
-                return $"{where} budget shares must be non-negative and sum to 1.";
-            }
+            if (!ValidShares(p.Budget)) return $"{where} budget shares must be non-negative and sum to 1.";
             if (p.Composition is null || p.Composition.Any(static c => c is null)) return $"{where} has a missing composition entry.";
             if (p.TechGoals is null || p.TechGoals.Any(string.IsNullOrWhiteSpace)) return $"{where} has a missing tech goal.";
             if (p.AttackConditions is null || p.AttackConditions.Any(static c => c is null)) return $"{where} has a missing attack condition.";
@@ -102,6 +99,42 @@ public sealed class PlaybookLibrary : IPlaybookLibrary
                 {
                     return $"{where} parameter '{parameter.Name}' needs min <= default <= max.";
                 }
+            }
+            if (p.Phases is not null && PhaseProblem(p.Phases) is { } phaseProblem) return $"{where} {phaseProblem}";
+        }
+        return null;
+    }
+
+    private static bool ValidShares(BudgetShares budget)
+    {
+        double[] shares = [budget.Economy, budget.Army, budget.Tech, budget.Defense];
+        return !shares.Any(static v => !double.IsFinite(v) || v < 0) && Math.Abs(shares.Sum() - 1) <= 0.01;
+    }
+
+    private static string? PhaseProblem(IReadOnlyList<PlaybookPhase> phases)
+    {
+        HashSet<string> names = new(StringComparer.Ordinal);
+        for (int i = 0; i < phases.Count; i++)
+        {
+            PlaybookPhase? phase = phases[i];
+            if (phase is null || string.IsNullOrWhiteSpace(phase.Name)) return $"has a phase #{i} with no name.";
+            if (!names.Add(phase.Name)) return $"has phase '{phase.Name}' more than once.";
+            if (phase.EnterWhen is null || phase.EnterWhen.Any(static c => c is null)) return $"phase '{phase.Name}' has a missing enter condition.";
+            if (i == 0 && phase.EnterWhen.Count > 0) return $"first phase '{phase.Name}' is the start phase and must have no enter conditions.";
+            if (phase.Budget is not null && !ValidShares(phase.Budget)) return $"phase '{phase.Name}' budget shares must be non-negative and sum to 1.";
+            if (phase.Composition is not null && phase.Composition.Any(static c => c is null)) return $"phase '{phase.Name}' has a missing composition entry.";
+            if (phase.AttackConditions is not null && phase.AttackConditions.Any(static c => c is null)) return $"phase '{phase.Name}' has a missing attack condition.";
+
+            // The same rules a proposed intent meets (IntentValidator), so a phase cannot install what a proposal could
+            // not: composition ranges, duplicate roles and min-share sum; NaN thresholds; a region-scoped metric with
+            // no region. Whether a named region exists on the map cannot be known at load time and is not checked.
+            List<ValidationIssue> issues = [];
+            if (phase.Composition is not null) IntentValidator.CheckComposition(phase.Composition, null, issues);
+            IntentValidator.CheckConditions(phase.EnterWhen, null, "enter condition", issues);
+            if (phase.AttackConditions is not null) IntentValidator.CheckConditions(phase.AttackConditions, null, "attack condition", issues);
+            if (issues.FirstOrDefault(static i => i.Severity == ValidationSeverity.Reject) is { } issue)
+            {
+                return $"phase '{phase.Name}': {issue.Message}";
             }
         }
         return null;

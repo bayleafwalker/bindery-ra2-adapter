@@ -14,6 +14,7 @@ public static class DecisionRecordKinds
     public const string Validation = "strategy.validation";
     public const string IntentActivated = "strategy.intent_activated";
     public const string IntentEnded = "strategy.intent_ended";
+    public const string PhaseChanged = "strategy.phase_changed";
     public const string ShadowProposal = "strategy.shadow";
     public const string LateDiscarded = "strategy.late_discarded";
     public const string Plan = "operations.plan";
