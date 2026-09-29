@@ -32,7 +32,10 @@ public sealed record SkippedArm(string Arm, string Reason);
 /// matches run sequentially in a fixed order because it learns across them; other arms run in
 /// parallel. A live LLM arm runs its first match alone and is skipped with the recorded reason if no
 /// credential resolved or if none of that match's Primary model proposals succeeded (see
-/// <see cref="AllPrimaryProposalsFailed"/>); the first match is then not counted.
+/// <see cref="AllPrimaryProposalsFailed"/>); the first match is then not counted. With <c>--interleave</c> the arms that need nothing from another arm (not distilled, not a live
+/// LLM arm) play their matches cell by cell (opponent, map, seed) across arms first, so paired comparisons fill in as the
+/// run goes; a bandit arm keeps its order. With <c>--resume</c> matches already recorded under <c>&lt;out&gt;/decisions/</c>
+/// (each match's record is written the moment it finishes) are loaded instead of replayed.
 /// </remarks>
 public static class Program
 {
@@ -94,6 +97,11 @@ public static class Program
             Console.Error.WriteLine(ex.Message);
             return 1;
         }
+        catch (AggregateException ex) when (ex.Flatten().InnerExceptions is [ArgumentException inner, ..])
+        {
+            Console.Error.WriteLine(inner.Message);
+            return 1;
+        }
     }
 
     private static void Run(CliOptions options)
@@ -137,6 +145,15 @@ public static class Program
         List<SkippedArm> skipped = [];
         List<LeakageProbeResult> probes = [];
         Directory.CreateDirectory(options.OutDir);
+        if (options.Resume) PreflightResume(arms, options, maps);
+        if (options.Interleave)
+        {
+            // Arms that run in the per-arm loop below without needing anything from another arm; a live LLM arm (first
+            // match alone, skip reason) and the distilled arm (needs its teacher's dataset) stay in the per-arm loop.
+            List<ArmSpec> interleaved = [.. arms.Where(a => a.Name != "distilled" && !(a.UsesLlm && !options.LlmFake))];
+            ArenaScheduling.RunInterleaved(interleaved, a => [.. Jobs(a, options, maps).Select(static j => new ArenaJob(j.Arm, j.Opponent, j.Map, j.Split, j.Seed))], context,
+                (j, log) => RunJob((j.Arm, j.Opponent, j.Map, j.Split, j.Seed), options, rules, factory, log));
+        }
 
         foreach (ArmSpec arm in arms)
         {
@@ -244,6 +261,17 @@ public static class Program
         }
 
         Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"Wrote {ordered.Count} match results, {probes.Count} leakage probes and report.md to {options.OutDir} in {wall.Elapsed.TotalSeconds:0}s."));
+    }
+
+    /// <summary>Fails before anything runs when a recorded match under <c>--out</c> disagrees with its job, or a bandit arm is partly recorded.</summary>
+    private static void PreflightResume(IReadOnlyList<ArmSpec> arms, CliOptions options, List<(SimMap Map, string Split)> maps)
+    {
+        foreach (ArmSpec arm in arms)
+        {
+            List<ArenaJob> jobs = [.. Jobs(arm, options, maps).Select(static j => new ArenaJob(j.Arm, j.Opponent, j.Map, j.Split, j.Seed))];
+            foreach (ArenaJob job in jobs) ArenaScheduling.FindManifest(job, options);
+            ArenaScheduling.CheckBanditResume(arm, jobs, options);
+        }
     }
 
     /// <summary>
@@ -403,6 +431,16 @@ public static class Program
 
     private static MatchRecord RunJob((ArmSpec Arm, string Opponent, SimMap Map, string Split, int Seed) job, CliOptions options, IRulesDatabase rules, IArenaAgentFactory factory, Action<IReadOnlyList<DecisionRecord>> armLog)
     {
+        if (factory is BotAgentFactory { Context: var done } && done.Completed.TryGetValue(MatchId(job), out CompletedMatch? finished))
+        {
+            if (finished.Log is not null) armLog(finished.Log);
+            return finished.Record;
+        }
+        if (options.Resume && ArenaScheduling.TryLoad(new ArenaJob(job.Arm, job.Opponent, job.Map, job.Split, job.Seed), options) is { } loaded)
+        {
+            armLog(loaded.Log!);
+            return loaded.Record;
+        }
         IReadOnlyList<DecisionRecord>? captured = null;
         MatchRecord played = RunTraced(job, options, rules, factory, log =>
         {
@@ -415,7 +453,7 @@ public static class Program
                 MatchManifest.CurrentSchema, job.Arm, job.Opponent, job.Map.Map.MapId, job.Split, job.Seed, options.MaxSeconds,
                 options.Benchmark, options.LlmLatencySeconds, job.Arm.Name == "distilled" ? context.DistillSource : null,
                 played.Players["arm"].DecisionLogHash, played.Winner, played.Reason, played.DurationSeconds,
-                options.RulesPath is null ? null : Path.GetFullPath(options.RulesPath));
+                options.RulesPath is null ? null : Path.GetFullPath(options.RulesPath), played, ArenaScheduling.Fingerprint(options));
             MatchManifest.Write(Path.Combine(options.OutDir, "decisions"), manifest, captured);
         }
         return played;

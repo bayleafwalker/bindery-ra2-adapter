@@ -22,7 +22,7 @@ public sealed record CliOptions(
     public const string Usage =
         "Usage: arena run --arms a,b --maps training|heldout|all --opponents ai-rush,ai-balanced[:easy|:medium|:hard],rush,turtle,live-rush,ai-horde,...|all|training|heldout --seeds N --out <dir> " +
         "[--oracle [both|all]] [--llm-fake | --llm-endpoint <openai-compatible base url> [--llm-model <id>]] [--max-seconds N] [--dataset <decisions.ndjson>] [--llm-latency <game seconds>] [--trace <dir>] " +
-        "[--benchmark standard|contested] [--opponent-income X] [--opponent-credits N] [--combat-noise F] [--allied-income X] [--allied-credits N] [--baseline <arm>] [--no-decisions] [--write-adoption <path>] [--personality aggressive,turtle,tech,harasser,none] [--rules <rules.json>] [--knob Name=value ...]\n" +
+        "[--interleave] [--resume] [--benchmark standard|contested] [--opponent-income X] [--opponent-credits N] [--combat-noise F] [--allied-income X] [--allied-credits N] [--baseline <arm>] [--no-decisions] [--write-adoption <path>] [--personality aggressive,turtle,tech,harasser,none] [--rules <rules.json>] [--knob Name=value ...]\n" +
         "       (arms: selector, bandit, llm-shadow, llm, llm+fast, distilled, llm-t0..llm-t3 or tiers, all; any with -oracle)\n" +
         "       arena replay <out>/decisions/<match>.ndjson [--out <replayed.ndjson>]\n" +
         "       arena analyze <out>/decisions/<match>.ndjson [--out <report.md>] [--narrate] [--llm-fake]";
@@ -51,6 +51,19 @@ public sealed record CliOptions(
 
     /// <summary>Write each arm match's decision log and manifest into <c>&lt;out&gt;/decisions/</c> (for <c>arena replay</c> and <c>arena analyze</c>).</summary>
     public bool WriteDecisions { get; init; } = true;
+
+    /// <summary>
+    /// <c>--interleave</c>: schedule the parallel and bandit arms' matches cell by cell (opponent, map, seed) across arms,
+    /// so every arm's match for a cell is played together and paired comparisons fill in as the run goes; default is one arm after another.
+    /// </summary>
+    public bool Interleave { get; init; }
+
+    /// <summary>
+    /// <c>--resume</c>: matches whose <c>decisions/&lt;match&gt;.match.json</c> already sits in <c>--out</c> are loaded, not replayed
+    /// (refused when the record disagrees with the job); only missing matches run.
+    /// A complete bandit arm is loaded without being re-trained (its leakage probe may differ); an LLM arm skipped after all-failed first-match proposals keeps its record, so it stays skipped until that record is deleted.
+    /// </summary>
+    public bool Resume { get; init; }
 
     /// <summary><c>none</c> (belief frames unless an arm is named <c>*-oracle</c>), <c>all</c> (the legacy <c>--oracle</c>) or <c>both</c>.</summary>
     public string OracleMode { get; init; } = "none";
@@ -123,6 +136,8 @@ public sealed record CliOptions(
         int? alliedCredits = null;
         string baseline = "selector";
         bool writeDecisions = true;
+        bool interleave = false;
+        bool resume = false;
         string? writeAdoption = null;
         List<string?> personalities = [null];
         string? rulesPath = null;
@@ -179,6 +194,8 @@ public sealed record CliOptions(
                 case "--allied-credits": alliedCredits = int.Parse(Next(args, ref i), CultureInfo.InvariantCulture); break;
                 case "--baseline": baseline = Next(args, ref i); break;
                 case "--no-decisions": writeDecisions = false; break;
+                case "--interleave": interleave = true; break;
+                case "--resume": resume = true; break;
                 case "--write-adoption": writeAdoption = Next(args, ref i); break;
                 case "--rules": rulesPath = Next(args, ref i); break;
                 case "--personality":
@@ -223,12 +240,15 @@ public sealed record CliOptions(
             "tiers" => (IEnumerable<string>)BotAgentFactory.TierArms.Keys,
             _ => [a],
         }).Distinct(StringComparer.Ordinal)];
+        if (resume && !writeDecisions) throw new ArgumentException("--resume reads the per-match records under <out>/decisions/; it cannot be combined with --no-decisions.");
         return new CliOptions(arms, mapSplit, opponents, seeds, outDir, oracle, llmFake, maxSeconds, dataset, llmLatency, traceDir)
         {
             Benchmark = benchmark,
             Baseline = baseline,
             OracleMode = oracleMode,
             WriteDecisions = writeDecisions,
+            Interleave = interleave,
+            Resume = resume,
             WriteAdoption = writeAdoption,
             PersonalityList = personalities,
             RulesPath = rulesPath,
