@@ -183,6 +183,9 @@ record), each written the moment that match finishes. `--interleave` plays the
 arms' matches cell by cell (opponent, map, seed) across arms instead of one arm after
 another, so paired comparisons fill in as the run goes (the distilled arm and a live
 LLM arm still run per arm, after the interleaved ones; default order unchanged).
+`--seed-list 2,4` plays exactly those seeds instead of 1..`--seeds` (the arm is Soviet on even
+seeds and Allied on odd ones; west on 1-2, 5-6, ..., east on 3-4, 7-8, ...), e.g. a Soviet-only test at half
+the matches.
 `--resume` reruns an interrupted or extended run into the same `--out`: matches whose
 `.match.json` is already there are loaded, not replayed, and only the missing ones run;
 a record that disagrees with its job (arm, opponent, map, split, seed, benchmark,
