@@ -170,7 +170,14 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
     };
 
     /// <summary>True for an arm name the arena can run (a <see cref="Arms"/>, <see cref="TierArms"/> or <see cref="ShadowTierArms"/> entry).</summary>
-    public static bool IsArm(string name) => Arms.Contains(name) || TierArms.ContainsKey(name) || ShadowTierArms.ContainsKey(name);
+    public static bool IsArm(string name) => Arms.Contains(name) || TierArms.ContainsKey(name) || ShadowTierArms.ContainsKey(name) || PinnedPlaybookId(name) is not null;
+
+    /// <summary>Prefix of the deterministic pinned arm, <c>pinned:&lt;playbookId&gt;</c>: tier 3 of the LLM-to-playbook pipeline.</summary>
+    public const string PinnedPrefix = "pinned:";
+
+    /// <summary>The playbook id of a <c>pinned:&lt;id&gt;</c> arm name, or null for any other name.</summary>
+    public static string? PinnedPlaybookId(string name) =>
+        name.StartsWith(PinnedPrefix, StringComparison.Ordinal) && name.Length > PinnedPrefix.Length ? name[PinnedPrefix.Length..] : null;
 
     /// <summary>
     /// Every opponent name <c>--opponents all</c> expands to: the independent scripted AI styles at hard difficulty
@@ -287,6 +294,14 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
                 case var tierArm when TierArms.TryGetValue(tierArm, out VocabularyTier tier):
                     primary = Llm(StrategistMode.Strategic, claude, labels, tier);
                     labels.Add($"vocabulary:{tier}");
+                    break;
+                case var pinnedArm when PinnedPlaybookId(pinnedArm) is { } pinnedId:
+                    // Always this playbook at its default parameters, renewed at the normal cadence; never the defend
+                    // override of the opponent styles. A faction the playbook does not list gets no proposal, so the
+                    // selector fallback plays that side.
+                    if (!playbooks.TryGet(pinnedId, out Playbook pinnedPlaybook)) throw new ArgumentException($"Unknown playbook '{pinnedId}' in arm '{arm.Name}'.");
+                    primary = new PinnedPlaybookStrategist(pinnedPlaybook.Factions.ToDictionary(static f => f, _ => pinnedId), $"pinned-{pinnedId}", double.PositiveInfinity);
+                    labels.Add($"pinned:{pinnedId}");
                     break;
                 case "llm+fast":
                     IStrategist slow = Unwrapped(StrategistMode.Strategic, claude);

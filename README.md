@@ -192,6 +192,25 @@ validator, selector, distilled strategist, replay) uses the merged library. A du
 refused with an error naming the id and file, and the files' SHA-256 is part of the resume fingerprint.
 `arena playbooks export [--out <file>]` writes the default library (tuned parameters applied) in that format,
 the reference for authoring or inducing a set.
+`--arms pinned:<playbookId>` is the deterministic runner for one playbook (tier 3 of LLM play, then
+`arena induce`, then this): a full live bot whose Primary strategist always proposes that playbook at its
+default parameters, renewed at the normal cadence, with no LLM and no selector choice (the selector stays the
+fallback). It takes any default or `--playbooks` id (an induced one included) and refuses an unknown id before
+any match. A playbook plays only the factions it lists; on the other side the selector fallback plays, so
+use `--seed-list` to pin the side (the arm is Soviet on even seeds).
+`arena induce --from <dir> [--from <dir> ...] --arm <arm> [--split training|heldout|all] --out <playbooks.json>
+[--report <md>] [--min-support N] [--playbooks <file> ...]` compiles an arm's decision logs
+(`decisions/<match>.ndjson` and `.match.json`, found recursively under each `--from`) into playbooks. For each
+(faction, chosen base playbook) cluster with at least `--min-support` (default 30) Primary LLM proposals from
+matches the arm won, it writes `induced-<base>-<faction>-<hash of inputs>`: the base's posture, budget,
+composition and parameter ranges, parameter defaults at the medians the model proposed (clamped to the base's
+range), and two phases, `build` and `attack`. `attack` is entered when `OwnArmyValue` reaches the median army
+value at the arm's first launch in those matches and `GameSeconds` reaches the 25th percentile of first-launch
+time; its attack conditions are the base's with the `OwnArmyValue` bound at that median (added when the base has
+none). The output is byte-identical for identical logs. `--split` defaults to `training`; `heldout` or `all` prints a
+warning, because an induced playbook must not be tested on the data it was induced from. `--report` lists per
+cluster the supporting matches and proposals, wins, parameter medians and interquartile ranges, the launch
+time and army distributions and each source log's SHA-256.
 `--resume` reruns an interrupted or extended run into the same `--out`: matches whose
 `.match.json` is already there are loaded, not replayed, and only the missing ones run;
 a record that disagrees with its job (arm, opponent, map, split, seed, benchmark,

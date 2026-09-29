@@ -40,7 +40,7 @@ public sealed record MatchManifest(
 
     /// <summary>The file name stem shared by a match's log and manifest.</summary>
     public static string Stem(ArmSpec arm, string opponent, string map, int seed) =>
-        $"{arm.ToString().Replace('+', '-').Replace('@', '_')}_{opponent.Replace(':', '-')}_{map}_{seed}";
+        $"{arm.ToString().Replace('+', '-').Replace('@', '_').Replace(':', '-')}_{opponent.Replace(':', '-')}_{map}_{seed}";
 
     /// <summary>The manifest path for a decision log path (<c>x.ndjson</c> → <c>x.match.json</c>).</summary>
     public static string PathFor(string ndjsonPath) => Path.ChangeExtension(ndjsonPath, ".match.json");

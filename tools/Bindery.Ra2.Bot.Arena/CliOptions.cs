@@ -25,7 +25,8 @@ public sealed record CliOptions(
         "Usage: arena run --arms a,b --maps training|heldout|all --opponents ai-rush,ai-balanced[:easy|:medium|:hard],rush,turtle,live-rush,ai-horde,...|all|training|heldout --seeds N [--seed-list 2,4,...] --out <dir> " +
         "[--oracle [both|all]] [--llm-fake | --llm-endpoint <openai-compatible base url> [--llm-model <id>]] [--max-seconds N] [--dataset <decisions.ndjson>] [--llm-latency <game seconds>] [--trace <dir>] " +
         "[--interleave] [--resume] [--benchmark standard|contested] [--opponent-income X] [--opponent-credits N] [--combat-noise F] [--allied-income X] [--allied-credits N] [--baseline <arm>] [--no-decisions] [--write-adoption <path>] [--max-llm-failure-rate F] [--personality aggressive,turtle,tech,harasser,none] [--rules <rules.json>] [--playbooks <playbooks.json> ...] [--knob Name=value ...] [--extended-metrics]\n" +
-        "       (arms: selector, bandit, llm-shadow, llm, llm+fast, distilled, llm-t0..llm-t3 or tiers, all; any with -oracle)\n" +
+        "       (arms: selector, bandit, llm-shadow, llm, llm+fast, distilled, llm-t0..llm-t3 or tiers, all; pinned:<playbookId> plays one playbook deterministically, no LLM; any with -oracle)\n" +
+        "       arena induce --from <dir> [--from <dir> ...] --arm <arm> [--split training|heldout|all] --out <playbooks.json> [--report <md>] [--min-support N] [--playbooks <playbooks.json> ...]  (compile an arm's won-match decisions into playbooks)\n" +
         "       arena playbooks export [--out <playbooks.json>]  (the default library as a PlaybookDocument, the format --playbooks loads)\n" +
         "       arena replay <out>/decisions/<match>.ndjson [--out <replayed.ndjson>]\n" +
         "       arena analyze <out>/decisions/<match>.ndjson [--out <report.md>] [--narrate] [--llm-fake]";
