@@ -1,0 +1,21 @@
+Startup-crash A/B (pre-registration docs/experiments/2026-09-29-defer-service-start-ab-preregistration.md)
+runs: 60, launches: 120
+
+arm A: launches 60  crash 0  ok 60  unknown 0  runs 30  runs without a crash 30  completed 30 (100.0%)
+arm B: launches 60  crash 0  ok 60  unknown 0  runs 30  runs without a crash 30  completed 29 (96.7%)
+
+P1 (B fewer crash launches than A, Fisher exact two-sided p<0.05): A 0/60, B 0/60, p = 1.000 -> FAIL
+P2 (B completion >= A completion - 10 pp): A 100.0%, B 96.7% -> PASS
+Validity (<= 6 unknown launches per arm): A 0, B 0 -> holds
+
+Correction (independent review of PR #28, verified by sha256): run 14 (20260928-204252-s1, arm B) never launched a
+game. Its evidence/syringe-client-a.log and syringe-client-b.log are byte-identical to run 13's (20260928-203931-s1;
+guest syringe logs are not cleared between runs), relay in/out and telemetry were 0 on both clients, client-a has no
+harness.started/harness.exit, and the harness ran to the 40-minute cap ("harness finished after 2420s, exit none").
+Its two rows above are therefore run 13's launches read again. Under the pre-registered definition they are
+`unknown` (no exit code of their own). results.tsv is left as the unchanged classifier output.
+
+Corrected arm B: launches 60  crash 0  ok 58  unknown 2; completed 29 of 30.
+P1: A 0/60, B 0/58 crash, p = 1.000 -> FAIL (unchanged)
+P2: A 100.0%, B 96.7% (100% if run 14 is excluded as a run with unknown launches) -> PASS (unchanged)
+Validity: A 0, B 2 unknown -> holds (unchanged)

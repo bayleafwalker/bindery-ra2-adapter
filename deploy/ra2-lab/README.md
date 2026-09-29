@@ -100,7 +100,12 @@ played, check the telemetry, not only the harness:
 - A game that dies at startup shows an NTSTATUS exit code in
   `syringe-client-*.log` (e.g. `C00000FD`, a stack overflow); the harness then
   records that client as failed. The startup stack overflows seen so far were
-  inside the game tree's `DDRAW.dll` (DDrawCompat 0.5.4, offset 0x1C104).
+  inside the game tree's `DDRAW.dll` (DDrawCompat 0.5.4, offset 0x1C104). The
+  pre-registered A/B of 2026-09-29 saw none in 118 fork-DLL launches (service at
+  ExeRun or deferred to the first frame), so `deferServiceStart` stays off
+  (`docs/results/2026-09-29-defer-service-ab/analysis.txt`). Guest
+  `syringe-client-*.log` files are not cleared between runs: a run whose game
+  never starts can carry the previous run's exit codes, so check timestamps.
   `ddrawcompat-client-*.log` keeps DDrawCompat's own log for each run.
   Crash dumps need Windows Error Reporting LocalDumps for `gamemd.exe`. The
   harness does not set it: it is a manual step, once per guest:
