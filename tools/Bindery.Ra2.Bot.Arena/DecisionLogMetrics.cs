@@ -22,6 +22,8 @@ public static class DecisionLogMetrics
         ArgumentNullException.ThrowIfNull(stats);
         ArgumentNullException.ThrowIfNull(records);
         stats.Proposals = 0;
+        stats.LlmAnswered = 0;
+        stats.LlmFailed = 0;
         stats.Rejected = 0;
         stats.LateDiscarded = 0;
         stats.LateSeconds.Clear();
@@ -35,6 +37,7 @@ public static class DecisionLogMetrics
                     if (role == PrimaryRole)
                     {
                         stats.Proposals++;
+                        if (IsModelIntent(record.Data)) stats.LlmAnswered++;
                         if (LatencySeconds(record.Data) is { } seconds) stats.LateSeconds.Add(seconds);
                     }
                     else
@@ -58,6 +61,8 @@ public static class DecisionLogMetrics
                     break;
 
                 case DecisionRecordKinds.ShadowProposal:
+                    // Shadow arms: the shadow strategist is the model, so each of its proposals is an answer.
+                    if (IsModelIntent(record.Data)) stats.LlmAnswered++;
                     if (LatencySeconds(record.Data) is { } shadowSeconds) stats.ShadowLateSeconds.Add(shadowSeconds);
                     stats.ShadowFogRejections += FogRejects(record.Data);
                     if (record.Data.TryGetProperty("accepted", out JsonElement shadowAccepted) && shadowAccepted.ValueKind == JsonValueKind.False) stats.ShadowRejected++;
@@ -67,10 +72,25 @@ public static class DecisionLogMetrics
                 case DecisionRecordKinds.ProposalFailed:
                     // Only the Claude strategist's own failure record carries a cost (the scheduler's has none).
                     AddCost(stats, record.Data, failed: true);
+                    // That role-less record is also the one call that failed; the scheduler's Primary record for the
+                    // same request only says no_opinion/superseded, which are normal arbitration outcomes.
+                    if (role is null && LlmCallTally.IsDeliveryFailure(record.Data.TryGetProperty("code", out JsonElement code) && code.ValueKind == JsonValueKind.String ? code.GetString() : null))
+                    {
+                        stats.LlmFailed++;
+                    }
                     break;
             }
         }
     }
+
+    /// <summary>
+    /// True when the proposal's intent came from the model (<c>IntentSource.Llm</c>), not the selector, the distilled
+    /// model's own answer or a fallback: only those show the model delivering.
+    /// </summary>
+    private static bool IsModelIntent(JsonElement data) =>
+        data.TryGetProperty("intent", out JsonElement intent) && intent.ValueKind == JsonValueKind.Object
+        && intent.TryGetProperty("source", out JsonElement source) && source.ValueKind == JsonValueKind.String
+        && source.GetString() == nameof(IntentSource.Llm);
 
     private static double? LatencySeconds(JsonElement data) =>
         data.TryGetProperty("latencyFrames", out JsonElement frames) && frames.ValueKind == JsonValueKind.Number

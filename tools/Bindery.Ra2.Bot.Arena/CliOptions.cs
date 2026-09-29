@@ -19,10 +19,12 @@ public sealed record CliOptions(
 {
     public const double DefaultMaxSeconds = 1200;
 
+    public const double DefaultMaxLlmFailureRate = 0.2;
+
     public const string Usage =
         "Usage: arena run --arms a,b --maps training|heldout|all --opponents ai-rush,ai-balanced[:easy|:medium|:hard],rush,turtle,live-rush,ai-horde,...|all|training|heldout --seeds N [--seed-list 2,4,...] --out <dir> " +
         "[--oracle [both|all]] [--llm-fake | --llm-endpoint <openai-compatible base url> [--llm-model <id>]] [--max-seconds N] [--dataset <decisions.ndjson>] [--llm-latency <game seconds>] [--trace <dir>] " +
-        "[--interleave] [--resume] [--benchmark standard|contested] [--opponent-income X] [--opponent-credits N] [--combat-noise F] [--allied-income X] [--allied-credits N] [--baseline <arm>] [--no-decisions] [--write-adoption <path>] [--personality aggressive,turtle,tech,harasser,none] [--rules <rules.json>] [--playbooks <playbooks.json> ...] [--knob Name=value ...]\n" +
+        "[--interleave] [--resume] [--benchmark standard|contested] [--opponent-income X] [--opponent-credits N] [--combat-noise F] [--allied-income X] [--allied-credits N] [--baseline <arm>] [--no-decisions] [--write-adoption <path>] [--max-llm-failure-rate F] [--personality aggressive,turtle,tech,harasser,none] [--rules <rules.json>] [--playbooks <playbooks.json> ...] [--knob Name=value ...]\n" +
         "       (arms: selector, bandit, llm-shadow, llm, llm+fast, distilled, llm-t0..llm-t3 or tiers, all; any with -oracle)\n" +
         "       arena playbooks export [--out <playbooks.json>]  (the default library as a PlaybookDocument, the format --playbooks loads)\n" +
         "       arena replay <out>/decisions/<match>.ndjson [--out <replayed.ndjson>]\n" +
@@ -52,6 +54,12 @@ public sealed record CliOptions(
 
     /// <summary><c>--knob Name=value</c> overrides (tuning knob names), applied to arms, never to pinned or live-* opponents.</summary>
     public IReadOnlyDictionary<string, double> ArmKnobs { get; init; } = new Dictionary<string, double>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// An LLM arm whose pooled call failure rate exceeds this is labelled "not a model result" in the report and
+    /// refused as adoption evidence (<c>--max-llm-failure-rate</c>, default <see cref="DefaultMaxLlmFailureRate"/>).
+    /// </summary>
+    public double MaxLlmFailureRate { get; init; } = DefaultMaxLlmFailureRate;
 
     /// <summary>Also write the run's <c>vocabulary-adoption.json</c> here (for example the embedded record in the Claude project).</summary>
     public string? WriteAdoption { get; init; }
@@ -153,6 +161,7 @@ public sealed record CliOptions(
         bool resume = false;
         List<int>? seedList = null;
         string? writeAdoption = null;
+        double maxLlmFailureRate = DefaultMaxLlmFailureRate;
         List<string?> personalities = [null];
         string? rulesPath = null;
         List<string> playbookFiles = [];
@@ -217,6 +226,10 @@ public sealed record CliOptions(
                     if (seedList.Count == 0 || seedList.Any(static v => v < 1) || seedList.Distinct().Count() != seedList.Count) throw new ArgumentException("--seed-list takes distinct positive seeds, e.g. 2,4.");
                     break;
                 case "--write-adoption": writeAdoption = Next(args, ref i); break;
+                case "--max-llm-failure-rate":
+                    maxLlmFailureRate = double.Parse(Next(args, ref i), CultureInfo.InvariantCulture);
+                    if (!(maxLlmFailureRate >= 0 && maxLlmFailureRate <= 1)) throw new ArgumentException("--max-llm-failure-rate takes a fraction from 0 to 1, e.g. 0.2.");
+                    break;
                 case "--rules": rulesPath = Next(args, ref i); break;
                 case "--playbooks": playbookFiles.Add(Next(args, ref i)); break;
                 case "--personality":
@@ -272,6 +285,7 @@ public sealed record CliOptions(
             Resume = resume,
             SeedList = seedList,
             WriteAdoption = writeAdoption,
+            MaxLlmFailureRate = maxLlmFailureRate,
             PersonalityList = personalities,
             RulesPath = rulesPath,
             PlaybookFiles = playbookFiles,

@@ -278,6 +278,15 @@ a wider tier wins: `--arms tiers` runs `llm-t0`…`llm-t3`, the report compares
 each with the tier below pair by pair, and the run writes
 `vocabulary-adoption.json` (`--write-adoption <path>` writes it elsewhere, for
 example over the embedded record). Fake-client runs are never evidence.
+Neither is an arm whose model calls mostly failed: `--max-llm-failure-rate F`
+(default 0.2) marks a live LLM arm "not a model result" in `report.md`, warns at
+the end of `arena run`, and refuses its tier evidence, when its pooled failed
+share of calls exceeds F. A call is a Primary `strategy.proposal` (answered) or a
+transport or model failure such as `claude.timeout` (failed); `superseded` and
+`no_opinion` are ordinary arbitration outcomes and not counted. Each match
+records `llmCalls` (`answered`, `failed`, `failureRate`) in `results.json`, and
+the win-rate table has an "LLM delivery" column; no match is dropped, since
+otherwise the selector fallback's wins would be credited to the model.
 
 The `llm`, `llm-shadow` and `llm+fast` arena arms (`src/Bindery.Ra2.Bot.Claude`)
 need `ANTHROPIC_API_KEY` in the environment, or a resolvable `ant auth`

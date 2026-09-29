@@ -90,6 +90,7 @@ public static class IntentVocabulary
 /// <param name="Split">Map split the pairs come from; only <c>heldout</c> counts for adoption.</param>
 /// <param name="BaselineScore">Mean match score (win 1, draw ½) of the tier below.</param>
 /// <param name="Live">True when a live model played (never for <c>--llm-fake</c>).</param>
+/// <param name="Refusal">Why this evidence is refused although the tier may have been played live (an arm whose model calls mostly failed); null otherwise.</param>
 public sealed record TierEvidence(
     VocabularyTier Tier,
     VocabularyTier AgainstTier,
@@ -104,7 +105,8 @@ public sealed record TierEvidence(
     int Worse,
     int Ties,
     double SignTestP,
-    bool Live);
+    bool Live,
+    string? Refusal = null);
 
 /// <summary>
 /// The recorded decision about which tier the LLM strategist uses, and the rule that made it (like the tuner's
@@ -144,7 +146,7 @@ public sealed record VocabularyAdoption(
         {
             TierEvidence? e = evidence.FirstOrDefault(x => x.Tier == next && x.AgainstTier == next - 1 && x.Split == "heldout");
             string? failure = e is null ? $"no held-out comparison of {next} against {next - 1}"
-                : !e.Live ? $"{next} vs {next - 1}: fake-client evidence is not evidence"
+                : !e.Live ? $"{next} vs {next - 1}: {e.Refusal ?? "fake-client evidence is not evidence"}"
                 : e.Better <= e.Worse ? $"{next} vs {next - 1}: {e.Better} pairs better, {e.Worse} worse"
                 : !(e.SignTestP < SignificanceLevel) ? string.Create(CultureInfo.InvariantCulture, $"{next} vs {next - 1}: sign-test p {e.SignTestP:0.0000} is not below {SignificanceLevel}")
                 : !(e.CiLow > 0) ? string.Create(CultureInfo.InvariantCulture, $"{next} vs {next - 1}: score interval [{e.CiLow:0.000}, {e.CiHigh:0.000}] does not exclude 0")
