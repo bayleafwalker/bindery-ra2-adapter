@@ -452,7 +452,7 @@ public sealed class IntentPromptBuilder
             parameters[p.Key] = CanonicalJson.Number(p.Value);
         }
 
-        return new JsonObject
+        JsonObject result = new()
         {
             ["intentId"] = intent.IntentId,
             ["source"] = intent.Source.ToString(),
@@ -473,10 +473,28 @@ public sealed class IntentPromptBuilder
             ["minCommitRemainingSeconds"] = minCommit is { } m ? CanonicalJson.Number(Math.Max(0, m - active)) : null,
             // Whether posture and threat episode allow the base-threat override (IntentArbiter.Decide); the ratio
             // itself is in conditionMetrics.
-            ["baseThreatOverrideAvailable"] = intent.Posture is not (StrategicPosture.Defend or StrategicPosture.Turtle)
+            ["baseThreatOverrideAvailable"] = (context.Phase?.Effective.Posture ?? intent.Posture) is not (StrategicPosture.Defend or StrategicPosture.Turtle)
                 && context.BaseThreatOverrideSpent != true,
             ["expiresInSeconds"] = CanonicalJson.Number(Math.Max(0, intent.ExpiresAt.SecondsSince(now))),
         };
+        // Only for a phased playbook, so other prompts are unchanged. The fields above are the intent's own (start-phase)
+        // values; "phase" is what is being executed now. Proposing the same playbook with the phase's posture is a
+        // renewal that keeps the phase, not a switch.
+        if (context.Phase is { } phase)
+        {
+            StrategicIntent e = phase.Effective;
+            result["phase"] = new JsonObject
+            {
+                ["name"] = phase.Name,
+                ["index"] = phase.Index,
+                ["count"] = phase.Count,
+                ["effectivePosture"] = e.Posture.ToString(),
+                ["effectiveBudget"] = Budget(e.Budget),
+                ["effectiveComposition"] = Composition(e.Composition),
+                ["effectiveAttackConditions"] = Conditions(e.AttackConditions),
+            };
+        }
+        return result;
     }
 
     /// <summary>

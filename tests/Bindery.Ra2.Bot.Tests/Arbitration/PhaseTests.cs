@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using System.Text.Json;
 using Bindery.Ra2.Bot.Arbitration;
+using Bindery.Ra2.Bot.Claude;
+using Bindery.Ra2.Bot.Tests.Claude;
 using Bindery.Ra2.Bot.Playbooks;
 using Bindery.Ra2.Bot.Runtime;
 using Bindery.Ra2.Bot.Strategy;
@@ -234,6 +236,182 @@ public sealed class PhaseTests
         Playbook p = ExpandTechAttack();
         Assert.Contains("no name", Load(p with { Phases = [p.Phases![0], p.Phases[1] with { Name = " " }] }), StringComparison.Ordinal);
         Assert.Contains("enter condition", Load(p with { Phases = [p.Phases![0], p.Phases[1] with { EnterWhen = null! }] }), StringComparison.Ordinal);
+    }
+
+    // ---- Review fixes: attack threshold, mirrored proposals, validation ------------------------------------------------
+
+    private static Playbook WithAttackThreshold() => ExpandTechAttack() with
+    {
+        Id = "test-threshold",
+        Parameters = [new PlaybookParameter("attackArmyValue", 500, 8000, 3000, "Army value before attacking.")],
+        Phases =
+        [
+            new PlaybookPhase("expand", []),
+            new PlaybookPhase("attack", [new Condition(ConditionMetric.GameSeconds, Comparison.Ge, 60)],
+                AttackConditions:
+                [
+                    new Condition(ConditionMetric.OwnArmyValue, Comparison.Ge, 3000),   // tracks the parameter
+                    new Condition(ConditionMetric.OwnArmyValue, Comparison.Ge, 777),    // set on its own account
+                    new Condition(ConditionMetric.ArmyValueRatio, Comparison.Gt, 0.1),
+                ]),
+        ],
+    };
+
+    private static double[] OwnArmyBounds(StrategicIntent intent) =>
+        intent.AttackConditions.Where(static c => c.Metric == ConditionMetric.OwnArmyValue).Select(static c => c.Threshold).ToArray();
+
+    [Theory]
+    [InlineData(3000, new[] { 3000d, 777d })]   // the default: nothing moves
+    [InlineData(1500, new[] { 1500d, 777d })]   // lowered: the bound that tracked the default follows, the other stays
+    public void A_phase_attack_condition_follows_the_intents_attack_army_value_parameter(double parameter, double[] expected)
+    {
+        IntentArbiter own = new(new PlaybookLibrary([WithAttackThreshold()]), null, log);
+        StrategicIntent intent = Fx.Intent("a", "test-threshold", StrategicPosture.Expand, lifetime: 1000, budget: StartBudget,
+            parameters: new Dictionary<string, double> { ["attackArmyValue"] = parameter });
+        own.Offer(Fx.Accepted(intent), Fx.Features(0));
+        own.Update(Fx.Features(60));
+
+        Assert.Equal("attack", own.PhaseName);
+        Assert.Equal(expected, OwnArmyBounds(own.EffectiveIntent!));
+    }
+
+    [Fact]
+    public void A_refined_parameter_moves_the_phase_attack_bound_on_the_next_effective_intent()
+    {
+        IntentArbiter own = new(new PlaybookLibrary([WithAttackThreshold()]), null, log);
+        own.Offer(Fx.Accepted(Fx.Intent("a", "test-threshold", StrategicPosture.Expand, lifetime: 1000, budget: StartBudget)), Fx.Features(0));
+        own.Update(Fx.Features(60));
+        Assert.Equal(3000, OwnArmyBounds(own.EffectiveIntent!)[0]);
+
+        StrategicIntent renewal = Fx.Intent("a2", "test-threshold", StrategicPosture.Expand, issuedAt: 70, lifetime: 1000, budget: StartBudget,
+            parameters: new Dictionary<string, double> { ["attackArmyValue"] = 2000 });
+        Assert.Equal(ArbitrationOutcome.Renewed, own.Offer(Fx.Accepted(renewal), Fx.Features(70)).Outcome);
+        Assert.Equal("attack", own.PhaseName);
+        Assert.Equal(2000, OwnArmyBounds(own.EffectiveIntent!)[0]);
+    }
+
+    private StrategicIntent Challenger(string id, string playbook, StrategicPosture posture, double at, BudgetShares? budget = null, double confidence = 0.95) =>
+        Fx.Intent(id, playbook, posture, issuedAt: at, lifetime: 1000, budget: budget ?? StartBudget, confidence: confidence);
+
+    [Fact]
+    public void A_proposal_that_mirrors_the_phase_in_force_is_a_renewal_that_keeps_the_phase()
+    {
+        Activate("a", "test-expand-tech-attack", StrategicPosture.Expand, 0);
+        arbiter.Update(Fx.Features(65));
+        Assert.Equal("tech", arbiter.PhaseName);
+        Assert.Equal(StrategicPosture.Tech, arbiter.EffectiveIntent!.Posture);
+
+        // The model saw the effective plan (posture Tech, the tech budget) and echoes it back.
+        ArbitrationDecision decision = arbiter.Offer(Fx.Accepted(Challenger("m", "test-expand-tech-attack", StrategicPosture.Tech, 70, TechBudget)), Fx.Features(70));
+
+        Assert.Equal(ArbitrationOutcome.Renewed, decision.Outcome);
+        Assert.Equal("m", arbiter.Active!.IntentId);
+        Assert.Equal("tech", arbiter.PhaseName);
+        // The echoed fields are folded back to the intent's own values, so later phases still start from them.
+        Assert.Equal(StrategicPosture.Expand, arbiter.Active.Posture);
+        Assert.Equal(StartBudget, arbiter.Active.Budget);
+        Assert.Equal(StrategicPosture.Tech, arbiter.EffectiveIntent!.Posture);
+        Assert.Equal(TechBudget, arbiter.EffectiveIntent.Budget);
+        Assert.Single(log.OfKind(DecisionRecordKinds.IntentActivated), static r => !r.Data.GetProperty("renewal").GetBoolean());
+        Assert.Single(Changes());
+
+        arbiter.Update(Fx.Features(125));
+        Assert.Equal("attack", arbiter.PhaseName);
+    }
+
+    [Fact]
+    public void A_mirroring_proposal_keeps_a_field_of_its_own_that_differs_from_the_phase()
+    {
+        Activate("a", "test-expand-tech-attack", StrategicPosture.Expand, 0);
+        arbiter.Update(Fx.Features(65));
+        BudgetShares own = new(0.25, 0.25, 0.4, 0.1);
+        arbiter.Offer(Fx.Accepted(Challenger("m", "test-expand-tech-attack", StrategicPosture.Tech, 70, own)), Fx.Features(70));
+        Assert.Equal(own, arbiter.Active!.Budget);
+        Assert.Equal(TechBudget, arbiter.EffectiveIntent!.Budget);   // the phase's override still wins while it is in force
+    }
+
+    [Fact]
+    public void A_different_posture_or_playbook_is_still_a_switch_that_restarts_the_plan()
+    {
+        Activate("a", "test-expand-tech-attack", StrategicPosture.Expand, 0);
+        arbiter.Update(Fx.Features(65));
+
+        // Neither the intent's own posture nor the phase's: a real posture change.
+        ArbitrationDecision posture = arbiter.Offer(Fx.Accepted(Challenger("p", "test-expand-tech-attack", StrategicPosture.Boom, 70)), Fx.Features(70));
+        Assert.Equal(ArbitrationOutcome.Activated, posture.Outcome);
+        Assert.Equal("expand", arbiter.PhaseName);   // fresh activation: phase 0
+
+        // At phase 0 the phase's posture is not in force, so echoing it is a posture change too.
+        ArbitrationDecision atStart = arbiter.Offer(Fx.Accepted(Challenger("q", "test-expand-tech-attack", StrategicPosture.Tech, 120)), Fx.Features(120));
+        Assert.NotEqual("renewal", atStart.Reason);
+    }
+
+    [Fact]
+    public void The_active_intent_prompt_names_the_phase_and_its_effective_overrides()
+    {
+        StrategicIntent active = ClaudeFixtures.ActiveIntent();
+        StrategicIntent effective = active with { Posture = StrategicPosture.Tech, Budget = TechBudget };
+        StrategistContext context = ClaudeFixtures.Context(ClaudeFixtures.Features(seconds: 300), active) with { Phase = new ActivePhase("tech", 1, 3, effective) };
+        using JsonDocument situation = JsonDocument.Parse(new IntentPromptBuilder().Build(context, StrategistMode.Strategic).Situation);
+        JsonElement intent = situation.RootElement.GetProperty("activeIntent");
+
+        Assert.Equal("Boom", intent.GetProperty("posture").GetString());   // the intent's own value
+        JsonElement phase = intent.GetProperty("phase");
+        Assert.Equal("tech", phase.GetProperty("name").GetString());
+        Assert.Equal(1, phase.GetProperty("index").GetInt32());
+        Assert.Equal(3, phase.GetProperty("count").GetInt32());
+        Assert.Equal("Tech", phase.GetProperty("effectivePosture").GetString());
+        Assert.Equal(0.5, phase.GetProperty("effectiveBudget").GetProperty("tech").GetDouble());
+
+        StrategistContext plain = ClaudeFixtures.Context(ClaudeFixtures.Features(seconds: 300), active);
+        using JsonDocument without = JsonDocument.Parse(new IntentPromptBuilder().Build(plain, StrategistMode.Strategic).Situation);
+        Assert.False(without.RootElement.GetProperty("activeIntent").TryGetProperty("phase", out _));
+    }
+
+    [Fact]
+    public void The_arbiter_supplies_the_phase_for_strategist_contexts()
+    {
+        Assert.Null(arbiter.CurrentPhase);
+        Activate("a", "test-expand-tech-attack", StrategicPosture.Expand, 0);
+        Assert.Equal("expand", arbiter.CurrentPhase!.Name);
+        arbiter.Update(Fx.Features(65));
+        ActivePhase phase = arbiter.CurrentPhase!;
+        Assert.Equal(("tech", 1, 3), (phase.Name, phase.Index, phase.Count));
+        Assert.Equal(TechBudget, phase.Effective.Budget);
+        Activate("b", "allied-turtle", StrategicPosture.Turtle, 130);
+        Assert.Null(arbiter.CurrentPhase);
+    }
+
+    [Fact]
+    public void A_phase_composition_is_checked_like_a_proposed_one()
+    {
+        Playbook p = ExpandTechAttack();
+        PlaybookPhase tech = p.Phases![1];
+        string Bad(IReadOnlyList<CompositionTarget> composition) => Load(p with { Phases = [p.Phases[0], tech with { Composition = composition }] });
+
+        Assert.Contains("more than once", Bad([new(UnitRole.AntiArmor, 0.1, 0.5), new(UnitRole.AntiArmor, 0.1, 0.5)]), StringComparison.Ordinal);
+        Assert.Contains("not a range", Bad([new(UnitRole.AntiArmor, 0.6, 0.5)]), StringComparison.Ordinal);
+        Assert.Contains("not a range", Bad([new(UnitRole.AntiArmor, 0.1, 1.5)]), StringComparison.Ordinal);
+        Assert.Contains("Minimum shares sum", Bad([new(UnitRole.AntiArmor, 0.6, 0.9), new(UnitRole.AntiAir, 0.6, 0.9)]), StringComparison.Ordinal);
+        Assert.Contains("phase 'tech'", Bad([new(UnitRole.AntiArmor, 0.6, 0.5)]), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Phase_conditions_are_checked_like_a_proposed_ones()
+    {
+        Playbook p = ExpandTechAttack();
+        PlaybookPhase tech = p.Phases![1];
+        Condition nan = new(ConditionMetric.OwnArmyValue, Comparison.Ge, double.NaN);
+        Condition noRegion = new(ConditionMetric.LocalForceRatio, Comparison.Gt, 1);
+
+        Assert.Contains("NaN threshold", Load(p with { Phases = [p.Phases[0], tech with { EnterWhen = [nan] }] }), StringComparison.Ordinal);
+        Assert.Contains("NaN threshold", Load(p with { Phases = [p.Phases[0], tech with { AttackConditions = [nan] }] }), StringComparison.Ordinal);
+        Assert.Contains("needs a region", Load(p with { Phases = [p.Phases[0], tech with { EnterWhen = [noRegion] }] }), StringComparison.Ordinal);
+        Assert.Contains("needs a region", Load(p with { Phases = [p.Phases[0], tech with { AttackConditions = [noRegion] }] }), StringComparison.Ordinal);
+
+        // A region on a region-scoped condition loads; that it exists on the map is not knowable here and is not checked.
+        Condition scoped = new(ConditionMetric.LocalForceRatio, Comparison.Gt, 1, new RegionId(9999));
+        Assert.NotNull(PlaybookLibrary.LoadJson(JsonSerializer.Serialize(new PlaybookDocument([p with { Phases = [p.Phases[0], tech with { EnterWhen = [scoped] }] }]), BotJson.Options)));
     }
 
     // ---- A real runtime -------------------------------------------------------------------------------------------

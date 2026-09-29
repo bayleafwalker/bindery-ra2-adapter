@@ -170,7 +170,7 @@ public sealed class IntentValidator : IIntentValidator
         return budget;
     }
 
-    private static IReadOnlyList<CompositionTarget> CheckComposition(IReadOnlyList<CompositionTarget> composition, Playbook? playbook, List<ValidationIssue> issues)
+    internal static IReadOnlyList<CompositionTarget> CheckComposition(IReadOnlyList<CompositionTarget> composition, Playbook? playbook, List<ValidationIssue> issues)
     {
         if (composition.Count == 0)
         {
@@ -316,7 +316,8 @@ public sealed class IntentValidator : IIntentValidator
         return defaults;
     }
 
-    private static void CheckConditions(IReadOnlyList<Condition> conditions, HashSet<RegionId> mapRegions, string what, List<ValidationIssue> issues)
+    /// <param name="mapRegions">The map's regions, or null to skip the region-on-map check (a playbook checked at load time has no map).</param>
+    internal static void CheckConditions(IReadOnlyList<Condition> conditions, HashSet<RegionId>? mapRegions, string what, List<ValidationIssue> issues)
     {
         foreach (Condition condition in conditions)
         {
@@ -326,7 +327,7 @@ public sealed class IntentValidator : IIntentValidator
             }
             if (condition.Region is RegionId region)
             {
-                if (!mapRegions.Contains(region))
+                if (mapRegions is not null && !mapRegions.Contains(region))
                 {
                     Reject(issues, ValidationCodes.RegionUnknown, $"{what} on {condition.Metric} names region {region}, which is not on the map.");
                 }

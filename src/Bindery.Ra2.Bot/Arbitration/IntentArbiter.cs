@@ -109,6 +109,10 @@ public sealed class IntentArbiter
     /// </summary>
     public StrategicIntent? EffectiveIntent => Active is null ? null : phaseTracker.Effective(Active);
 
+    /// <summary>The current phase for strategist contexts; null without an active intent or phases.</summary>
+    public ActivePhase? CurrentPhase =>
+        Active is not null && phaseTracker.Name is { } name ? new ActivePhase(name, phaseTracker.Index, phaseTracker.Count, phaseTracker.Effective(Active)) : null;
+
     /// <summary>Index of the active intent's current phase; 0 without phases or an intent.</summary>
     public int PhaseIndex => phaseTracker.Index;
 
@@ -280,6 +284,12 @@ public sealed class IntentArbiter
         {
             return new ArbitrationDecision(ArbitrationOutcome.Renewed, "renewal", challenger);
         }
+        // A strategist that mirrors the phase in force (same playbook, the phase's effective posture) is renewing, not
+        // switching: activating it would restart the plan at phase 0.
+        if (phaseTracker.FoldMirror(challenger, incumbent) is { } mirrored)
+        {
+            return new ArbitrationDecision(ArbitrationOutcome.Renewed, "renewal", mirrored);
+        }
 
         bool placeholder = ActiveRole == ProposalRole.Emergency
             || (ActiveRole == ProposalRole.Fallback && role == ProposalRole.Primary);
@@ -290,7 +300,7 @@ public sealed class IntentArbiter
             return new ArbitrationDecision(ArbitrationOutcome.Activated, "override:abort", challenger);
         }
         if (!baseThreatAnswered
-            && incumbent.Posture is not (StrategicPosture.Defend or StrategicPosture.Turtle)
+            && phaseTracker.Effective(incumbent).Posture is not (StrategicPosture.Defend or StrategicPosture.Turtle)
             && ConditionEvaluator.BaseThreatRatio(features) > Options.BaseThreatOverrideRatio)
         {
             return new ArbitrationDecision(ArbitrationOutcome.Activated, "override:base_threat", challenger);

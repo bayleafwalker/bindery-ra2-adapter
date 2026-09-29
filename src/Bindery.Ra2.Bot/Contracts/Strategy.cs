@@ -38,6 +38,7 @@ public sealed record IntentHistoryEntry(string IntentId, IntentSource Source, St
 /// (<see cref="Arbitration.IntentArbiter.BaseThreatOverrideSpent"/>); null when there is no active intent or the
 /// context does not say.
 /// </param>
+/// <param name="Phase">The active intent's current playbook phase; null when its playbook has no phases or there is no active intent.</param>
 public sealed record StrategistContext(
     StrategicFeatures Features,
     IRulesDatabase Rules,
@@ -49,7 +50,14 @@ public sealed record StrategistContext(
     string? Trigger = null,
     Arbitration.ProposalRole? ActiveRole = null,
     GameTime? ActiveSince = null,
-    bool? BaseThreatOverrideSpent = null);
+    bool? BaseThreatOverrideSpent = null,
+    ActivePhase? Phase = null);
+
+/// <summary>
+/// The phase of a phased playbook that is current for the active intent. <paramref name="Effective"/> is the intent as
+/// the planner runs it (the phase's overrides applied); the active intent itself keeps its own, start-phase values.
+/// </summary>
+public sealed record ActivePhase(string Name, int Index, int Count, StrategicIntent Effective);
 
 /// <summary>Cost and latency accounting for one proposal.</summary>
 /// <param name="Model">The model that served the reply (a server-side fallback may differ from the one requested).</param>

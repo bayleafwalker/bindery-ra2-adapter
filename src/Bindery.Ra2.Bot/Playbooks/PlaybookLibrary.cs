@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using System.Text.Json;
+using Bindery.Ra2.Bot.Arbitration;
 
 namespace Bindery.Ra2.Bot.Playbooks;
 
@@ -123,6 +124,18 @@ public sealed class PlaybookLibrary : IPlaybookLibrary
             if (phase.Budget is not null && !ValidShares(phase.Budget)) return $"phase '{phase.Name}' budget shares must be non-negative and sum to 1.";
             if (phase.Composition is not null && phase.Composition.Any(static c => c is null)) return $"phase '{phase.Name}' has a missing composition entry.";
             if (phase.AttackConditions is not null && phase.AttackConditions.Any(static c => c is null)) return $"phase '{phase.Name}' has a missing attack condition.";
+
+            // The same rules a proposed intent meets (IntentValidator), so a phase cannot install what a proposal could
+            // not: composition ranges, duplicate roles and min-share sum; NaN thresholds; a region-scoped metric with
+            // no region. Whether a named region exists on the map cannot be known at load time and is not checked.
+            List<ValidationIssue> issues = [];
+            if (phase.Composition is not null) IntentValidator.CheckComposition(phase.Composition, null, issues);
+            IntentValidator.CheckConditions(phase.EnterWhen, null, "enter condition", issues);
+            if (phase.AttackConditions is not null) IntentValidator.CheckConditions(phase.AttackConditions, null, "attack condition", issues);
+            if (issues.FirstOrDefault(static i => i.Severity == ValidationSeverity.Reject) is { } issue)
+            {
+                return $"phase '{phase.Name}': {issue.Message}";
+            }
         }
         return null;
     }
