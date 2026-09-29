@@ -32,3 +32,44 @@ Attempt 2 (17:52, API, `claude-opus-5`): not counted. Every one of the 139 Prima
 four matches were played by the selector fallback (its "3 of 4 wins" is not a Claude result). Kept as
 `attempt-2-unscoped-key/`. The next attempt sets `ANTHROPIC_CUSTOM_HEADERS=anthropic-workspace-id: <id>` (read by the
 Anthropic SDK) or uses a workspace-scoped key; nothing else changes.
+
+## Outcome (attempt 3, 17:57-18:39, API, `claude-opus-5` with the workspace header)
+Counted. All 4 matches were played by Claude: 210 Primary proposals, all accepted by validation, 6 failed calls
+(2 and 4 in the two Allied matches; the selector fallback covered those gaps), median latency ~10 s (p90 ~14 s),
+about $10.75 in API cost (`run/`, `run.log`).
+
+Soviet Primary proposals (the decision input):
+
+| Match | rhino-rush | flak-mix | generic-expand | generic-defend | v3-siege | total | result |
+|---|---|---|---|---|---|---|---|
+| open-steppe seed 2 | 33 | 0 | 14 | 17 | 1 | 65 | lost (timeout, assets 33,200 vs 34,400) |
+| fortress-choke seed 2 | 1 | 7 | 16 | 0 | 0 | 24 | won (elimination) |
+| pooled | 34 (38%) | 7 | 30 | 17 | 1 | 89 | |
+
+38% is neither >= 50% nor <= 20%, so the rule's third branch applies: **run the 20-cell test.** Claude does not
+reproduce worker-fast's near-exclusive rhino-rush (1,273 of 1,827, 70%), but it still leans on it in one of two
+Soviet games, and flak-mix is not its top pick.
+
+Reported, not decided on: against the selector on the same 4 cells (`selector-same-cells/`, same build), both win
+3 of 4. They differ on two cells: Allied fortress-choke seed 1 (Claude won on timeout; the selector lost on timeout)
+and Soviet open-steppe seed 2, the rhino-rush-heavy match (Claude lost on timeout; the selector won by elimination
+at 336 s). Allied play: allied-grizzly-timing 63, allied-boom 39, generic-defend 9, allied-ifv-mix 1 over 2 wins.
+
+## The 20-cell test (defined before it is run, 2026-09-29 ~18:55)
+Cells: Soviet only, seeds 2 and 4 (west and east start), both held-out maps, the five held-out opponents not used in
+the pilot: `ai-horde:easy, ai-horde:hard, ai-armor:easy, ai-armor:medium, ai-armor:hard` (2 x 2 x 5 = 20). Arms
+`llm-t1` (API, `claude-opus-5`, workspace header, as attempt 3) and `selector`, same build, contested benchmark. The
+arena plays the arm as Soviet on even seeds, so `--seeds 4` runs seeds 1-4; only the 20 even-seed cells count, the
+Allied cells are reported but not decided on. Estimated cost ~$110 for 40 LLM matches (both factions), ~1-1.5 h.
+
+Paired comparison on the 20 Soviet cells (Claude better / worse / same winner as the selector), and the pooled
+rhino-rush share of Claude's Soviet Primary proposals. The A/A floor for a live model is 17% of cells changing winner
+(tier-heldout `aa-noise.txt`), ~3 of 20.
+- Claude worse on at least 6 more cells than it is better (e.g. 7 vs 1; one-sided sign p <= 0.035) and rhino-rush
+  >= 30% of its Soviet proposals: the playbook mechanism holds for the model that plays; the next build is the
+  Soviet playbook guard.
+- worse minus better <= 2: Claude holds up against the selector as Soviet; the next build is perception / attack
+  gate, and the playbook guard is kept for local-model (worker-fast) deployments only, not built now.
+- otherwise (3-5, or >= 6 with rhino-rush < 30%): the loss is not explained by playbook choice alone; the next build
+  is perception / attack gate, and the Soviet losing matches' decision logs are read to name the mechanism before
+  any guard.

@@ -1,0 +1,2 @@
+selector: 4 matches, 3 wins; leakage probe 0/672 differing frames, 0 fog-violation frames.
+Wrote 4 match results, 2 leakage probes and report.md to docs/results/2026-09-29-claude-transfer-pilot/selector-same-cells in 7s.
