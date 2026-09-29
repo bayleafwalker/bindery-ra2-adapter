@@ -103,9 +103,11 @@ played, check the telemetry, not only the harness:
   inside the game tree's `DDRAW.dll` (DDrawCompat 0.5.4, offset 0x1C104). The
   pre-registered A/B of 2026-09-29 saw none in 118 fork-DLL launches (service at
   ExeRun or deferred to the first frame), so `deferServiceStart` stays off
-  (`docs/results/2026-09-29-defer-service-ab/analysis.txt`). Guest
-  `syringe-client-*.log` files are not cleared between runs: a run whose game
-  never starts can carry the previous run's exit codes, so check timestamps.
+  (`docs/results/2026-09-29-defer-service-ab/analysis.txt`). The
+  guest prepare step moves the previous `syringe.log`, `ra2yrcpp.log`,
+  `ra2yrcpp.record` and DDrawCompat log aside (to `runs/<id>/pre-<side>` on the
+  guest) before every launch, so a run whose game never starts pulls an empty
+  `syringe-client-*.log` (classified `unknown`), never the previous run's.
   `ddrawcompat-client-*.log` keeps DDrawCompat's own log for each run.
   Crash dumps need Windows Error Reporting LocalDumps for `gamemd.exe`. The
   harness does not set it: it is a manual step, once per guest:
