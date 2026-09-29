@@ -27,7 +27,7 @@ evidence recorded). The run was stopped by operator direction on 2026-09-29 at 1
 
 - Attempt 1 (19:50 on 2026-09-28, at fadce59) was killed by a host reboot after 30 llm-t1 matches, with nothing scored.
   Its decision logs are in `aborted-1/`. Attempt 2 restarted from scratch at 08:05 with the unchanged `run.sh` and
-  reached 81 llm-t1 matches (41 won, 40 lost). The arms ran in sequence, so llm-t2 and llm-t3 never started, and neither
+  reached 81 llm-t1 matches (40 won, 41 lost). The arms ran in sequence, so llm-t2 and llm-t3 never started, and neither
   pre-registered comparison has a single pair.
 - Why stopped: the design ran arms in sequence with no resume. That meant about 30 hours of local GPU (the model server
   serves one request at a time, about 9 matches an hour) and an overnight machine, all before a single pair could be
