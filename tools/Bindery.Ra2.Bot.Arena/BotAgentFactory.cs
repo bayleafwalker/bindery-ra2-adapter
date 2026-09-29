@@ -319,7 +319,7 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
             features = Tuning.TunedParameterSet.Active.ApplyTo(new FeatureOptions());
             foreach ((string knob, double value) in context.ArmKnobs.OrderBy(static k => k.Key, StringComparer.Ordinal))
             {
-                if (Tuning.TuningKnobs.Operational.Any(k => k.Name == knob)) operations = Tuning.TuningKnobs.Set(operations, knob, value);
+                if (Tuning.TuningKnobs.IsOperational(knob)) operations = Tuning.TuningKnobs.Set(operations, knob, value);
                 else features = Tuning.TuningKnobs.Set(features, knob, value);
                 labels.Add(string.Create(CultureInfo.InvariantCulture, $"knob:{knob}={value}"));
             }

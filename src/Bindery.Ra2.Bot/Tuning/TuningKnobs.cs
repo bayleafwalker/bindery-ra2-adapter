@@ -75,6 +75,13 @@ public static class TuningKnobs
         new("BaseSightingWeightCap", 0, 1, false, "Caps the base-sighting term of the attack gate's evidence weight (diagnostic; never tuned)."),
     ];
 
+    /// <summary>
+    /// True when <paramref name="name"/> is applied to <see cref="OperationalOptions"/> (a tuned operational knob or an
+    /// operational diagnostic one); otherwise it belongs to <see cref="FeatureOptions"/>.
+    /// </summary>
+    public static bool IsOperational(string name) =>
+        Operational.Any(k => k.Name == name) || name == "BaseSightingWeightCap";
+
     /// <summary>Reads a knob's value from <paramref name="options"/>.</summary>
     public static double Get(OperationalOptions options, string name)
     {
