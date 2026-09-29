@@ -1,0 +1,11 @@
+Startup-crash A/B (pre-registration docs/experiments/2026-09-29-defer-service-start-ab-preregistration.md)
+runs: 60, launches: 120
+
+arm A: launches 60  crash 0  ok 60  unknown 0  runs 30  runs without a crash 30  completed 30 (100.0%)
+arm B: launches 60  crash 0  ok 60  unknown 0  runs 30  runs without a crash 30  completed 29 (96.7%)
+
+P1 (B fewer crash launches than A, Fisher exact two-sided p<0.05): A 0/60, B 0/60, p = 1.000 -> FAIL
+P2 (B completion >= A completion - 10 pp): A 100.0%, B 96.7% -> PASS
+Validity (<= 6 unknown launches per arm): A 0, B 0 -> holds
+
+Run 14 (B): both launches ok; the match hit the 40-minute cap ('timeout: stopping the match'), so no live-acceptance evidence and completion = unknown, counted as not completed.

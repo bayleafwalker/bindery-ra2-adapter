@@ -1,0 +1,6 @@
+2026-09-28 22:25 run 35 (B): interrupted by a host reboot before evidence (partial run 20260928-222539-s1, not counted); series paused, resumed 2026-09-29 08:04 from run 35
+08:04:33 run 35 (B): no evidence (rc 1)
+08:04:33 run 36 (A): no evidence (rc 1)
+08:04:33 run 37 (A): no evidence (rc 1)
+three infrastructure failures in a row: paused
+08:14:18 the three 08:04 'no evidence' entries were preflight refusals while the guests were still booting (no launch, nothing counted); preflight passes; series resumed from run 35

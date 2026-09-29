@@ -27,4 +27,19 @@ row that fail for infrastructure reasons (tunnel, control plane, guest agent) pa
 next run in order once fixed, and the pause is recorded. No other arms, no extra runs, no change to the classifier.
 
 ## Outcome
-Not run yet.
+Run 2026-09-28 19:57 to 2026-09-29 09:31 at 9d7dfbe (payload sha256 in `payload.txt`), all 60 runs in the fixed
+ABBA order, 120 launches. A host reboot at about 22:25 interrupted run 35 before it produced evidence; it was not
+counted, and the series resumed from run 35 once the guests were back and the preflight passed (the three immediate
+"no evidence" entries at 08:04 were preflight refusals while the guests booted, with no launch). Both pauses are in
+`infra.log`. Analysis: `docs/results/2026-09-29-defer-service-ab/analysis.txt`; per-run logs in `run-logs.tar.xz`.
+
+- A (service at ExeRun): 0 crash, 60 ok, 0 unknown launches; 30 of 30 runs completed.
+- B (`deferServiceStart: true`): 0 crash, 60 ok, 0 unknown launches; 29 of 30 runs completed (run 14 hit the
+  40-minute match cap with both clients running, so it has no completion evidence and counts as not completed).
+- P1: 0 of 60 against 0 of 60, Fisher exact p = 1.0: **fails**.
+- P2: 96.7% against 100%, within 10 points: passes. Validity holds (0 unknown launches per arm).
+
+Decision, as pre-registered: `deferServiceStart` is not adopted; the lab default stays off. The fork branch
+`bayleafwalker/ra2yrcpp` `feat/defer-service-start` (58a5438) never had a PR opened, so there is none to close; it
+stays unmerged. Also reported, not decided on: the startup crash did not occur in either arm (0 of 120 launches,
+against about 2 of 20 before), so this series could not have shown an effect of the deferral.
