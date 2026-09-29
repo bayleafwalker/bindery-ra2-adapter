@@ -131,7 +131,7 @@ public static class ReportBuilder
         sb.AppendLine();
         sb.AppendLine("| Arm | Split | Wins | Losses | Draws | Matches | Win rate | 95% interval (Wilson) | Distinct games | Distinct wins | 95% interval, distinct | As Allied | As Soviet | As west | As east | Eliminations won | Timeouts | LLM delivery |");
         sb.AppendLine("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
-        IReadOnlyDictionary<string, LlmCallTally> unreliable = LlmCallTally.Unreliable(matches, maxLlmFailureRate);
+        IReadOnlyDictionary<(string Arm, string Split), LlmCallTally> unreliable = LlmCallTally.Unreliable(matches, maxLlmFailureRate);
         List<string> unbalanced = [];
         List<string> unevenSides = [];
         foreach (var group in matches.GroupBy(m => (m.Arm, m.Split)).OrderBy(g => g.Key.Arm, StringComparer.Ordinal).ThenBy(g => g.Key.Split, StringComparer.Ordinal))
@@ -150,12 +150,12 @@ public static class ReportBuilder
             List<MatchRecord> west = [.. group.Where(static m => !MatchRunner.ArmStartsEast(m.Seed))];
             List<MatchRecord> east = [.. group.Where(static m => MatchRunner.ArmStartsEast(m.Seed))];
             if (west.Count != east.Count) unevenSides.Add($"{group.Key.Arm}/{group.Key.Split} ({west.Count} west, {east.Count} east)");
-            sb.AppendLine($"| {(unreliable.ContainsKey(group.Key.Arm) ? group.Key.Arm + ' ' + "(not a model result)" : group.Key.Arm)} | {group.Key.Split} | {wins} | {losses} | {draws} | {total} | {Rate(wins, total)} | {Wilson(wins, total)} | {distinct.Count} | {distinctWins} | {Wilson(distinctWins, distinct.Count)} | {allied.Count(static m => m.Winner == 0)}/{allied.Count} | {soviet.Count(static m => m.Winner == 0)}/{soviet.Count} | {west.Count(static m => m.Winner == 0)}/{west.Count} | {east.Count(static m => m.Winner == 0)}/{east.Count} | {elimWins} | {timeouts} | {Delivery(LlmCallTally.Pool(group))} |");
+            sb.AppendLine($"| {(unreliable.ContainsKey((group.Key.Arm, group.Key.Split)) ? group.Key.Arm + ' ' + "(not a model result)" : group.Key.Arm)} | {group.Key.Split} | {wins} | {losses} | {draws} | {total} | {Rate(wins, total)} | {Wilson(wins, total)} | {distinct.Count} | {distinctWins} | {Wilson(distinctWins, distinct.Count)} | {allied.Count(static m => m.Winner == 0)}/{allied.Count} | {soviet.Count(static m => m.Winner == 0)}/{soviet.Count} | {west.Count(static m => m.Winner == 0)}/{west.Count} | {east.Count(static m => m.Winner == 0)}/{east.Count} | {elimWins} | {timeouts} | {Delivery(LlmCallTally.Pool(group))} |");
         }
         sb.AppendLine();
-        foreach ((string unreliableArm, LlmCallTally tally) in unreliable.OrderBy(static p => p.Key, StringComparer.Ordinal))
+        foreach (((string unreliableArm, string unreliableSplit), LlmCallTally tally) in unreliable.OrderBy(static p => p.Key.Arm, StringComparer.Ordinal).ThenBy(static p => p.Key.Split, StringComparer.Ordinal))
         {
-            sb.AppendLine($"**{unreliableArm}: not a model result.** {tally.Failed} of {tally.Answered + tally.Failed} model calls failed ({Rate(tally.Failed, tally.Answered + tally.Failed)}), above the {F(maxLlmFailureRate, "0.##")} limit (`--max-llm-failure-rate`); the selector fallback played the gaps, so this arm's win rate is largely the selector's. Its matches are kept for inspection, and its tier evidence is refused for adoption.");
+            sb.AppendLine($"**{unreliableArm} on {unreliableSplit} maps: not a model result.** {tally.Failed} of {tally.Answered + tally.Failed} model calls failed ({Rate(tally.Failed, tally.Answered + tally.Failed)}), above the {F(maxLlmFailureRate, "0.##")} limit (`--max-llm-failure-rate`); the selector fallback played the gaps, so this arm's win rate is largely the selector's. Its matches are kept for inspection, and its tier evidence is refused for adoption.");
             sb.AppendLine();
         }
         if (unbalanced.Count > 0)

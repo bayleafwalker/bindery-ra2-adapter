@@ -37,7 +37,7 @@ public static class DecisionLogMetrics
                     if (role == PrimaryRole)
                     {
                         stats.Proposals++;
-                        stats.LlmAnswered++;
+                        if (IsModelIntent(record.Data)) stats.LlmAnswered++;
                         if (LatencySeconds(record.Data) is { } seconds) stats.LateSeconds.Add(seconds);
                     }
                     else
@@ -61,6 +61,8 @@ public static class DecisionLogMetrics
                     break;
 
                 case DecisionRecordKinds.ShadowProposal:
+                    // Shadow arms: the shadow strategist is the model, so each of its proposals is an answer.
+                    if (IsModelIntent(record.Data)) stats.LlmAnswered++;
                     if (LatencySeconds(record.Data) is { } shadowSeconds) stats.ShadowLateSeconds.Add(shadowSeconds);
                     stats.ShadowFogRejections += FogRejects(record.Data);
                     if (record.Data.TryGetProperty("accepted", out JsonElement shadowAccepted) && shadowAccepted.ValueKind == JsonValueKind.False) stats.ShadowRejected++;
@@ -80,6 +82,15 @@ public static class DecisionLogMetrics
             }
         }
     }
+
+    /// <summary>
+    /// True when the proposal's intent came from the model (<c>IntentSource.Llm</c>), not the selector, the distilled
+    /// model's own answer or a fallback: only those show the model delivering.
+    /// </summary>
+    private static bool IsModelIntent(JsonElement data) =>
+        data.TryGetProperty("intent", out JsonElement intent) && intent.ValueKind == JsonValueKind.Object
+        && intent.TryGetProperty("source", out JsonElement source) && source.ValueKind == JsonValueKind.String
+        && source.GetString() == nameof(IntentSource.Llm);
 
     private static double? LatencySeconds(JsonElement data) =>
         data.TryGetProperty("latencyFrames", out JsonElement frames) && frames.ValueKind == JsonValueKind.Number

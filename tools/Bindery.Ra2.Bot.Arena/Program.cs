@@ -268,9 +268,9 @@ public static class Program
             if (options.WriteAdoption is { } target) File.WriteAllText(target, adoption);
         }
 
-        foreach ((string unreliableArm, LlmCallTally tally) in LlmCallTally.Unreliable(ordered, options.MaxLlmFailureRate).OrderBy(static p => p.Key, StringComparer.Ordinal))
+        foreach (((string unreliableArm, string unreliableSplit), LlmCallTally tally) in LlmCallTally.Unreliable(ordered, options.MaxLlmFailureRate).OrderBy(static p => p.Key.Arm, StringComparer.Ordinal).ThenBy(static p => p.Key.Split, StringComparer.Ordinal))
         {
-            Console.WriteLine(tally.Warning(unreliableArm, options.MaxLlmFailureRate));
+            Console.WriteLine(tally.Warning(unreliableArm, unreliableSplit, options.MaxLlmFailureRate));
         }
 
         Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"Wrote {ordered.Count} match results, {probes.Count} leakage probes and report.md to {options.OutDir} in {wall.Elapsed.TotalSeconds:0}s."));
@@ -384,13 +384,13 @@ public static class Program
     /// The adoption rule (<see cref="VocabularyAdoption.Decide"/>) applied to a run's tier arms: for each tier arm and
     /// the tier arm below it, the paired match-score comparison on each split (only held-out counts for adoption).
     /// <paramref name="live"/> is false for <c>--llm-fake</c> runs, whose evidence never adopts anything; nor does the
-    /// evidence of a tier arm (or the arm it is compared with) whose pooled LLM call failure rate exceeds
+    /// evidence of a tier arm (or the arm it is compared with) whose pooled LLM call failure rate on that split exceeds
     /// <paramref name="maxLlmFailureRate"/>, since the selector fallback played that arm's gaps.
     /// </summary>
     public static VocabularyAdoption TierAdoption(IReadOnlyList<MatchRecord> matches, bool live, string? date, double maxLlmFailureRate = CliOptions.DefaultMaxLlmFailureRate)
     {
         ArgumentNullException.ThrowIfNull(matches);
-        IReadOnlyDictionary<string, LlmCallTally> unreliable = LlmCallTally.Unreliable(matches, maxLlmFailureRate);
+        IReadOnlyDictionary<(string Arm, string Split), LlmCallTally> unreliable = LlmCallTally.Unreliable(matches, maxLlmFailureRate);
         List<TierEvidence> evidence = [];
         foreach ((string arm, VocabularyTier tier) in BotAgentFactory.TierArms)
         {
@@ -404,9 +404,9 @@ public static class Program
                 string? refusal = null;
                 foreach (string suspect in new[] { arm, below })
                 {
-                    if (unreliable.TryGetValue(suspect, out LlmCallTally? tally))
+                    if (unreliable.TryGetValue((suspect, split), out LlmCallTally? tally))
                     {
-                        refusal = string.Create(CultureInfo.InvariantCulture, $"{suspect} is not a model result ({tally.Failed} of {tally.Answered + tally.Failed} model calls failed, {tally.FailureRate:P1}, above {maxLlmFailureRate:0.##}); its evidence is refused");
+                        refusal = string.Create(CultureInfo.InvariantCulture, $"{suspect} is not a model result on {split} maps ({tally.Failed} of {tally.Answered + tally.Failed} model calls failed, {tally.FailureRate:P1}, above {maxLlmFailureRate:0.##}); its evidence is refused");
                         break;
                     }
                 }

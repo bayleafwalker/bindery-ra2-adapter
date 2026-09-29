@@ -319,7 +319,7 @@ public static class MatchRunner
             ServedBy = new SortedDictionary<string, int>(stats.ServedBy, StringComparer.Ordinal),
             UnpricedRequests = stats.UnpricedRequests,
             DistilledDecisions = stats.DistilledDecisions,
-            LlmCalls = stats.Labels.Contains("llm-fake") || stats.LlmAnswered + stats.LlmFailed == 0 ? null : new LlmCallTally(stats.LlmAnswered, stats.LlmFailed),
+            LlmCalls = !stats.HasModel || stats.Labels.Contains("llm-fake") ? null : new LlmCallTally(stats.LlmAnswered, stats.LlmFailed),
             DistilledEscalations = stats.DistilledEscalations,
             ShadowCompared = stats.ShadowCompared,
             ShadowAgreed = stats.ShadowAgreed,

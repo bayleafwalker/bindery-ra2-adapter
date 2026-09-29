@@ -16,10 +16,11 @@ public sealed record LlmCallTally(int Answered, int Failed)
 
     /// <summary>
     /// True for a failure code of the Claude strategist's own failure record. Cancellations are the strategist
-    /// abandoning a request it no longer needs, not a failed delivery.
+    /// abandoning a request it no longer needs, and the <c>claude.refine_*</c> codes are refine mode declining a
+    /// request it has no plan to refine (a no-op by design), not failed deliveries.
     /// </summary>
     public static bool IsDeliveryFailure(string? code) =>
-        !string.IsNullOrEmpty(code) && code != ClaudeFailureCodes.Cancelled;
+        !string.IsNullOrEmpty(code) && code != ClaudeFailureCodes.Cancelled && !code.StartsWith("claude.refine_", StringComparison.Ordinal);
 
     /// <summary>The tally pooled over an arm's matches (matches without one, such as fake or non-LLM, add nothing).</summary>
     public static LlmCallTally? Pool(IEnumerable<MatchRecord> matches)
@@ -31,16 +32,19 @@ public sealed record LlmCallTally(int Answered, int Failed)
     /// <summary>True when the pooled failure rate is above <paramref name="maxRate"/>.</summary>
     public bool Exceeds(double maxRate) => FailureRate > maxRate;
 
-    /// <summary>Arms whose pooled failure rate exceeds <paramref name="maxRate"/>, with the tally.</summary>
-    public static IReadOnlyDictionary<string, LlmCallTally> Unreliable(IEnumerable<MatchRecord> matches, double maxRate) =>
-        matches.GroupBy(static m => m.Arm, StringComparer.Ordinal)
-            .Select(static g => (Arm: g.Key, Tally: Pool(g)))
+    /// <summary>
+    /// The (arm, split) cells whose pooled failure rate exceeds <paramref name="maxRate"/>, with the tally. The
+    /// threshold applies per split so a failing training split cannot taint a clean held-out one, or the reverse.
+    /// </summary>
+    public static IReadOnlyDictionary<(string Arm, string Split), LlmCallTally> Unreliable(IEnumerable<MatchRecord> matches, double maxRate) =>
+        matches.GroupBy(static m => (m.Arm, m.Split))
+            .Select(static g => (g.Key, Tally: Pool(g)))
             .Where(x => x.Tally is { } t && t.Exceeds(maxRate))
-            .ToDictionary(static x => x.Arm, static x => x.Tally!, StringComparer.Ordinal);
+            .ToDictionary(static x => x.Key, static x => x.Tally!);
 
     public string Describe() =>
         string.Create(CultureInfo.InvariantCulture, $"{Answered} answered, {Failed} failed ({FailureRate:P1} failure rate)");
 
-    public string Warning(string arm, double maxRate) =>
-        string.Create(CultureInfo.InvariantCulture, $"Warning: {arm}: not a model result. {Failed} of {Answered + Failed} model calls failed ({FailureRate:P1}, above --max-llm-failure-rate {maxRate:0.##}); the selector fallback played the gaps.");
+    public string Warning(string arm, string split, double maxRate) =>
+        string.Create(CultureInfo.InvariantCulture, $"Warning: {arm} ({split} maps): not a model result. {Failed} of {Answered + Failed} model calls failed ({FailureRate:P1}, above --max-llm-failure-rate {maxRate:0.##}); the selector fallback played the gaps.");
 }

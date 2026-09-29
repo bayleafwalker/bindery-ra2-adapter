@@ -2,6 +2,9 @@
 using System.Text.Json;
 using Bindery.Ra2.Bot.Arena;
 using Bindery.Ra2.Bot.Claude;
+using Bindery.Ra2.Bot.Playbooks;
+using Bindery.Ra2.Bot.Rules;
+using Bindery.Ra2.Bot.Sim;
 using Xunit;
 
 namespace Bindery.Ra2.Bot.Tests.Arena;
@@ -14,7 +17,7 @@ public sealed class LlmFailureRateTests
 {
     private static DecisionRecord Rec(string kind, object data) => new(kind, new GameTime(0), 1, JsonSerializer.SerializeToElement(data));
 
-    private static DecisionRecord Answered() => Rec(DecisionRecordKinds.Proposal, new { role = "Primary" });
+    private static DecisionRecord Answered(string source = "Llm") => Rec(DecisionRecordKinds.Proposal, new { role = "Primary", intent = new { source } });
 
     private static DecisionRecord FailedCall(string code) => Rec(DecisionRecordKinds.ProposalFailed, new { strategist = "s", code, detail = "d" });
 
@@ -32,8 +35,8 @@ public sealed class LlmFailureRateTests
         Faction.Allied, 10, 0, 0, [], 1, 0, 0, new Dictionary<string, int>(), 0, 0, 0, 0, 0.1, 1000, 500, 500, 0, 0, null, 0, 5000, 10, 3, 2000, null, [])
     { LlmCalls = calls };
 
-    private static MatchRecord M(string arm, int seed, int? winner, LlmCallTally? calls) =>
-        new(arm, "live-rush", "open-steppe", "heldout", seed, winner, "elimination", 300,
+    private static MatchRecord M(string arm, int seed, int? winner, LlmCallTally? calls, string split = "heldout") =>
+        new(arm, "live-rush", "open-steppe", split, seed, winner, "elimination", 300,
             new Dictionary<string, PlayerMatchMetrics> { ["arm"] = P(calls), ["opponent"] = P(null) });
 
     [Fact]
@@ -46,11 +49,68 @@ public sealed class LlmFailureRateTests
             FailedCall("claude.parse_failed"),
             Arbitration("superseded"), Arbitration("no_opinion"),
             Rec(DecisionRecordKinds.Proposal, new { role = "Shadow" }),
-            FailedCall("claude.cancelled"));
+            FailedCall("claude.cancelled"),
+            FailedCall("claude.refine_no_active_intent"), FailedCall("claude.refine_not_strategic_plan"), FailedCall("claude.refine_playbook_switch"));
 
         Assert.Equal(3, tally.Answered);
         Assert.Equal(3, tally.Failed);
         Assert.Equal(0.5, tally.FailureRate);
+    }
+
+    [Fact]
+    public void Only_model_intents_are_answers_not_selector_distilled_or_fallback_proposals()
+    {
+        LlmCallTally tally = Count(Answered("Selector"), Answered("Bandit"), Answered("Distilled"), Answered("Fallback"), Answered("Llm"),
+            Rec(DecisionRecordKinds.ShadowProposal, new { role = "Shadow", intent = new { source = "Llm" } }),
+            FailedCall("claude.timeout"));
+
+        Assert.Equal(new LlmCallTally(2, 1), tally);
+    }
+
+    private static MatchRecord PlayReal(ArmSpec arm, ArenaRunContext context)
+    {
+        IRulesDatabase rules = RulesDatabase.LoadEmbeddedFixture();
+        BotAgentFactory factory = new(rules, PlaybookLibrary.LoadDefault(), context);
+        return MatchRunner.Run(arm, "rush", SimMaps.TwinValley, "training", 1, 60, rules, factory);
+    }
+
+    [Theory]
+    [InlineData("selector")]
+    [InlineData("bandit")]
+    public void Arms_without_a_model_strategist_have_no_tally_through_the_real_arena_path(string arm)
+    {
+        MatchRecord match = PlayReal(new ArmSpec(arm, false, true), new ArenaRunContext(llmFake: true, llmLatencySeconds: null));
+
+        Assert.Null(match.Players["arm"].LlmCalls);
+    }
+
+    [Fact]
+    public void A_fake_client_arm_has_no_tally_because_it_is_not_a_model()
+    {
+        MatchRecord match = PlayReal(new ArmSpec("llm", false, true), new ArenaRunContext(llmFake: true, llmLatencySeconds: null));
+
+        Assert.Null(match.Players["arm"].LlmCalls);
+    }
+
+    [Theory]
+    [InlineData("llm")]
+    [InlineData("llm-shadow")]
+    [InlineData("distilled")]
+    public void A_live_arm_whose_every_call_fails_is_tallied_and_labelled_end_to_end(string arm)
+    {
+        // No credential: every request fails as unauthorized, the same path a run of timeouts takes.
+        ArenaRunContext context = new(llmFake: false, llmLatencySeconds: 3);
+        context.MarkLlmSkipped("test: no credential");
+
+        MatchRecord match = PlayReal(new ArmSpec(arm, false, false), context);
+
+        LlmCallTally tally = Assert.IsType<LlmCallTally>(match.Players["arm"].LlmCalls);
+        Assert.True(tally.Failed > 0, arm);
+        Assert.Equal(0, tally.Answered);
+        Assert.Equal(1.0, tally.FailureRate);
+        string report = ReportBuilder.Build([match], [], [], CliOptions.Parse(["run", "--arms", arm]), "test");
+        Assert.Contains($"| {arm} (not a model result) | training |", report, StringComparison.Ordinal);
+        Assert.Contains($"{arm} on training maps: not a model result", report, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -80,14 +140,14 @@ public sealed class LlmFailureRateTests
         CliOptions options = CliOptions.Parse(["run", "--arms", "llm"]);
 
         string report = ReportBuilder.Build(matches, [], [], options, "test");
-        IReadOnlyDictionary<string, LlmCallTally> unreliable = LlmCallTally.Unreliable(matches, options.MaxLlmFailureRate);
+        IReadOnlyDictionary<(string Arm, string Split), LlmCallTally> unreliable = LlmCallTally.Unreliable(matches, options.MaxLlmFailureRate);
 
         Assert.Contains("| llm (not a model result) | heldout |", report, StringComparison.Ordinal);
         Assert.Contains("3 answered, 142 failed (0.979)", report, StringComparison.Ordinal);
-        Assert.Contains("**llm: not a model result.**", report, StringComparison.Ordinal);
+        Assert.Contains("**llm on heldout maps: not a model result.**", report, StringComparison.Ordinal);
         Assert.Equal(4, matches.Count);
         LlmCallTally tally = Assert.Single(unreliable).Value;
-        Assert.Contains("142 of 145 model calls failed", tally.Warning("llm", 0.2), StringComparison.Ordinal);
+        Assert.Contains("142 of 145 model calls failed", tally.Warning("llm", "heldout", 0.2), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -114,6 +174,27 @@ public sealed class LlmFailureRateTests
         Assert.Empty(LlmCallTally.Unreliable(matches, 0.2));
         Assert.DoesNotContain("not a model result", report, StringComparison.Ordinal);
         Assert.Contains("120 answered, 8 failed (0.063)", report, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_threshold_applies_per_split_for_labels_and_adoption()
+    {
+        LlmCallTally bad = new(3, 141);
+        List<MatchRecord> matches =
+        [
+            .. Enumerable.Range(1, 40).Select(s => M("llm-t1", s, s <= 30 ? 1 : 0, new LlmCallTally(30, 1))),
+            .. Enumerable.Range(1, 40).Select(s => M("llm-t2", s, 0, new LlmCallTally(30, 1))),
+            .. Enumerable.Range(1, 40).Select(s => M("llm-t2", s, 0, bad, "training")),
+        ];
+
+        (string Arm, string Split) only = Assert.Single(LlmCallTally.Unreliable(matches, 0.2)).Key;
+        VocabularyAdoption adoption = Program.TierAdoption(matches, live: true, "2026-09-29");
+        string report = ReportBuilder.Build(matches, [], [], CliOptions.Parse(["run", "--arms", "llm-t1,llm-t2"]), "test");
+
+        Assert.Equal(("llm-t2", "training"), only);
+        Assert.Equal(VocabularyTier.ObjectivesAndRegions, adoption.AdoptedTier);
+        Assert.Contains("| llm-t2 (not a model result) | training |", report, StringComparison.Ordinal);
+        Assert.Contains("| llm-t2 | heldout |", report, StringComparison.Ordinal);
     }
 
     [Fact]
