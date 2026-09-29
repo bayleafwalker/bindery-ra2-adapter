@@ -18,3 +18,11 @@ Decision rule on the Soviet matches' Primary proposals:
   build is perception / attack gate, and no played LLM test follows.
 - otherwise: run the 20-cell test.
 Also reported, not decided on: outcomes against the selector on the same 4 cells, latency, validity.
+
+## Amendment before any scored run (2026-09-29 ~18:00)
+The first attempt through `claude_proxy.py` (Opus 5.5 on the operator's subscription) stopped at 16:22 when the
+subscription's session limit was reached, after about 63 valid calls (the Allied match plus two Soviet decisions),
+with no match scored. It is kept as `attempt-1-subscription/` and not counted. The rerun uses the arena's own
+Anthropic client (no `--llm-endpoint`) with an API key, so the model is the strategist's production default
+`claude-opus-5` (`ClaudeStrategistOptions.DefaultStrategicModel`), the model that actually plays. Same arm, cells,
+and decision rule as above.

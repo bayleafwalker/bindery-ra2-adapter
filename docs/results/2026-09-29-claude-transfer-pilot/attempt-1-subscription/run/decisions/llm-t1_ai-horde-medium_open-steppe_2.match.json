@@ -1,0 +1,39 @@
+{
+  "schema": "bindery.arena.match/v1",
+  "arm": {
+    "name": "llm-t1",
+    "oracle": false,
+    "llmFake": false,
+    "personality": null,
+    "usesLlm": true
+  },
+  "opponent": "ai-horde:medium",
+  "map": "open-steppe",
+  "split": "heldout",
+  "seed": 2,
+  "maxSeconds": 1200,
+  "benchmark": {
+    "name": "contested",
+    "opponentIncomeMultiplier": 1,
+    "opponentStartingCredits": null,
+    "combatNoise": 0.25,
+    "alliedIncomeMultiplier": 1,
+    "alliedStartingCredits": 20000,
+    "defaultOpponents": [
+      "live-balanced",
+      "live-rush",
+      "live-tech",
+      "live-turtle",
+      "live-harass",
+      "ai-horde",
+      "ai-armor"
+    ]
+  },
+  "llmLatencySeconds": null,
+  "distillSource": null,
+  "recordedHash": "8a87421a50da8e60bdc4705de5301ad6be525df960abbc5314498dafae5325f1",
+  "winner": 0,
+  "reason": "elimination",
+  "durationSeconds": 336,
+  "rulesFile": null
+}
