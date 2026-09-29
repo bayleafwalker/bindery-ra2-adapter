@@ -453,7 +453,7 @@ public static class Program
                 MatchManifest.CurrentSchema, job.Arm, job.Opponent, job.Map.Map.MapId, job.Split, job.Seed, options.MaxSeconds,
                 options.Benchmark, options.LlmLatencySeconds, job.Arm.Name == "distilled" ? context.DistillSource : null,
                 played.Players["arm"].DecisionLogHash, played.Winner, played.Reason, played.DurationSeconds,
-                options.RulesPath is null ? null : Path.GetFullPath(options.RulesPath), played);
+                options.RulesPath is null ? null : Path.GetFullPath(options.RulesPath), played, ArenaScheduling.Fingerprint(options));
             MatchManifest.Write(Path.Combine(options.OutDir, "decisions"), manifest, captured);
         }
         return played;

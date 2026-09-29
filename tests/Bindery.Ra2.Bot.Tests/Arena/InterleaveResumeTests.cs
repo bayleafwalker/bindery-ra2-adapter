@@ -167,6 +167,54 @@ public sealed class InterleaveResumeTests : IDisposable
     }
 
     [Fact]
+    public void Resume_refuses_a_manifest_whose_recorded_code_identity_differs()
+    {
+        string dir = Run("code", "selector");
+        string stem = "selector_ai-rush_twin-valley_1";
+        MatchManifest manifest = MatchManifest.Load(Manifest(dir, stem));
+        Dictionary<string, string> fp = new(manifest.Fingerprint!) { ["code"] = "0000-another-build" };
+        File.WriteAllText(Manifest(dir, stem), (manifest with { Fingerprint = fp }).ToJson());
+
+        (int code, string error) = RunCapturingError(Args("selector", dir, "--resume"));
+
+        Assert.Equal(1, code);
+        Assert.Contains("fingerprint.code recorded 0000-another-build", error);
+    }
+
+    [Theory]
+    [InlineData("knobs", "--knob", "SeenAttackForceRatio=0.5")]
+    [InlineData("llmModel", "--llm-model", "other-model")]
+    [InlineData("llmLatency", "--llm-latency", "7")]
+    [InlineData("rules", "--rules", "@rules")]
+    [InlineData("llmEndpoint", "--llm-endpoint", "http://user:secret@127.0.0.1:1/v1")]
+    public void Resume_refuses_a_run_whose_fingerprint_differs(string field, string flag, string value)
+    {
+        string dir = Run("fp-" + field, "selector");
+        if (value == "@rules")
+        {
+            value = Path.Combine(root, "rules.json");
+            File.WriteAllText(value, Bindery.Ra2.Bot.Rules.RulesDatabase.EmbeddedFixtureJson(Bindery.Ra2.Bot.Rules.RulesDatabase.FixtureFile) + "\n ");
+        }
+
+        (int code, string error) = RunCapturingError(Args("selector", dir, "--resume", flag, value));
+
+        Assert.Equal(1, code);
+        Assert.Contains($"fingerprint.{field} recorded", error);
+        Assert.DoesNotContain("secret", error);
+    }
+
+    [Fact]
+    public void The_fingerprint_is_recorded_without_credentials_and_is_stable_across_runs()
+    {
+        string dir = Run("fp-stable", "selector");
+        MatchManifest manifest = MatchManifest.Load(Manifest(dir, "selector_ai-rush_twin-valley_1"));
+
+        Assert.Equal(["code", "dataset", "knobs", "llmEndpoint", "llmLatency", "llmModel", "rules"], manifest.Fingerprint!.Keys.OrderBy(static k => k, StringComparer.Ordinal));
+        Assert.Equal(64, manifest.Fingerprint["rules"].Length);
+        Assert.Equal(ArenaScheduling.CodeIdentity(), manifest.Fingerprint["code"]);
+    }
+
+    [Fact]
     public void Resume_refuses_a_different_max_seconds_and_a_manifest_without_a_record()
     {
         string dir = Run("maxsec", "selector");

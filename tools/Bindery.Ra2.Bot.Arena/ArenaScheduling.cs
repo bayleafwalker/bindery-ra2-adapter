@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Globalization;
+using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using Bindery.Ra2.Bot.Claude;
+using Bindery.Ra2.Bot.Rules;
 using Bindery.Ra2.Bot.Runtime;
 using Bindery.Ra2.Bot.Sim;
 
@@ -37,6 +43,38 @@ public static class ArenaScheduling
         return order;
     }
 
+    private static readonly ConditionalWeakTable<CliOptions, IReadOnlyDictionary<string, string>> Fingerprints = new();
+
+    /// <summary>
+    /// What besides the job itself decides a match's result, recorded with each match and compared by <c>--resume</c> so a
+    /// resumed run cannot silently mix runs: code identity (MVIDs of the arena, bot, sim and Claude assemblies), SHA-256 of the
+    /// rules (file contents, else the embedded fixture), the arm knobs, LLM model, endpoint (host and path only, no credentials)
+    /// and latency, and the distillation dataset's SHA-256.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> Fingerprint(CliOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return Fingerprints.GetValue(options, static o => new SortedDictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["code"] = CodeIdentity(),
+            ["rules"] = o.RulesPath is null ? Sha(Encoding.UTF8.GetBytes(RulesDatabase.EmbeddedFixtureJson(RulesDatabase.FixtureFile))) : Sha(File.ReadAllBytes(o.RulesPath)),
+            ["knobs"] = string.Join(",", o.ArmKnobs.OrderBy(static k => k.Key, StringComparer.Ordinal).Select(static k => string.Create(CultureInfo.InvariantCulture, $"{k.Key}={k.Value:R}"))),
+            ["llmModel"] = o.LlmModel,
+            ["llmEndpoint"] = o.LlmEndpoint is null ? "" : Uri.TryCreate(o.LlmEndpoint, UriKind.Absolute, out Uri? u) ? $"{u.Scheme}://{u.Host}:{u.Port}{u.AbsolutePath}" : "(unparsed)",
+            ["llmLatency"] = o.LlmLatencySeconds is { } l ? l.ToString("R", CultureInfo.InvariantCulture) : "",
+            ["dataset"] = o.Dataset is null ? "" : Sha(File.ReadAllBytes(o.Dataset)),
+        });
+    }
+
+    private static string Sha(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+
+    /// <summary>The MVIDs of the assemblies that decide a match, hashed: the same source built the same way gives the same identity.</summary>
+    public static string CodeIdentity()
+    {
+        Type[] anchors = [typeof(Program), typeof(RulesDatabase), typeof(Bindery.Ra2.Bot.Sim.SkirmishSimulation), typeof(AnthropicMessageClient)];
+        return Sha(Encoding.UTF8.GetBytes(string.Join(";", anchors.Select(static t => t.Assembly.ManifestModule.ModuleVersionId.ToString("N")))));
+    }
+
     private static string Stem(ArenaJob job) => MatchManifest.Stem(job.Arm, job.Opponent, job.Map.Map.MapId, job.Seed);
 
     /// <summary>The manifest path of a job's match under <paramref name="outDir"/>.</summary>
@@ -72,6 +110,18 @@ public static class ArenaScheduling
         Check("maxSeconds", m.MaxSeconds, options.MaxSeconds);
         // BenchmarkSettings holds a list (reference equality), so compare the serialised form.
         Check("benchmark", JsonSerializer.Serialize(m.Benchmark, BotJson.Options), JsonSerializer.Serialize(options.Benchmark, BotJson.Options));
+        if (m.Fingerprint is null)
+        {
+            diffs.Add("the manifest holds no run fingerprint (written before it existed)");
+        }
+        else
+        {
+            foreach ((string key, string expected) in Fingerprint(options))
+            {
+                Check($"fingerprint.{key}", m.Fingerprint.GetValueOrDefault(key), expected);
+            }
+        }
+        if (job.Arm.Name == "distilled" && options.Dataset is not null) Check("distillSource", m.DistillSource, Path.GetFileName(options.Dataset));
         if (m.Record is null)
         {
             diffs.Add("the manifest holds no match record (written before --resume existed)");

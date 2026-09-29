@@ -61,6 +61,7 @@ public sealed record CliOptions(
     /// <summary>
     /// <c>--resume</c>: matches whose <c>decisions/&lt;match&gt;.match.json</c> already sits in <c>--out</c> are loaded, not replayed
     /// (refused when the record disagrees with the job); only missing matches run.
+    /// A complete bandit arm is loaded without being re-trained (its leakage probe may differ); an LLM arm skipped after all-failed first-match proposals keeps its record, so it stays skipped until that record is deleted.
     /// </summary>
     public bool Resume { get; init; }
 

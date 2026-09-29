@@ -11,6 +11,7 @@ namespace Bindery.Ra2.Bot.Arena;
 /// </summary>
 /// <param name="RecordedHash">The arm's decision log hash when the match was played (<see cref="DecisionLogCodec.Hash"/>).</param>
 /// <param name="Record">The match's full result record, so <c>arena run --resume</c> can reuse the match without replaying it; null in manifests written before resume existed.</param>
+/// <param name="Fingerprint">Code identity, rules hash, knobs, LLM settings and dataset hash of the run that played the match (<see cref="ArenaScheduling.Fingerprint"/>); <c>--resume</c> refuses a run that differs.</param>
 /// <param name="RulesFile">The <c>--rules</c> file the match was played on (full path), or null for the embedded fixture; replay loads it again.</param>
 public sealed record MatchManifest(
     string Schema,
@@ -28,7 +29,8 @@ public sealed record MatchManifest(
     string Reason,
     double DurationSeconds,
     string? RulesFile = null,
-    MatchRecord? Record = null)
+    MatchRecord? Record = null,
+    IReadOnlyDictionary<string, string>? Fingerprint = null)
 {
     public const string CurrentSchema = "bindery.arena.match/v1";
 

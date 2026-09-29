@@ -186,8 +186,13 @@ LLM arm still run per arm, after the interleaved ones; default order unchanged).
 `--resume` reruns an interrupted or extended run into the same `--out`: matches whose
 `.match.json` is already there are loaded, not replayed, and only the missing ones run;
 a record that disagrees with its job (arm, opponent, map, split, seed, benchmark,
-`--max-seconds`) is refused with an error, a partly recorded `bandit` arm is refused
-(it learns across matches in order), and `--resume` cannot be combined with
+`--max-seconds`, and a run fingerprint: code identity, rules hash, `--knob`s, LLM model,
+endpoint and latency, `--dataset` hash) is refused with an error naming the differing field.
+A partly recorded `bandit` arm is refused (it learns across matches in order); a complete
+one is loaded without being re-trained, so its leakage probe (which runs on the fresh, untrained
+learner) may differ from the original run's. An LLM arm skipped because every first-match
+proposal failed leaves its record on disk, so resuming after fixing credentials skips it again
+until those records are deleted. `--resume` cannot be combined with
 `--no-decisions`. `results.json` and `report.md` cover loaded and new matches alike.
 To re-run a
 recorded match from its log, LLM answers included, without a model:
