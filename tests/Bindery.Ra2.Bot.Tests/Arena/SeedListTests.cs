@@ -23,6 +23,7 @@ public sealed class SeedListTests : IDisposable
         Assert.Throws<ArgumentException>(() => CliOptions.Parse(["run", "--seed-list", "2,2"]));
         Assert.Throws<ArgumentException>(() => CliOptions.Parse(["run", "--seed-list", "0"]));
         Assert.Throws<ArgumentException>(() => CliOptions.Parse(["run", "--seed-list", ","]));
+        Assert.Throws<ArgumentException>(() => CliOptions.Parse(["run", "--seed-list", "2,a"]));
         Assert.Contains("--seed-list", CliOptions.Usage);
     }
 
@@ -36,5 +37,17 @@ public sealed class SeedListTests : IDisposable
         string[] seeds = [.. Directory.GetFiles(Path.Combine(dir, "decisions"), "*.match.json")
             .Select(static f => Path.GetFileName(f).Split('_')[^1].Split('.')[0]).Distinct().Order()];
         Assert.Equal(["2", "4"], seeds);
+    }
+
+    [Fact]
+    public void Resume_refuses_a_different_seed_list_and_accepts_the_same_one()
+    {
+        string dir = Path.Combine(root, "resume");
+        string[] Args(params string[] extra) => ["run", "--arms", "selector", "--maps", "training", "--opponents", "ai-rush", "--seeds", "4",
+            "--max-seconds", "60", "--out", dir, .. extra];
+        Assert.Equal(0, Program.Main(Args("--seed-list", "2,4")));
+
+        Assert.Equal(0, Program.Main(Args("--seed-list", "2,4", "--resume")));
+        Assert.NotEqual(0, Program.Main(Args("--seed-list", "4,2", "--resume")));
     }
 }

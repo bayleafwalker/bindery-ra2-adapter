@@ -49,7 +49,7 @@ public static class ArenaScheduling
     /// What besides the job itself decides a match's result, recorded with each match and compared by <c>--resume</c> so a
     /// resumed run cannot silently mix runs: code identity (MVIDs of the arena, bot, sim and Claude assemblies), SHA-256 of the
     /// rules (file contents, else the embedded fixture), the arm knobs, LLM model, endpoint (host and path only, no credentials)
-    /// and latency, and the distillation dataset's SHA-256.
+    /// and latency, and the distillation dataset's SHA-256, and the <c>--seed-list</c>.
     /// </summary>
     public static IReadOnlyDictionary<string, string> Fingerprint(CliOptions options)
     {
@@ -63,6 +63,9 @@ public static class ArenaScheduling
             ["llmEndpoint"] = o.LlmEndpoint is null ? "" : Uri.TryCreate(o.LlmEndpoint, UriKind.Absolute, out Uri? u) ? $"{u.Scheme}://{u.Host}:{u.Port}{u.AbsolutePath}" : "(unparsed)",
             ["llmLatency"] = o.LlmLatencySeconds is { } l ? l.ToString("R", CultureInfo.InvariantCulture) : "",
             ["dataset"] = o.Dataset is null ? "" : Sha(File.ReadAllBytes(o.Dataset)),
+            // --seed-list changes which matches a learning arm has seen before a given one; empty for 1..--seeds, so
+            // extending --seeds still resumes.
+            ["seedList"] = o.SeedList is null ? "" : string.Join(",", o.SeedList),
         });
     }
 
@@ -118,7 +121,7 @@ public static class ArenaScheduling
         {
             foreach ((string key, string expected) in Fingerprint(options))
             {
-                Check($"fingerprint.{key}", m.Fingerprint.GetValueOrDefault(key), expected);
+                Check($"fingerprint.{key}", m.Fingerprint.GetValueOrDefault(key, key == "seedList" ? "" : null!), expected);
             }
         }
         if (job.Arm.Name == "distilled" && options.Dataset is not null) Check("distillSource", m.DistillSource, Path.GetFileName(options.Dataset));

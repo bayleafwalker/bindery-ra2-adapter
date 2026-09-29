@@ -204,7 +204,8 @@ public sealed record CliOptions(
                 case "--interleave": interleave = true; break;
                 case "--resume": resume = true; break;
                 case "--seed-list":
-                    seedList = [.. Next(args, ref i).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(static v => int.Parse(v, CultureInfo.InvariantCulture))];
+                    string[] listed = Next(args, ref i).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    seedList = [.. listed.Select(static v => int.TryParse(v, NumberStyles.None, CultureInfo.InvariantCulture, out int seed) ? seed : 0)];
                     if (seedList.Count == 0 || seedList.Any(static v => v < 1) || seedList.Distinct().Count() != seedList.Count) throw new ArgumentException("--seed-list takes distinct positive seeds, e.g. 2,4.");
                     break;
                 case "--write-adoption": writeAdoption = Next(args, ref i); break;

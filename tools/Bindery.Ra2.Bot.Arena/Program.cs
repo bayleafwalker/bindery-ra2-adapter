@@ -391,7 +391,7 @@ public static class Program
     private static DecisionDataset TeacherDataset(ArmSpec teacher, CliOptions options, IRulesDatabase rules, BotAgentFactory factory)
     {
         List<(ArmSpec Arm, string Opponent, SimMap Map, string Split, int Seed)> jobs =
-            Jobs(teacher, OpponentSets.TeacherOpponents(options.Opponents), options.Seeds, [.. SimMaps.Training.Select(static m => (m, "training"))]);
+            Jobs(teacher, OpponentSets.TeacherOpponents(options.Opponents), options.Seeds, [.. SimMaps.Training.Select(static m => (m, "training"))], options.SeedList);
         ConcurrentDictionary<int, IReadOnlyList<DecisionRecord>> logs = new();
         if (options.LlmFake)
         {
