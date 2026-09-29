@@ -66,6 +66,9 @@ public sealed class ArenaRunContext
     /// </summary>
     public bool BanditLearning { get; set; } = true;
 
+    /// <summary>Matches already finished by <c>--interleave</c>'s scheduling phase, keyed by <c>ArenaJob.MatchId</c>; the per-arm loop takes them from here.</summary>
+    public System.Collections.Concurrent.ConcurrentDictionary<string, CompletedMatch> Completed { get; } = new(StringComparer.Ordinal);
+
     /// <summary>Set when a live LLM arm cannot run; every LLM-arm match is then skipped with this reason.</summary>
     public string? LlmSkipReason { get; set; }
 

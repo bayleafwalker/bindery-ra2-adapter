@@ -10,6 +10,7 @@ namespace Bindery.Ra2.Bot.Arena;
 /// <c>decisions/&lt;match&gt;.match.json</c> next to the log <c>decisions/&lt;match&gt;.ndjson</c>.
 /// </summary>
 /// <param name="RecordedHash">The arm's decision log hash when the match was played (<see cref="DecisionLogCodec.Hash"/>).</param>
+/// <param name="Record">The match's full result record, so <c>arena run --resume</c> can reuse the match without replaying it; null in manifests written before resume existed.</param>
 /// <param name="RulesFile">The <c>--rules</c> file the match was played on (full path), or null for the embedded fixture; replay loads it again.</param>
 public sealed record MatchManifest(
     string Schema,
@@ -26,7 +27,8 @@ public sealed record MatchManifest(
     int? Winner,
     string Reason,
     double DurationSeconds,
-    string? RulesFile = null)
+    string? RulesFile = null,
+    MatchRecord? Record = null)
 {
     public const string CurrentSchema = "bindery.arena.match/v1";
 
@@ -59,7 +61,10 @@ public sealed record MatchManifest(
         {
             foreach (DecisionRecord record in log) writer.Write(record);
         }
-        File.WriteAllText(PathFor(ndjson), manifest.ToJson() + "\n");
+        // Temp file then move: the manifest marks the match finished for --resume, so it must never be half written.
+        string manifestPath = PathFor(ndjson);
+        File.WriteAllText(manifestPath + ".tmp", manifest.ToJson() + "\n");
+        File.Move(manifestPath + ".tmp", manifestPath, overwrite: true);
         return ndjson;
     }
 }

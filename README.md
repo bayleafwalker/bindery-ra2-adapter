@@ -178,7 +178,18 @@ report's Distillation table shows its escalation rate next to cost per match. Th
 `dataset-<arm>.ndjson` of training-map decisions per arm, and
 `decisions/<match>.ndjson` (the arm's full decision log, about 0.2–0.5 MB per
 match; `--no-decisions` turns it off) with `decisions/<match>.match.json` (arm,
-opponent, map, seed, match length, benchmark and LLM latency). To re-run a
+opponent, map, seed, match length, benchmark, LLM latency and the match's result
+record), each written the moment that match finishes. `--interleave` plays the
+arms' matches cell by cell (opponent, map, seed) across arms instead of one arm after
+another, so paired comparisons fill in as the run goes (the distilled arm and a live
+LLM arm still run per arm, after the interleaved ones; default order unchanged).
+`--resume` reruns an interrupted or extended run into the same `--out`: matches whose
+`.match.json` is already there are loaded, not replayed, and only the missing ones run;
+a record that disagrees with its job (arm, opponent, map, split, seed, benchmark,
+`--max-seconds`) is refused with an error, a partly recorded `bandit` arm is refused
+(it learns across matches in order), and `--resume` cannot be combined with
+`--no-decisions`. `results.json` and `report.md` cover loaded and new matches alike.
+To re-run a
 recorded match from its log, LLM answers included, without a model:
 
 ```bash
