@@ -82,10 +82,11 @@ $want = '461A55939598D86E'
 $sm = Join-Path $app 'spawnmap.ini'
 if (-not (Test-Path $sm) -or -not (Get-FileHash $sm).Hash.StartsWith($want)) { Copy-Item -Force "$lab\spawnmap-brutal.ini" $sm; "staged spawnmap.ini" }
 
-# Per-run telemetry: move the previous record/log aside so counts belong to this run.
+# Per-run telemetry: move the previous record/logs aside so counts belong to this run.
+# syringe.log is only written when Syringe launches, so a game that never starts must not inherit the last run's.
 if ($RunId) {
   $pre = "$lab\runs\$RunId\pre-$side"; New-Item -ItemType Directory -Force $pre | Out-Null
-  foreach ($f in 'ra2yrcpp.record', 'ra2yrcpp.log', 'DDrawCompat-gamemd.log') { $p = Join-Path $app $f; if (Test-Path $p) { Move-Item -Force $p $pre } }
+  foreach ($f in 'ra2yrcpp.record', 'ra2yrcpp.log', 'DDrawCompat-gamemd.log', 'syringe.log') { $p = Join-Path $app $f; if (Test-Path $p) { Move-Item -Force $p $pre } }
 }
 foreach ($f in 'libra2yrcpp.dll', 'zlib1.dll', 'ra2yrcpp.json', 'spawnmap.ini', 'gamemd.exe') {
   "{0,-16} {1}" -f $f, (Get-FileHash (Join-Path $app $f)).Hash.Substring(0, 16)
