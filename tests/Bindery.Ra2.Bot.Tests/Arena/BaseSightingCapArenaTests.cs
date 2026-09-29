@@ -40,7 +40,11 @@ public sealed partial class BaseSightingCapArenaTests
         List<double> capped = BaseSeenWeights(0.5);
         Assert.NotEmpty(capped);
         Assert.Contains(capped, static w => w <= 0.5);
-        // Without the knob a fresh base sighting gives full weight, so the cap is what changed it.
-        Assert.Contains(BaseSeenWeights(null), static w => w > 0.5);
+        // Notes cannot show "no army sighting", so compare with the uncapped run of the same match: it has notes with
+        // w > 0.5 (a fresh base sighting gives full weight) and the capped run's excess over 0.5 comes only from an
+        // army sighting, so it has strictly fewer of them.
+        List<double> uncapped = BaseSeenWeights(1.0);
+        Assert.Contains(uncapped, static w => w > 0.5);
+        Assert.True(capped.Count(static w => w > 0.5) < uncapped.Count(static w => w > 0.5));
     }
 }
