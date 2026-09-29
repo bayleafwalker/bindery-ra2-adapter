@@ -112,11 +112,22 @@ public sealed class PhaseTracker
     {
         if (phases.Count == 0 || Index == 0) return null;
         if (!string.Equals(challenger.PlaybookId, incumbent.PlaybookId, StringComparison.Ordinal)) return null;
+        if (challenger.Posture != Effective(incumbent).Posture) return null;
+        return FoldEcho(challenger, incumbent);
+    }
+
+    /// <summary>
+    /// The field-wise fold of <see cref="FoldMirror"/> without its posture test, for a same-playbook proposal already
+    /// known to be a renewal: a budget-only or attack-only phase can be echoed with the incumbent's own posture, and
+    /// the echoed field must still not become the intent's own. Unchanged when no later phase is in force.
+    /// </summary>
+    public StrategicIntent FoldEcho(StrategicIntent challenger, StrategicIntent incumbent)
+    {
+        if (phases.Count == 0 || Index == 0) return challenger;
         StrategicIntent effective = Effective(incumbent);
-        if (challenger.Posture != effective.Posture) return null;
         return challenger with
         {
-            Posture = incumbent.Posture,
+            Posture = challenger.Posture == effective.Posture ? incumbent.Posture : challenger.Posture,
             Budget = challenger.Budget == effective.Budget ? incumbent.Budget : challenger.Budget,
             Composition = challenger.Composition.SequenceEqual(effective.Composition) ? incumbent.Composition : challenger.Composition,
             AttackConditions = challenger.AttackConditions.SequenceEqual(effective.AttackConditions) ? incumbent.AttackConditions : challenger.AttackConditions,

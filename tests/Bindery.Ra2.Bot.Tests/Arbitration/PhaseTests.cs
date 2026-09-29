@@ -320,6 +320,42 @@ public sealed class PhaseTests
     }
 
     [Fact]
+    public void Echoing_a_budget_only_phase_does_not_leak_its_budget_into_a_later_phase_that_sets_none()
+    {
+        Playbook budgetOnly = ExpandTechAttack() with
+        {
+            Id = "test-budget-only",
+            Phases =
+            [
+                new PlaybookPhase("start", []),
+                new PlaybookPhase("mid", [new Condition(ConditionMetric.GameSeconds, Comparison.Ge, 60)], Budget: TechBudget),
+                new PlaybookPhase("late", [new Condition(ConditionMetric.GameSeconds, Comparison.Ge, 120)],
+                    AttackConditions: [new Condition(ConditionMetric.ArmyValueRatio, Comparison.Gt, 0.1)]),
+            ],
+        };
+        IntentArbiter own = new(new PlaybookLibrary([budgetOnly]), null, log);
+        own.Offer(Fx.Accepted(Fx.Intent("a", "test-budget-only", StrategicPosture.Expand, lifetime: 1000, budget: StartBudget)), Fx.Features(0));
+        own.Update(Fx.Features(65));
+        Assert.Equal("mid", own.PhaseName);
+
+        // Same posture as the intent's own, so this is a plain renewal - carrying the effective (mid) budget.
+        StrategicIntent echo = Fx.Intent("a2", "test-budget-only", StrategicPosture.Expand, issuedAt: 70, lifetime: 1000, budget: TechBudget);
+        Assert.Equal(ArbitrationOutcome.Renewed, own.Offer(Fx.Accepted(echo), Fx.Features(70)).Outcome);
+        Assert.Equal(StartBudget, own.Active!.Budget);
+        Assert.Equal(TechBudget, own.EffectiveIntent!.Budget);
+
+        own.Update(Fx.Features(125));
+        Assert.Equal("late", own.PhaseName);
+        Assert.Equal(StartBudget, own.EffectiveIntent!.Budget);   // the later phase sets none: the intent's own budget, not mid's
+
+        // A renewal that really sets its own budget is kept.
+        BudgetShares chosen = new(0.3, 0.3, 0.3, 0.1);
+        StrategicIntent changed = Fx.Intent("a3", "test-budget-only", StrategicPosture.Expand, issuedAt: 130, lifetime: 1000, budget: chosen);
+        own.Offer(Fx.Accepted(changed), Fx.Features(130));
+        Assert.Equal(chosen, own.EffectiveIntent!.Budget);
+    }
+
+    [Fact]
     public void A_mirroring_proposal_keeps_a_field_of_its_own_that_differs_from_the_phase()
     {
         Activate("a", "test-expand-tech-attack", StrategicPosture.Expand, 0);

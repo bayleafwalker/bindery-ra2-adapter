@@ -282,7 +282,8 @@ public sealed class IntentArbiter
         }
         if (string.Equals(challenger.PlaybookId, incumbent.PlaybookId, StringComparison.Ordinal) && challenger.Posture == incumbent.Posture)
         {
-            return new ArbitrationDecision(ArbitrationOutcome.Renewed, "renewal", challenger);
+            // An echo of the phase's budget or attack conditions must not become the intent's own values either.
+            return new ArbitrationDecision(ArbitrationOutcome.Renewed, "renewal", phaseTracker.FoldEcho(challenger, incumbent));
         }
         // A strategist that mirrors the phase in force (same playbook, the phase's effective posture) is renewing, not
         // switching: activating it would restart the plan at phase 0.
