@@ -1,4 +1,7 @@
-# Attack gate: cap a base sighting's evidence weight at 0.5 (pre-registration DRAFT, 2026-09-30, before any run)
+# Attack gate: cap a base sighting's evidence weight at 0.5 (pre-registration, 2026-09-30; closed before the run)
+**Status: Closed before the run (2026-09-29 ~22:45): refuted by a free check; no registered run was made.** The design below
+is kept as drafted and was never executed; see Outcome.
+
 Question: should `BaseSightingWeightCap` default to 0.5 instead of 1.0? The knob is being added by a parallel worker
 and is not merged. TODO(knob): confirm the name, its range, where it is read (expected `EnemyArmyBound.EvidenceWeight`)
 and that 1.0 reproduces current behaviour exactly, before this file is finalised.
@@ -175,39 +178,32 @@ with six cells running in parallel.
 - Launch classification: `python3 docs/experiments/gate_launch_analysis.py <pilot decisions dirs>`.
 
 ## run.sh
-Also committed at `docs/results/2026-09-30-base-sighting-cap/run.sh` with this file, before any run.
+Not run and not kept: the draft `docs/results/2026-09-30-base-sighting-cap/run.sh` was removed when the line was
+closed (it is in commit 663926b if needed).
 
-```bash
-#!/usr/bin/env bash
-# BaseSightingWeightCap 1.0 vs 0.5 (docs/experiments/2026-09-30-base-sighting-cap-preregistration.md).
-set -euo pipefail
-cd "$(dirname "$0")/../../.."
-OUT=docs/results/2026-09-30-base-sighting-cap
-HO="ai-horde:easy,ai-horde:medium,ai-horde:hard,ai-armor:easy,ai-armor:medium,ai-armor:hard"
-SEEDS=$(seq -s, 41 80)
-git rev-parse --short HEAD > "$OUT/commit"
-nix shell nixpkgs#dotnet-sdk_8 -c dotnet build tools/Bindery.Ra2.Bot.Arena -c Release -v q > "$OUT/build.log" 2>&1
-arena() { nix shell nixpkgs#dotnet-sdk_8 -c dotnet run --project tools/Bindery.Ra2.Bot.Arena -c Release --no-build -- run "$@"; }
-# P: pilot, smoke check only; decisions kept. Stop here and read P-* before the rest.
-if [ "${1:-}" = pilot ]; then
-  for v in 1.0 0.5; do   # TODO(knob): confirm the --knob name
-    arena --arms selector --maps heldout --opponents ai-horde:hard,ai-armor:hard --seeds 2 --benchmark contested \
-      --knob "BaseSightingWeightCap=$v" --out "$OUT/P-$v" > "$OUT/P-$v.log" 2>&1
-  done
-  python3 docs/experiments/gate_launch_analysis.py "$OUT/P-1.0" "$OUT/P-0.5" > "$OUT/P-analysis.txt" || true
-  exit 0
-fi
-for v in 1.0 0.5; do
-  arena --arms selector,selector-oracle --maps training --opponents training --seeds 40 --benchmark contested \
-    --interleave --no-decisions --knob "BaseSightingWeightCap=$v" --out "$OUT/T-$v" > "$OUT/T-$v.log" 2>&1 &
-  arena --arms selector,selector-oracle --maps heldout --opponents "$HO" --seed-list "$SEEDS" --benchmark contested \
-    --interleave --no-decisions --knob "BaseSightingWeightCap=$v" --out "$OUT/H-$v" > "$OUT/H-$v.log" 2>&1 &
-done
-wait
-python3 docs/experiments/seen_ratio_analysis.py "$OUT/T-1.0" "$OUT/T-0.5" > "$OUT/T-analysis.txt"
-python3 docs/experiments/seen_ratio_analysis.py "$OUT/H-1.0" "$OUT/H-0.5" --min-seed 41 > "$OUT/H-analysis.txt"
-```
+## Outcome
+Closed before any registered run. A free check, made with the knob branch (W1, 95f6b1d; the knob is routed
+correctly), refuted the hypothesis:
 
-Order of work: land the knob, fill the TODO markers, commit this file and `run.sh`, run `run.sh pilot`, check (a)-(c)
-above, then run `run.sh`. If (b) fails (cap 1.0 differs from a no-knob build) the knob is fixed first and nothing
-after is run. Outcome section to be appended after the run, as in the seen-ratio file.
+`arena run --arms selector --maps heldout --opponents ai-horde:hard,ai-armor:hard --seeds 4 --benchmark contested
+--knob BaseSightingWeightCap=X` at X = 1.0, 0.5 and 0.0 gave 12/16 wins each, with identical winners on all 16 cells.
+Only durations differed, on two cells at 0.0: ai-armor:hard fortress-choke s4 592 -> 656 s, ai-horde:hard
+open-steppe s3 684 -> 689 s. The four fortress-choke losses (ai-armor:hard s2, s3; ai-horde:hard s2, s4) persist
+even with base sightings giving no evidence at all (X = 0.0), so base-sighting evidence does not cause them.
+
+Launch evidence. The belief selector's losing launch in ai-horde:hard fortress-choke s2 was
+`attacking r8 with army value 1800 (force ratio 1.29/1.05, w 0.37, upper 1399, baseAge 86s)`: an army sighting
+blended with a stale base sighting, not a base-only w = 1 launch. This contradicts item 1 of the reading in
+"Evidence before the run", which inferred sighting-reopening launches from the previous tick alone.
+
+Oracle contrast (`selector-oracle`, same cells):
+- ai-horde:hard fortress-choke: wins s2 and s4 at about 320 s, attacking earlier with 1,500 on true information
+  (`force ratio 0.94/0.80, upper 1600`), and s3 on timeout; loses s1 on timeout.
+- ai-armor:hard fortress-choke: loses all 4 (3 timeouts, 1 elimination).
+- So perception matters against horde-hard on the choke map (the belief bot attacks later and loses), while
+  armor-hard on the choke map is a strategy problem that full information does not fix.
+- For reference, gpt-6-luna won all of these cells as Soviet with a late mass attack (about 500 s, about 6,000 army).
+
+Conclusion: the base-sighting-cap line is closed. `BaseSightingWeightCap` stays a diagnostic knob at 1.0; no default
+change, no further runs. The evidence section and `gate_launch_analysis.py` are kept as the record of what motivated
+the test; its Table A/B numbers stand as measurements, but the mechanism reading drawn from them is refuted.
