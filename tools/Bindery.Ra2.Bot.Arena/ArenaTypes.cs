@@ -62,6 +62,11 @@ public sealed record ArenaAgentStats
     public int FogRejections { get; set; }
     public int ShadowProposals { get; set; }
     public int ProposalsFailed { get; set; }
+
+    /// <summary>Primary model answers (<c>strategy.proposal</c>) and transport or model failures, from the decision log (see <see cref="LlmCallTally"/>).</summary>
+    public int LlmAnswered { get; set; }
+
+    public int LlmFailed { get; set; }
     public long TokensIn { get; set; }
     public long TokensOut { get; set; }
     public string? Model { get; set; }

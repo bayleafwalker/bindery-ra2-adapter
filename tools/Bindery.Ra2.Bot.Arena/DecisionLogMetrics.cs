@@ -22,6 +22,8 @@ public static class DecisionLogMetrics
         ArgumentNullException.ThrowIfNull(stats);
         ArgumentNullException.ThrowIfNull(records);
         stats.Proposals = 0;
+        stats.LlmAnswered = 0;
+        stats.LlmFailed = 0;
         stats.Rejected = 0;
         stats.LateDiscarded = 0;
         stats.LateSeconds.Clear();
@@ -35,6 +37,7 @@ public static class DecisionLogMetrics
                     if (role == PrimaryRole)
                     {
                         stats.Proposals++;
+                        stats.LlmAnswered++;
                         if (LatencySeconds(record.Data) is { } seconds) stats.LateSeconds.Add(seconds);
                     }
                     else
@@ -67,6 +70,12 @@ public static class DecisionLogMetrics
                 case DecisionRecordKinds.ProposalFailed:
                     // Only the Claude strategist's own failure record carries a cost (the scheduler's has none).
                     AddCost(stats, record.Data, failed: true);
+                    // That role-less record is also the one call that failed; the scheduler's Primary record for the
+                    // same request only says no_opinion/superseded, which are normal arbitration outcomes.
+                    if (role is null && LlmCallTally.IsDeliveryFailure(record.Data.TryGetProperty("code", out JsonElement code) && code.ValueKind == JsonValueKind.String ? code.GetString() : null))
+                    {
+                        stats.LlmFailed++;
+                    }
                     break;
             }
         }

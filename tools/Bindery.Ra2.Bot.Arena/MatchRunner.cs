@@ -69,6 +69,12 @@ public sealed record PlayerMatchMetrics(
     /// <summary>Primary requests the distilled strategist answered; 0 for other arms.</summary>
     public int DistilledDecisions { get; init; }
 
+    /// <summary>
+    /// What a live LLM arm delivered: Primary answers against transport or model failures. Null for arms with no
+    /// model calls and for <c>--llm-fake</c> runs.
+    /// </summary>
+    public LlmCallTally? LlmCalls { get; init; }
+
     /// <summary>Of those, requests escalated to the LLM.</summary>
     public int DistilledEscalations { get; init; }
 
@@ -313,6 +319,7 @@ public static class MatchRunner
             ServedBy = new SortedDictionary<string, int>(stats.ServedBy, StringComparer.Ordinal),
             UnpricedRequests = stats.UnpricedRequests,
             DistilledDecisions = stats.DistilledDecisions,
+            LlmCalls = stats.Labels.Contains("llm-fake") || stats.LlmAnswered + stats.LlmFailed == 0 ? null : new LlmCallTally(stats.LlmAnswered, stats.LlmFailed),
             DistilledEscalations = stats.DistilledEscalations,
             ShadowCompared = stats.ShadowCompared,
             ShadowAgreed = stats.ShadowAgreed,

@@ -263,9 +263,14 @@ public static class Program
         File.WriteAllText(Path.Combine(options.OutDir, "report.md"), ReportBuilder.Build(ordered, probes, skipped, options, rules.RulesetId, rosterChanges));
         if (ordered.Count(static m => BotAgentFactory.TierArms.ContainsKey(m.Arm)) > 0)
         {
-            string adoption = TierAdoption(ordered, live: !options.LlmFake, DateTime.UtcNow.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)).ToJson() + "\n";
+            string adoption = TierAdoption(ordered, live: !options.LlmFake, DateTime.UtcNow.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture), options.MaxLlmFailureRate).ToJson() + "\n";
             File.WriteAllText(Path.Combine(options.OutDir, "vocabulary-adoption.json"), adoption);
             if (options.WriteAdoption is { } target) File.WriteAllText(target, adoption);
+        }
+
+        foreach ((string unreliableArm, LlmCallTally tally) in LlmCallTally.Unreliable(ordered, options.MaxLlmFailureRate).OrderBy(static p => p.Key, StringComparer.Ordinal))
+        {
+            Console.WriteLine(tally.Warning(unreliableArm, options.MaxLlmFailureRate));
         }
 
         Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"Wrote {ordered.Count} match results, {probes.Count} leakage probes and report.md to {options.OutDir} in {wall.Elapsed.TotalSeconds:0}s."));
@@ -378,11 +383,14 @@ public static class Program
     /// <summary>
     /// The adoption rule (<see cref="VocabularyAdoption.Decide"/>) applied to a run's tier arms: for each tier arm and
     /// the tier arm below it, the paired match-score comparison on each split (only held-out counts for adoption).
-    /// <paramref name="live"/> is false for <c>--llm-fake</c> runs, whose evidence never adopts anything.
+    /// <paramref name="live"/> is false for <c>--llm-fake</c> runs, whose evidence never adopts anything; nor does the
+    /// evidence of a tier arm (or the arm it is compared with) whose pooled LLM call failure rate exceeds
+    /// <paramref name="maxLlmFailureRate"/>, since the selector fallback played that arm's gaps.
     /// </summary>
-    public static VocabularyAdoption TierAdoption(IReadOnlyList<MatchRecord> matches, bool live, string? date)
+    public static VocabularyAdoption TierAdoption(IReadOnlyList<MatchRecord> matches, bool live, string? date, double maxLlmFailureRate = CliOptions.DefaultMaxLlmFailureRate)
     {
         ArgumentNullException.ThrowIfNull(matches);
+        IReadOnlyDictionary<string, LlmCallTally> unreliable = LlmCallTally.Unreliable(matches, maxLlmFailureRate);
         List<TierEvidence> evidence = [];
         foreach ((string arm, VocabularyTier tier) in BotAgentFactory.TierArms)
         {
@@ -393,7 +401,16 @@ public static class Program
                 IReadOnlyList<(MatchRecord Baseline, MatchRecord Arm)> pairs = PairedReport.Pairs(matches, below, arm, split);
                 if (pairs.Count == 0) continue;
                 PairedDifference d = PairedStatistics.Compare("score", [.. pairs.Select(static p => (Score(p.Baseline), Score(p.Arm)))], higherIsBetter: true);
-                evidence.Add(new TierEvidence(tier, tier - 1, split, d.Pairs, d.BaselineMean, d.ArmMean, d.MeanDifference, d.CiLow, d.CiHigh, d.Better, d.Worse, d.Ties, d.SignTestP, live));
+                string? refusal = null;
+                foreach (string suspect in new[] { arm, below })
+                {
+                    if (unreliable.TryGetValue(suspect, out LlmCallTally? tally))
+                    {
+                        refusal = string.Create(CultureInfo.InvariantCulture, $"{suspect} is not a model result ({tally.Failed} of {tally.Answered + tally.Failed} model calls failed, {tally.FailureRate:P1}, above {maxLlmFailureRate:0.##}); its evidence is refused");
+                        break;
+                    }
+                }
+                evidence.Add(new TierEvidence(tier, tier - 1, split, d.Pairs, d.BaselineMean, d.ArmMean, d.MeanDifference, d.CiLow, d.CiHigh, d.Better, d.Worse, d.Ties, d.SignTestP, live && refusal is null, refusal));
             }
         }
         return VocabularyAdoption.Decide(evidence, date);

@@ -32,7 +32,7 @@ public static class ReportBuilder
 
         AppendSkipped(sb, skipped);
         AppendRoster(sb, options, rulesetId, rosterChanges ?? []);
-        AppendWinRate(sb, matches);
+        AppendWinRate(sb, matches, options.MaxLlmFailureRate);
         AppendSaturation(sb, matches, options.Baseline);
         AppendPerOpponent(sb, matches);
         AppendHeldOutOpponents(sb, matches, options.Baseline);
@@ -120,14 +120,18 @@ public static class ReportBuilder
             baselineFor: arm => arm == baseline || IsOracle(arm) ? null : baseline);
     }
 
-    private static void AppendWinRate(StringBuilder sb, IReadOnlyList<MatchRecord> matches)
+    private static string Delivery(LlmCallTally? t) =>
+        t is null ? "n/a" : $"{t.Answered} answered, {t.Failed} failed ({Rate(t.Failed, t.Answered + t.Failed)})";
+
+    private static void AppendWinRate(StringBuilder sb, IReadOnlyList<MatchRecord> matches, double maxLlmFailureRate)
     {
         sb.AppendLine("## Win rate (arm × split)");
         sb.AppendLine();
         sb.AppendLine("Distinct games drop repeats of an identical game (same arm faction, decision log and outcome on the same map): against a differently named opponent whose style had not diverged when the match ended, or on another seed that changed nothing; the distinct interval is the one to read. The arm plays Allied on odd seeds and Soviet on even seeds, and starts west on seeds 1-2, 5-6, ... and east on 3-4, 7-8, ...; the fixture is asymmetric, so the faction and side columns show the mix behind each rate.");
         sb.AppendLine();
-        sb.AppendLine("| Arm | Split | Wins | Losses | Draws | Matches | Win rate | 95% interval (Wilson) | Distinct games | Distinct wins | 95% interval, distinct | As Allied | As Soviet | As west | As east | Eliminations won | Timeouts |");
-        sb.AppendLine("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+        sb.AppendLine("| Arm | Split | Wins | Losses | Draws | Matches | Win rate | 95% interval (Wilson) | Distinct games | Distinct wins | 95% interval, distinct | As Allied | As Soviet | As west | As east | Eliminations won | Timeouts | LLM delivery |");
+        sb.AppendLine("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+        IReadOnlyDictionary<string, LlmCallTally> unreliable = LlmCallTally.Unreliable(matches, maxLlmFailureRate);
         List<string> unbalanced = [];
         List<string> unevenSides = [];
         foreach (var group in matches.GroupBy(m => (m.Arm, m.Split)).OrderBy(g => g.Key.Arm, StringComparer.Ordinal).ThenBy(g => g.Key.Split, StringComparer.Ordinal))
@@ -146,9 +150,14 @@ public static class ReportBuilder
             List<MatchRecord> west = [.. group.Where(static m => !MatchRunner.ArmStartsEast(m.Seed))];
             List<MatchRecord> east = [.. group.Where(static m => MatchRunner.ArmStartsEast(m.Seed))];
             if (west.Count != east.Count) unevenSides.Add($"{group.Key.Arm}/{group.Key.Split} ({west.Count} west, {east.Count} east)");
-            sb.AppendLine($"| {group.Key.Arm} | {group.Key.Split} | {wins} | {losses} | {draws} | {total} | {Rate(wins, total)} | {Wilson(wins, total)} | {distinct.Count} | {distinctWins} | {Wilson(distinctWins, distinct.Count)} | {allied.Count(static m => m.Winner == 0)}/{allied.Count} | {soviet.Count(static m => m.Winner == 0)}/{soviet.Count} | {west.Count(static m => m.Winner == 0)}/{west.Count} | {east.Count(static m => m.Winner == 0)}/{east.Count} | {elimWins} | {timeouts} |");
+            sb.AppendLine($"| {(unreliable.ContainsKey(group.Key.Arm) ? group.Key.Arm + ' ' + "(not a model result)" : group.Key.Arm)} | {group.Key.Split} | {wins} | {losses} | {draws} | {total} | {Rate(wins, total)} | {Wilson(wins, total)} | {distinct.Count} | {distinctWins} | {Wilson(distinctWins, distinct.Count)} | {allied.Count(static m => m.Winner == 0)}/{allied.Count} | {soviet.Count(static m => m.Winner == 0)}/{soviet.Count} | {west.Count(static m => m.Winner == 0)}/{west.Count} | {east.Count(static m => m.Winner == 0)}/{east.Count} | {elimWins} | {timeouts} | {Delivery(LlmCallTally.Pool(group))} |");
         }
         sb.AppendLine();
+        foreach ((string unreliableArm, LlmCallTally tally) in unreliable.OrderBy(static p => p.Key, StringComparer.Ordinal))
+        {
+            sb.AppendLine($"**{unreliableArm}: not a model result.** {tally.Failed} of {tally.Answered + tally.Failed} model calls failed ({Rate(tally.Failed, tally.Answered + tally.Failed)}), above the {F(maxLlmFailureRate, "0.##")} limit (`--max-llm-failure-rate`); the selector fallback played the gaps, so this arm's win rate is largely the selector's. Its matches are kept for inspection, and its tier evidence is refused for adoption.");
+            sb.AppendLine();
+        }
         if (unbalanced.Count > 0)
         {
             sb.AppendLine($"Warning: the faction mix is unbalanced for {string.Join(", ", unbalanced)} (an odd `--seeds` gives the arm Allied more often); a win rate over it mixes faction strength into the result. Use an even `--seeds`.");
@@ -442,7 +451,7 @@ public static class ReportBuilder
             .ToDictionary(p => p.Key, p => BotAgentFactory.TierArms.Single(q => q.Value == p.Value - 1).Key);
         PairedReport.Append(sb, matches, options.Baseline, "## Vocabulary tiers (build step 6)",
             baselineFor: arm => below.TryGetValue(arm, out string? lower) && present.Contains(lower) ? lower : null);
-        Claude.VocabularyAdoption adoption = Program.TierAdoption(matches, live: !options.LlmFake, null);
+        Claude.VocabularyAdoption adoption = Program.TierAdoption(matches, live: !options.LlmFake, null, options.MaxLlmFailureRate);
         sb.AppendLine($"Adoption rule: {adoption.Rule}");
         sb.AppendLine();
         sb.AppendLine($"Adopted tier: {adoption.AdoptedTier}{(options.LlmFake ? " (fake client: these results measure the pipeline, never evidence for adoption)" : string.Empty)}.");
