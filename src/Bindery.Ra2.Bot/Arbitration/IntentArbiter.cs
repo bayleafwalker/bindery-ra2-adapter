@@ -83,6 +83,7 @@ public sealed class IntentArbiter
     private readonly IDecisionLog? log;
     private readonly BotMetrics? metrics;
     private readonly List<IntentHistoryEntry> history = [];
+    private readonly PhaseTracker phaseTracker = new();
     private bool abortFiring;
     private bool replanFiring;
     private bool baseThreatFiring;
@@ -101,6 +102,18 @@ public sealed class IntentArbiter
     public ArbiterOptions Options { get; }
 
     public StrategicIntent? Active { get; private set; }
+
+    /// <summary>
+    /// <see cref="Active"/> with its playbook's current phase applied (<see cref="PhaseTracker"/>): what the operational
+    /// planner, ledger and squads execute. The active intent itself for a playbook without phases.
+    /// </summary>
+    public StrategicIntent? EffectiveIntent => Active is null ? null : phaseTracker.Effective(Active);
+
+    /// <summary>Index of the active intent's current phase; 0 without phases or an intent.</summary>
+    public int PhaseIndex => phaseTracker.Index;
+
+    /// <summary>Name of the current phase; null when the active intent's playbook has no phases.</summary>
+    public string? PhaseName => Active is null ? null : phaseTracker.Name;
 
     /// <summary>When the current commitment started; unchanged by renewals.</summary>
     public GameTime ActiveSince { get; private set; }
@@ -179,6 +192,20 @@ public sealed class IntentArbiter
 
         if (threat && !baseThreatFiring) RequestReplan("base_threat", features);
         baseThreatFiring = threat;
+
+        if (phaseTracker.Advance(features) is { } change)
+        {
+            log?.Write(new DecisionRecord(DecisionRecordKinds.PhaseChanged, features.Time, features.SnapshotVersion, BotJson.ToElement(new
+            {
+                intentId = Active.IntentId,
+                playbookId = Active.PlaybookId,
+                fromPhase = change.FromName,
+                fromIndex = change.FromIndex,
+                toPhase = change.ToName,
+                toIndex = change.ToIndex,
+                frame = features.Time.Frame,
+            })));
+        }
     }
 
     /// <summary>What <see cref="Offer"/> would decide, without changing any state. Used for shadow proposals.</summary>
@@ -296,6 +323,7 @@ public sealed class IntentArbiter
         Active = intent;
         ActiveSince = features.Time;
         ActiveRole = role;
+        phaseTracker.Reset(intent, playbooks);
         LastPosture = intent.Posture;
         abortFiring = ConditionEvaluator.AnyOf(intent.AbortTriggers, features);
         replanFiring = ConditionEvaluator.AnyOf(intent.ReplanTriggers, features);
@@ -378,6 +406,7 @@ public sealed class IntentArbiter
         double tenure = features.Time.SecondsSince(ActiveSince);
         CloseHistory(ended.IntentId, features.Time, reason);
         Active = null;
+        phaseTracker.Reset(null, playbooks);
         abortFiring = replanFiring = baseThreatFiring = false;
         log?.Write(new DecisionRecord(DecisionRecordKinds.IntentEnded, features.Time, features.SnapshotVersion, BotJson.ToElement(new
         {

@@ -205,7 +205,7 @@ public sealed class IntentPromptBuilder
                     ["description"] = p.Description,
                 });
             }
-            catalogue.Add(new JsonObject
+            JsonObject entry = new()
             {
                 ["id"] = playbook.Id,
                 ["description"] = playbook.Description,
@@ -217,7 +217,9 @@ public sealed class IntentPromptBuilder
                 ["attackConditions"] = Conditions(playbook.AttackConditions),
                 ["abortTriggers"] = Conditions(playbook.AbortTriggers),
                 ["parameters"] = parameters,
-            });
+            };
+            if (playbook.Phases is { Count: > 0 } phases) entry["phases"] = Phases(phases);
+            catalogue.Add(entry);
         }
         return catalogue;
     }
@@ -721,6 +723,29 @@ public sealed class IntentPromptBuilder
         foreach (KeyValuePair<UnitRole, double> entry in map.OrderBy(e => e.Key))
         {
             result[entry.Key.ToString()] = CanonicalJson.Number(entry.Value);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// A phased playbook advances by itself, in order and forward only, when a phase's enter conditions all hold; the
+    /// listed overrides replace the intent's own fields while the phase is current. The first phase is the start.
+    /// </summary>
+    private static JsonArray Phases(IReadOnlyList<PlaybookPhase> phases)
+    {
+        JsonArray result = new();
+        foreach (PlaybookPhase phase in phases)
+        {
+            JsonObject item = new()
+            {
+                ["name"] = phase.Name,
+                ["enterWhen"] = Conditions(phase.EnterWhen),
+            };
+            if (phase.Posture is { } posture) item["posture"] = posture.ToString();
+            if (phase.Budget is { } budget) item["budget"] = Budget(budget);
+            if (phase.Composition is { } composition) item["composition"] = Composition(composition);
+            if (phase.AttackConditions is { } attack) item["attackConditions"] = Conditions(attack);
+            result.Add(item);
         }
         return result;
     }

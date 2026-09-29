@@ -73,6 +73,21 @@ public sealed record StrategicIntent(
 public sealed record PlaybookParameter(string Name, double Min, double Max, double Default, string Description);
 
 /// <summary>
+/// One stage of a phased playbook. The deterministic lane advances through a playbook's phases in order, forward
+/// only, at tick rate and with no model call (<see cref="Arbitration.PhaseTracker"/>). A phase is entered when all of
+/// <paramref name="EnterWhen"/> hold; the first phase has none and is the start phase. Non-null fields override the
+/// active intent's posture, budget, composition and attack conditions while the phase is current. The start phase's
+/// overrides are ignored: the intent's own fields are the start-phase values.
+/// </summary>
+public sealed record PlaybookPhase(
+    string Name,
+    IReadOnlyList<Condition> EnterWhen,
+    StrategicPosture? Posture = null,
+    BudgetShares? Budget = null,
+    IReadOnlyList<CompositionTarget>? Composition = null,
+    IReadOnlyList<Condition>? AttackConditions = null);
+
+/// <summary>
 /// An authored strategy template. Strategists choose and parameterise playbooks;
 /// the playbook supplies defaults for everything an intent leaves unsaid.
 /// </summary>
@@ -87,7 +102,8 @@ public sealed record Playbook(
     IReadOnlyList<Condition> AttackConditions,
     IReadOnlyList<Condition> AbortTriggers,
     IReadOnlyList<PlaybookParameter> Parameters,
-    double MinCommitSeconds);
+    double MinCommitSeconds,
+    IReadOnlyList<PlaybookPhase>? Phases = null);
 
 public interface IPlaybookLibrary
 {

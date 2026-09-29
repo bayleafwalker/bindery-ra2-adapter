@@ -175,6 +175,9 @@ public sealed record PostGameReport(
                     lastEndReason = null;
                     break;
                 }
+                case DecisionRecordKinds.PhaseChanged:
+                    events.Add(new KeyEvent(t, "phase_changed", $"{Str(d, "playbookId")}: {Str(d, "fromPhase")} -> {Str(d, "toPhase")}"));
+                    break;
                 case DecisionRecordKinds.IntentEnded:
                 {
                     string reason = Str(d, "reason") ?? "?";
