@@ -31,7 +31,8 @@ public sealed record SkippedArm(string Arm, string Reason);
 /// <see cref="MinDistillExamples"/> examples the arm is skipped with the reason recorded. The bandit's
 /// matches run sequentially in a fixed order because it learns across them; other arms run in
 /// parallel. A live LLM arm runs its first match alone and is skipped with the recorded reason if no
-/// credential resolved.
+/// credential resolved or if none of that match's Primary model proposals succeeded (see
+/// <see cref="AllPrimaryProposalsFailed"/>); the first match is then not counted.
 /// </remarks>
 public static class Program
 {
@@ -171,6 +172,11 @@ public static class Program
             {
                 armResults[0] = RunJob(jobs[0], options, rules, factory, log => logs[0] = log);
                 start = 1;
+                if (context.LlmSkipReason is null && logs.TryGetValue(0, out IReadOnlyList<DecisionRecord>? firstLog)
+                    && AllPrimaryProposalsFailed(firstLog) is { } allFailed)
+                {
+                    context.MarkLlmSkipped(allFailed);
+                }
                 if (context.LlmSkipReason is { } reason)
                 {
                     skipped.Add(new SkippedArm(arm.ToString(), reason));
@@ -237,6 +243,37 @@ public static class Program
         }
 
         Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"Wrote {ordered.Count} match results, {probes.Count} leakage probes and report.md to {options.OutDir} in {wall.Elapsed.TotalSeconds:0}s."));
+    }
+
+    /// <summary>
+    /// The skip reason when a live LLM arm's first match logged Primary <c>strategy.proposal_failed</c> records and no
+    /// Primary <c>strategy.proposal</c> (every decision then fell back to the selector, so the arm's results would not
+    /// measure the model); null when at least one Primary proposal succeeded or none was attempted.
+    /// </summary>
+    public static string? AllPrimaryProposalsFailed(IReadOnlyList<DecisionRecord> log)
+    {
+        int failed = 0;
+        string? firstError = null;
+        foreach (DecisionRecord record in log)
+        {
+            if (record.Data.ValueKind != JsonValueKind.Object
+                || !record.Data.TryGetProperty("role", out JsonElement role) || role.ValueKind != JsonValueKind.String || role.GetString() != "Primary")
+            {
+                continue;
+            }
+            if (record.Kind == DecisionRecordKinds.Proposal) return null;
+            if (record.Kind != DecisionRecordKinds.ProposalFailed) continue;
+            failed++;
+            if (firstError is null)
+            {
+                string? message = record.Data.TryGetProperty("message", out JsonElement m) && m.ValueKind == JsonValueKind.String ? m.GetString() : null;
+                string? code = record.Data.TryGetProperty("reason", out JsonElement c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null;
+                firstError = string.IsNullOrWhiteSpace(message) ? code ?? "no message" : message;
+            }
+        }
+        if (failed == 0) return null;
+        string error = firstError!.Length > 200 ? firstError[..200] + "..." : firstError;
+        return string.Create(CultureInfo.InvariantCulture, $"skipped: 0 of {failed} model proposals succeeded in the first match ({error})");
     }
 
     /// <summary>
