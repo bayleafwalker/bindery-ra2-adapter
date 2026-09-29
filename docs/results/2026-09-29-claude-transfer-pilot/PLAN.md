@@ -122,7 +122,16 @@ Limits, read before generalising: 17 of 20 cells are won by both arms, so the te
 has little room to show it better outside the hard opponents; one faction, one model, one day; the A/A floor for
 a live model (17% of cells changing winner) was measured on worker-fast, not Luna. All wins being eliminations
 answers the concern that an economy-first policy might only win on timeout.
+Luna being better on 3 cells is within the noise a live model shows (17% of 20 is ~3.4 cells changing winner),
+so read the result as "not worse", not as "better". Luna's wins are slower: ~600 s against ~330 s for the selector
+on the cells both won (limit 1200 s). The run's `commit` file names 0b09466, the amendment commit before its rebase
+onto later main; its code is 852e625's.
 
 Also recorded: `kimi-pilot/` (Kimi K2.7 Code, same 4 cells as attempt 3): not a model result. 141 of 144 calls
 failed as `claude.timeout` (median upstream latency ~57 s, ~12% upstream 5xx), 3 proposals landed; the selector
 fallback played the matches, hence its "3 of 4". The arena now labels such arms (#37).
+
+Corrections after independent review (2026-09-29 ~22:00; the amendment text above is kept as committed before the
+run): the Luna pilot cost ~$0.27 at list price, not ~$0.04 (219 forwarder calls, 1.77M input and 0.18M output
+tokens); Kimi's upstream 5xx rate in the archived forwarder log is 10 of 185 calls (5.4%), not ~12%. Neither changes
+the model choice or the decision.
