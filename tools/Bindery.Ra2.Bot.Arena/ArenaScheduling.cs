@@ -49,7 +49,7 @@ public static class ArenaScheduling
     /// What besides the job itself decides a match's result, recorded with each match and compared by <c>--resume</c> so a
     /// resumed run cannot silently mix runs: code identity (MVIDs of the arena, bot, sim and Claude assemblies), SHA-256 of the
     /// rules (file contents, else the embedded fixture), the arm knobs, LLM model, endpoint (host and path only, no credentials)
-    /// and latency, and the distillation dataset's SHA-256, and the <c>--seed-list</c>.
+    /// and latency, the distillation dataset's SHA-256, the <c>--seed-list</c>, and the <c>--playbooks</c> files' SHA-256 ("" for none).
     /// </summary>
     public static IReadOnlyDictionary<string, string> Fingerprint(CliOptions options)
     {
@@ -58,6 +58,8 @@ public static class ArenaScheduling
         {
             ["code"] = CodeIdentity(),
             ["rules"] = o.RulesPath is null ? Sha(Encoding.UTF8.GetBytes(RulesDatabase.EmbeddedFixtureJson(RulesDatabase.FixtureFile))) : Sha(File.ReadAllBytes(o.RulesPath)),
+            // The files' contents in order: a changed or reordered set changes what the LLM is offered.
+            ["playbooks"] = o.PlaybookFiles.Count == 0 ? "" : Sha([.. o.PlaybookFiles.SelectMany(static f => File.ReadAllBytes(f))]),
             ["knobs"] = string.Join(",", o.ArmKnobs.OrderBy(static k => k.Key, StringComparer.Ordinal).Select(static k => string.Create(CultureInfo.InvariantCulture, $"{k.Key}={k.Value:R}"))),
             ["llmModel"] = o.LlmModel,
             ["llmEndpoint"] = o.LlmEndpoint is null ? "" : Uri.TryCreate(o.LlmEndpoint, UriKind.Absolute, out Uri? u) ? $"{u.Scheme}://{u.Host}:{u.Port}{u.AbsolutePath}" : "(unparsed)",
@@ -121,7 +123,7 @@ public static class ArenaScheduling
         {
             foreach ((string key, string expected) in Fingerprint(options))
             {
-                Check($"fingerprint.{key}", m.Fingerprint.GetValueOrDefault(key, key == "seedList" ? "" : null!), expected);
+                Check($"fingerprint.{key}", m.Fingerprint.GetValueOrDefault(key, key is "seedList" or "playbooks" ? "" : null!), expected);
             }
         }
         if (job.Arm.Name == "distilled" && options.Dataset is not null) Check("distillSource", m.DistillSource, Path.GetFileName(options.Dataset));
