@@ -42,6 +42,18 @@ public sealed class ExtendedMetricsTests
     }
 
     [Fact]
+    public void A_single_sighting_is_under_the_floor_and_enough_value_gives_the_true_share()
+    {
+        StrategicFeatures one = With(new Dictionary<EntityKind, double> { [EntityKind.Aircraft] = 400 });
+        Assert.Equal(0, Measure(ConditionMetric.EnemyAirShare, one));
+        Assert.False(ConditionEvaluator.Holds(new Condition(ConditionMetric.EnemyAirShare, Comparison.Ge, 0.3), one));
+
+        StrategicFeatures enough = With(new Dictionary<EntityKind, double> { [EntityKind.Aircraft] = 400, [EntityKind.Vehicle] = 200 });
+        Assert.Equal(400.0 / 600.0, Measure(ConditionMetric.EnemyAirShare, enough), 9);
+        Assert.Equal(200.0 / 600.0, Measure(ConditionMetric.EnemyVehicleShare, enough), 9);
+    }
+
+    [Fact]
     public void Nothing_seen_gives_zero_shares_without_dividing_by_zero()
     {
         foreach (StrategicFeatures f in new[] { With(new Dictionary<EntityKind, double>(), confidence: 0), With(null, confidence: 0) })
@@ -71,9 +83,40 @@ public sealed class ExtendedMetricsTests
     private static IEnumerable<ConditionMetric> ConditionMetrics_Extended() => Bindery.Ra2.Bot.Claude.ConditionMetrics.Extended;
 
     [Fact]
+    public void Owned_regions_needs_a_structure_or_combat_units_and_no_remembered_enemy()
+    {
+        UnitRule rifle = FakeRulesDatabase.Rule("rifleman", Faction.Allied, EntityKind.Infantry, UnitRole.AntiInfantry, QueueKind.Infantry, 100);
+        UnitRule harv = FakeRulesDatabase.Rule("harvester", Faction.Allied, EntityKind.Vehicle, UnitRole.Harvester, QueueKind.Vehicle, 1400);
+        UnitRule conYard = FakeRulesDatabase.Rule("conyard", Faction.Allied, EntityKind.Building, UnitRole.Production, QueueKind.Building, 2500);
+        FakeRulesDatabase rules = new([rifle, harv, conYard]);
+        BeliefModel belief = new(rules, new BeliefOptions());
+        FeatureCompiler compiler = new(rules, new FeatureOptions());
+        PlayerId self = new(0), enemy = new(1);
+        MapInfo map = TestMaps.Simple();
+        HashSet<RegionId> visible = [TestMaps.Home, TestMaps.Middle, TestMaps.EnemyStart];
+
+        ObservedEntity yard = new(new EntityId(1), self, "conyard", map.Regions[0].Center, 1000, 1000);
+        ObservedEntity harvester = new(new EntityId(2), self, "harvester", map.Regions[1].Center, 1000, 1000);
+        ObservedEntity soldier = new(new EntityId(3), self, "rifleman", map.Regions[2].Center, 100, 100);
+        ObservedEntity foe = new(new EntityId(40), enemy, "rifleman", map.Regions[2].Center, 100, 100);
+
+        ObservationFrame Frame(double s, params ObservedEntity[] e) => new(
+            GameTime.FromSeconds(s), ObservationMode.Belief, self, Faction.Allied, 5000, new PowerState(100, 50), e, [], [], visible, map);
+
+        // Yard holds Home; a harvester alone makes Middle Own-controlled but does not hold it; soldier holds EnemyStart.
+        StrategicFeatures f = compiler.Compile(belief.Apply(Frame(1, yard, harvester, soldier)));
+        Assert.Equal(RegionControl.Own, f.MapControl.Control[TestMaps.Middle]);
+        Assert.Equal(2, Measure(ConditionMetric.OwnedRegions, f));
+
+        // A remembered enemy in EnemyStart contests it, so only the yard's region is held.
+        StrategicFeatures g = compiler.Compile(belief.Apply(Frame(2, yard, harvester, soldier, foe)));
+        Assert.Equal(1, Measure(ConditionMetric.OwnedRegions, g));
+    }
+
+    [Fact]
     public void Threshold_comparison_uses_the_share()
     {
-        StrategicFeatures f = With(new Dictionary<EntityKind, double> { [EntityKind.Aircraft] = 30, [EntityKind.Vehicle] = 70 });
+        StrategicFeatures f = With(new Dictionary<EntityKind, double> { [EntityKind.Aircraft] = 300, [EntityKind.Vehicle] = 700 });
         Assert.True(ConditionEvaluator.Holds(new Condition(ConditionMetric.EnemyAirShare, Comparison.Ge, 0.3), f));
         Assert.False(ConditionEvaluator.Holds(new Condition(ConditionMetric.EnemyAirShare, Comparison.Gt, 0.3), f));
     }
@@ -96,9 +139,9 @@ public sealed class ExtendedMetricsTests
         PhaseTracker tracker = new();
         tracker.Reset(intent, library);
 
-        Assert.Null(tracker.Advance(With(new Dictionary<EntityKind, double> { [EntityKind.Aircraft] = 20, [EntityKind.Vehicle] = 80 })));
+        Assert.Null(tracker.Advance(With(new Dictionary<EntityKind, double> { [EntityKind.Aircraft] = 200, [EntityKind.Vehicle] = 800 })));
         Assert.Equal("start", tracker.Name);
-        PhaseChange? change = tracker.Advance(With(new Dictionary<EntityKind, double> { [EntityKind.Aircraft] = 40, [EntityKind.Vehicle] = 60 }));
+        PhaseChange? change = tracker.Advance(With(new Dictionary<EntityKind, double> { [EntityKind.Aircraft] = 400, [EntityKind.Vehicle] = 600 }));
         Assert.Equal("flak", change?.ToName);
         Assert.Equal("flak", tracker.Name);
     }
@@ -126,7 +169,7 @@ public sealed class ExtendedMetricsTests
         // The enemy has an aircraft in a region we cannot see; only the infantry is in belief.
         StrategicFeatures f = compiler.Compile(belief.Apply(Frame(1, own, seenRifle)));
         Assert.Equal(0, ConditionEvaluator.ClassShare(f, EntityKind.Aircraft));
-        Assert.Equal(1, ConditionEvaluator.ClassShare(f, EntityKind.Infantry), 9);
+        Assert.Equal(0, ConditionEvaluator.ClassShare(f, EntityKind.Infantry)); // one rifleman: under the floor
         Assert.False(f.Enemy.ValueByClass!.ContainsKey(EntityKind.Aircraft));
 
         // Once the aircraft is in a visible region it is in belief and counts.

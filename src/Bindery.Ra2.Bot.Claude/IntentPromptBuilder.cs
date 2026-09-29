@@ -87,11 +87,11 @@ public sealed class IntentPromptBuilder
 
     private static readonly string ExtendedSystemPrompt = CommonSystemPrompt.Replace(
         MetricsEndMarker,
-        "  - EnemyAirShare: share (0 to 1) of the seen enemy army value that is aircraft; 0 when no enemy army is seen.\n"
-        + "  - EnemyVehicleShare: share (0 to 1) of the seen enemy army value that is vehicles; 0 when no enemy army is seen.\n"
-        + "  - EnemyInfantryShare: share (0 to 1) of the seen enemy army value that is infantry; 0 when no enemy army is seen.\n"
-        + "  - EnemyArmyConfidence: confidence (0 to 1) in the enemy army estimate; 0 when no enemy army is seen. The shares are unreliable at low confidence.\n"
-        + "  - OwnedRegions: number of regions where you have units or buildings and no enemy is known to be.\n"
+        $"  - EnemyAirShare: share (0 to 1) of the seen enemy army value that is aircraft; 0 while EnemyArmyValueEstimate is below {ConditionEvaluator.EnemyShareFloor.ToString(CultureInfo.InvariantCulture)} (too little seen to say), so pair it with EnemyArmyValueEstimate.\n"
+        + "  - EnemyVehicleShare: share (0 to 1) of the seen enemy army value that is vehicles; same floor as EnemyAirShare.\n"
+        + "  - EnemyInfantryShare: share (0 to 1) of the seen enemy army value that is infantry; same floor as EnemyAirShare.\n"
+        + "  - EnemyArmyConfidence: confidence (0 to 1) in the enemy army estimate, a value-weighted mean of how fresh the sightings are, not a count; 0 when no enemy army is seen.\n"
+        + "  - OwnedRegions: number of regions where you have a structure or combat units and no enemy is known to be (harvesters and other non-combat units do not count).\n"
         + MetricsEndMarker,
         StringComparison.Ordinal);
 

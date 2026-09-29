@@ -48,7 +48,14 @@ public sealed partial class FeatureCompiler
             ? 0.0
             : oreRegions.Count(r => control[r.Id] == RegionControl.Own) / (double)oreRegions.Count;
 
-        return new MapControlFeatures(control, expansionCandidates, ownedOreFraction);
+        // Held regions: a structure or combat unit of ours, and no remembered enemy there. Harvesters, MCVs and
+        // other non-combat units make a region Own above but do not hold it.
+        HashSet<RegionId> held = [.. snapshot.Own
+            .Where(e => e.Kind == EntityKind.Building || CombatRoles.Contains(e.Role))
+            .Select(static e => e.Region)];
+        held.ExceptWith(enemyPresent);
+
+        return new MapControlFeatures(control, expansionCandidates, ownedOreFraction, held.Count);
     }
 
     /// <summary>Regions holding a live enemy building remembered with at least presence confidence.</summary>

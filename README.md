@@ -293,6 +293,12 @@ need `ANTHROPIC_API_KEY` in the environment, or a resolvable `ant auth`
 profile. Without either, those arms are skipped with a recorded reason; pass
 `--llm-fake` to exercise the pipeline with a scripted client instead of a live
 call.
+`--extended-metrics` additionally offers those arms the enemy-composition and
+map-control condition metrics (`EnemyAirShare`, `EnemyVehicleShare`,
+`EnemyInfantryShare`, `EnemyArmyConfidence`, `OwnedRegions`) in the prompt and
+output schema; without it prompts and schemas are unchanged. The class shares
+read 0 until the seen enemy army is worth at least 600, so one scout is not a
+composition.
 
 ### Honesty notes
 

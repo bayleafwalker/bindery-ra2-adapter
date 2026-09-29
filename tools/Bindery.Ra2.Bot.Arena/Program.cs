@@ -116,7 +116,7 @@ public static class Program
     {
         Stopwatch wall = Stopwatch.StartNew();
         (IRulesDatabase rules, IPlaybookLibrary playbooks, IReadOnlyList<RosterChange> rosterChanges) = LoadRules(options.RulesPath, options.PlaybookFiles);
-        ArenaRunContext context = new(options.LlmFake, options.LlmLatencySeconds, options.LlmEndpoint, options.LlmModel) { ArmKnobs = options.ArmKnobs };
+        ArenaRunContext context = new(options.LlmFake, options.LlmLatencySeconds, options.LlmEndpoint, options.LlmModel) { ArmKnobs = options.ArmKnobs, ExtendedMetrics = options.ExtendedMetrics };
         BotAgentFactory factory = new(rules, playbooks, context);
         foreach (ArmSpec arm in options.ArmSpecs())
         {

@@ -204,12 +204,25 @@ public sealed class InterleaveResumeTests : IDisposable
     }
 
     [Fact]
+    public void Resume_refuses_a_run_that_switches_extended_metrics_on()
+    {
+        string dir = Run("fp-extended", "selector");
+
+        (int code, string error) = RunCapturingError(Args("selector", dir, "--resume", "--extended-metrics"));
+
+        Assert.Equal(1, code);
+        Assert.Contains("fingerprint.extendedMetrics recorded", error);
+        Assert.True(CliOptions.Parse(["run", "--arms", "llm", "--extended-metrics"]).ExtendedMetrics);
+        Assert.False(CliOptions.Parse(["run", "--arms", "llm"]).ExtendedMetrics);
+    }
+
+    [Fact]
     public void The_fingerprint_is_recorded_without_credentials_and_is_stable_across_runs()
     {
         string dir = Run("fp-stable", "selector");
         MatchManifest manifest = MatchManifest.Load(Manifest(dir, "selector_ai-rush_twin-valley_1"));
 
-        Assert.Equal(["code", "dataset", "knobs", "llmEndpoint", "llmLatency", "llmModel", "playbooks", "rules", "seedList"], manifest.Fingerprint!.Keys.OrderBy(static k => k, StringComparer.Ordinal));
+        Assert.Equal(["code", "dataset", "extendedMetrics", "knobs", "llmEndpoint", "llmLatency", "llmModel", "playbooks", "rules", "seedList"], manifest.Fingerprint!.Keys.OrderBy(static k => k, StringComparer.Ordinal));
         Assert.Equal(64, manifest.Fingerprint["rules"].Length);
         Assert.Equal(ArenaScheduling.CodeIdentity(), manifest.Fingerprint["code"]);
     }

@@ -65,10 +65,16 @@ public sealed record SuperweaponFeatures(IReadOnlyList<SuperweaponTimer> Own, IR
 
 public enum RegionControl { Own, Contested, Enemy, Neutral, Unknown }
 
+/// <param name="OwnedRegions">
+/// Regions where we hold a structure or combat units and no enemy contact with confidence of at least 0.2 is
+/// remembered; harvesters and other non-combat units do not count. Null only in hand-built fixtures (the
+/// <see cref="RegionControl.Own"/> count stands in).
+/// </param>
 public sealed record MapControlFeatures(
     IReadOnlyDictionary<RegionId, RegionControl> Control,
     IReadOnlyList<RegionId> ExpansionCandidates,
-    double OwnedOreFraction);
+    double OwnedOreFraction,
+    int? OwnedRegions = null);
 
 public sealed record ScoutingFeatures(
     double CoverageFraction,
