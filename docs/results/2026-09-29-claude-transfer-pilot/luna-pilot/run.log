@@ -1,0 +1,2 @@
+llm-t1: 4 matches, 4 wins; leakage probe 249/249 differing frames, 0 fog-violation frames.
+Wrote 4 match results, 2 leakage probes and report.md to docs/results/2026-09-29-claude-transfer-pilot/luna-pilot/run in 2414s.

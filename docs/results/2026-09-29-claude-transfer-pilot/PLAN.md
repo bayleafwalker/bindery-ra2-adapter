@@ -82,3 +82,21 @@ rhino-rush >= 30% of Claude's pooled Soviet proposals, a threshold set after see
 the per-cell mechanism check above (rhino-rush the top playbook in most Claude-worse cells), and the sign-test
 p condition is stated as a threshold instead of one example. Pilot counts corrected (201 Primary, not 210; 1 API
 failure among 6 failed records).
+
+## Amendment: the 20-cell test's model and scope (2026-09-29 19:49, before the test's first match)
+The first launch (18:43, API, `claude-opus-5`, `--seeds 4`, both arms) was stopped at ~18:47 before any match
+finished, because it would have spent ~$110 of a limited API budget, half of it on Allied cells the rule does not
+use. API spend for the whole pilot line ends at $13.39. Two changes, nothing else:
+- **Model:** `gpt-6-luna` through OpenCode Go (a flat subscription), via `ocgo_proxy.py`, a local forwarder that
+  adds the key and the `x-opencode-session` header and translates chat/completions to the Responses API that the
+  GPT models require. The question becomes: does an affordable model that could actually play repeat worker-fast's
+  Soviet mistake, and does it hold up against the selector? Luna was chosen on a 4-cell pilot on the same cells as
+  attempt 3 (`luna-pilot/`, 19:07-19:47): 4 of 4 won, 177 Primary proposals, 0 rejected, 3 superseded, 0 API
+  failures, median latency 11 s (p90 15 s), ~$0.04. Its Soviet proposals were all `generic-expand` (58 of 58),
+  none rhino-rush. Other candidates probed: Kimi K2.7 Code (pilot at the same time: median 57 s, ~12% upstream
+  5xx; too slow for play), DeepSeek V4 Flash and Qwen3.7 Plus (valid JSON but not piloted), MiniMax M3 and
+  DeepSeek V4.1 Flash (no valid structured output), GLM-5.3 Flash (70 s per call).
+- **Scope:** Soviet cells only, via the new `--seed-list 2,4` (#34): 20 LLM and 20 selector matches, main at 852e625.
+The decision rule is unchanged. With 0% rhino-rush in the pilot the guard branch is unlikely; the test mainly
+separates "holds up as Soviet" (next build: perception / attack gate) from "loses for another reason" (read the
+losing logs first).
