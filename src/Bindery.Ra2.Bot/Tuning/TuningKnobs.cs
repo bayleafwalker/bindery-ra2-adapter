@@ -72,7 +72,30 @@ public static class TuningKnobs
     public static IReadOnlyList<OptionKnob> Diagnostic { get; } =
     [
         new("ScoutingCoverageCap", 0, 1, false, "Caps the reported scouting coverage (diagnostic; never tuned)."),
+        new("BaseSightingWeightCap", 0, 1, false, "Caps the base-sighting term of the attack gate's evidence weight (diagnostic; never tuned)."),
     ];
+
+    /// <summary>
+    /// True when <paramref name="name"/> is applied to <see cref="OperationalOptions"/> (a tuned operational knob or an
+    /// operational diagnostic one); otherwise it belongs to <see cref="FeatureOptions"/>. Derived from the operational
+    /// <see cref="Get(OperationalOptions, string)"/> switch, so a new knob needs no second registration.
+    /// </summary>
+    public static bool IsOperational(string name)
+    {
+        try
+        {
+            Get(new OperationalOptions(), name);
+            return true;
+        }
+        catch (InvalidDataException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>The declared knob (tuned, feature or diagnostic) named <paramref name="name"/>, or null.</summary>
+    public static OptionKnob? Find(string name) =>
+        Operational.Concat(Features).Concat(Diagnostic).FirstOrDefault(k => k.Name == name);
 
     /// <summary>Reads a knob's value from <paramref name="options"/>.</summary>
     public static double Get(OperationalOptions options, string name)
@@ -94,6 +117,7 @@ public static class TuningKnobs
             "ReinforceSquadTargetSize" => options.ReinforceSquadTargetSize,
             "ScoutRevisitSeconds" => options.ScoutRevisitSeconds,
             "MinAttackForceRatio" => options.MinAttackForceRatio,
+            "BaseSightingWeightCap" => options.BaseSightingWeightCap,
             "SeenAttackForceRatio" => options.SeenAttackForceRatio,
             "EnemyPriorValuePerSecond" => options.EnemyPriorValuePerSecond,
             "EnemyPriorMaxValue" => options.EnemyPriorMaxValue,
@@ -123,6 +147,7 @@ public static class TuningKnobs
             "ReinforceSquadTargetSize" => options with { ReinforceSquadTargetSize = i },
             "ScoutRevisitSeconds" => options with { ScoutRevisitSeconds = value },
             "MinAttackForceRatio" => options with { MinAttackForceRatio = value },
+            "BaseSightingWeightCap" => options with { BaseSightingWeightCap = value },
             "SeenAttackForceRatio" => options with { SeenAttackForceRatio = value },
             "EnemyPriorValuePerSecond" => options with { EnemyPriorValuePerSecond = value },
             "EnemyPriorMaxValue" => options with { EnemyPriorMaxValue = value },

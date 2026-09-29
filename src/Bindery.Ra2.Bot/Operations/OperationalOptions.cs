@@ -74,6 +74,11 @@ namespace Bindery.Ra2.Bot.Operations;
 /// The launch ratio when the enemy estimate rests on a fresh, fully confident sighting. The required ratio slides
 /// linearly from <see cref="MinAttackForceRatio"/> (no usable evidence) to this by <see cref="EnemyArmyBound.EvidenceWeight"/>.
 /// </param>
+/// <param name="BaseSightingWeightCap">
+/// Ceiling in [0, 1] on the base-sighting term of <see cref="EnemyArmyBound.EvidenceWeight"/> (the army-sighting term
+/// is not capped). 1 leaves the weight as the max of both freshness terms; lower values stop a recently seen base
+/// with no army in it from counting as full evidence of a small army. Diagnostic knob, never tuned.
+/// </param>
 /// <param name="EnemyPriorValuePerSecond">
 /// Army value an unseen enemy is assumed to add per second after <see cref="EnemyPriorStartSeconds"/>. From the
 /// 75th percentile of running-peak opponent army value on training maps against training opponents (0 until
@@ -119,6 +124,7 @@ public sealed record OperationalOptions(
     double UnknownQueueReorderSeconds = 5,
     double MinAttackForceRatio = 1.2,
     double SeenAttackForceRatio = 0.8,
+    double BaseSightingWeightCap = 1.0,
     double EnemyPriorValuePerSecond = 12,
     double EnemyPriorStartSeconds = 75,
     double EnemyPriorMaxValue = 1600,

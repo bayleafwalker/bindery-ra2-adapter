@@ -180,6 +180,9 @@ public sealed partial class OperationalPlanner
             double baseSeenAge = EnemyBaseSeenAgeSeconds(belief);
             double forceRatio = EnemyArmyBound.LowerForceRatio(army, features.Enemy, baseSeenAge, belief.Time.Seconds, options);
             double requiredRatio = EnemyArmyBound.RequiredForceRatio(features.Enemy, baseSeenAge, options);
+            double evidenceWeight = EnemyArmyBound.EvidenceWeight(features.Enemy, baseSeenAge, options);
+            double enemyUpper = EnemyArmyBound.Upper(features.Enemy, baseSeenAge, belief.Time.Seconds, options);
+            string gate = string.Create(CultureInfo.InvariantCulture, $"w {evidenceWeight:0.00}, upper {enemyUpper:0}, baseAge {Math.Min(baseSeenAge, 999):0}s");
             bool enemyAllows = forceRatio >= requiredRatio;
             bool ready = wanted && (attacking ? army >= minArmy * options.AttackHoldFraction : conditions && enemyAllows && army >= minArmy);
             if (ready)
@@ -205,7 +208,7 @@ public sealed partial class OperationalPlanner
                 {
                     Fill(attackers, pool);
                 }
-                notes.Add(string.Create(CultureInfo.InvariantCulture, $"squads: attacking {target} with army value {army:0}"));
+                notes.Add(string.Create(CultureInfo.InvariantCulture, $"squads: attacking {target} with army value {army:0} (force ratio {Math.Min(forceRatio, 99):0.00}/{requiredRatio:0.00}, {gate})"));
             }
             else
             {
@@ -213,7 +216,7 @@ public sealed partial class OperationalPlanner
                 // With no attack coming, the army waits where the strategist asked it to defend (else at home).
                 RegionId staging = wanted ? StagingRegion(belief, features, intent, graph, home, attack?.Region) : defendObjective?.Region ?? home;
                 Fill(GetOrCreate(DefendSquad, ObjectiveKind.DefendRegion, staging, engage: true), pool);
-                if (wanted) notes.Add(string.Create(CultureInfo.InvariantCulture, $"squads: staging at {staging} (army {army:0}/{minArmy:0}, conditions {(conditions ? "hold" : "not met")}, force ratio {Math.Min(forceRatio, 99):0.00}/{requiredRatio:0.00})"));
+                if (wanted) notes.Add(string.Create(CultureInfo.InvariantCulture, $"squads: staging at {staging} (army {army:0}/{minArmy:0}, conditions {(conditions ? "hold" : "not met")}, force ratio {Math.Min(forceRatio, 99):0.00}/{requiredRatio:0.00}, {gate})"));
             }
         }
 

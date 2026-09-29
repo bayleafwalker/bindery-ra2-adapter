@@ -202,9 +202,11 @@ public sealed record CliOptions(
                             throw new ArgumentException($"--knob expects Name=value, got '{spec}'.");
                         }
                         string knob = spec[..eq];
-                        if (!Bindery.Ra2.Bot.Tuning.TuningKnobs.Operational.Any(k => k.Name == knob) && !Bindery.Ra2.Bot.Tuning.TuningKnobs.Features.Any(k => k.Name == knob) && !Bindery.Ra2.Bot.Tuning.TuningKnobs.Diagnostic.Any(k => k.Name == knob))
+                        Bindery.Ra2.Bot.Tuning.OptionKnob declared = Bindery.Ra2.Bot.Tuning.TuningKnobs.Find(knob)
+                            ?? throw new ArgumentException($"Unknown knob '{knob}'.");
+                        if (!double.IsFinite(value) || value < declared.Min || value > declared.Max)
                         {
-                            throw new ArgumentException($"Unknown knob '{knob}'.");
+                            throw new ArgumentException(string.Create(CultureInfo.InvariantCulture, $"Knob '{knob}' must be a finite value in [{declared.Min}, {declared.Max}], got {value}."));
                         }
                         knobs[knob] = value;
                         break;
