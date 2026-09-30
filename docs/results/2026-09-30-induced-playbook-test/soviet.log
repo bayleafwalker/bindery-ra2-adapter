@@ -1,0 +1,8 @@
+warning: arm 'pinned:induced-generic-expand-soviet-8f797e00' plays Allied but playbook 'induced-generic-expand-soviet-8f797e00' lists only Soviet; the selector fallback plays this side.
+pinned:induced-generic-expand-soviet-8f797e00: 20 matches, 19 wins; leakage probe 0/672 differing frames, 0 fog-violation frames.
+warning: arm 'pinned:induced-soviet-rhino-rush-soviet-7d66f1a3' plays Allied but playbook 'induced-soviet-rhino-rush-soviet-7d66f1a3' lists only Soviet; the selector fallback plays this side.
+pinned:induced-soviet-rhino-rush-soviet-7d66f1a3: 20 matches, 9 wins; leakage probe 0/672 differing frames, 0 fog-violation frames.
+pinned:generic-expand: 20 matches, 19 wins; leakage probe 0/672 differing frames, 0 fog-violation frames.
+selector: 20 matches, 15 wins; leakage probe 0/672 differing frames, 0 fog-violation frames.
+Wrote 80 match results, 8 leakage probes and report.md to docs/results/2026-09-30-induced-playbook-test/soviet in 23s.
+EXIT=0

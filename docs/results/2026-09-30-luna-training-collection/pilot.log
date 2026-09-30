@@ -1,0 +1,3 @@
+llm-t1: 6 matches, 6 wins; leakage probe 243/243 differing frames, 0 fog-violation frames.
+Wrote 6 match results, 2 leakage probes and report.md to docs/results/2026-09-30-luna-training-collection/run in 2101s.
+EXIT=0
