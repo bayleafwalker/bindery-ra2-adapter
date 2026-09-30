@@ -33,25 +33,40 @@ internal static class InduceFixtures
     {
         Directory.CreateDirectory(dir);
         StringBuilder log = new();
+        // Noise (logged first, so the Primary LLM activations below are the ones in force) the inducer must ignore: a fallback proposal and a selector-sourced primary one.
+        log.AppendLine(Proposal(1, "Fallback", "Selector", "generic-defend", []));
+        log.AppendLine(Proposal(2, "Primary", "Selector", "generic-defend", []));
         for (int i = 0; i < proposals; i++)
         {
             log.AppendLine(Proposal(i * 900, "Primary", "Llm", playbook, new Dictionary<string, double> { [parameter] = value }, $"{stem}-{i}"));
         }
-        // Noise the inducer must ignore: a fallback proposal and a selector-sourced primary one.
-        log.AppendLine(Proposal(1, "Fallback", "Selector", "generic-defend", []));
-        log.AppendLine(Proposal(2, "Primary", "Selector", "generic-defend", []));
         // Distinct per match: the inducer drops byte-identical logs as one match.
         log.AppendLine(JsonSerializer.Serialize(new { kind = "match.marker", frame = 0, data = new { stem } }));
-        log.AppendLine(Plan(5, "squads: staging at r2 (army 0/1500, conditions not met, force ratio 99.00/1.20)"));
+        string? last = proposals > 0 ? $"{stem}-{proposals - 1}" : null;
+        log.AppendLine(Plan(5, "squads: staging at r2 (army 0/1500, conditions not met, force ratio 99.00/1.20)", last));
         if (launchSeconds is { } seconds)
         {
             long frame = (long)Math.Round(seconds * 15);
-            log.AppendLine(Plan(frame, string.Create(CultureInfo.InvariantCulture, $"squads: attacking r8 with army value {launchArmy} (force ratio 2.00/1.20, w 0.00, upper 2400, baseAge 84s)")));
-            log.AppendLine(Plan(frame + 100, "squads: attacking r8 with army value 99999"));
+            log.AppendLine(Plan(frame, string.Create(CultureInfo.InvariantCulture, $"squads: attacking r8 with army value {launchArmy} (force ratio 2.00/1.20, w 0.00, upper 2400, baseAge 84s)"), last));
+            log.AppendLine(Plan(frame + 100, "squads: attacking r8 with army value 99999", last));
         }
         if (extraLine is not null) log.AppendLine(extraLine);
         File.WriteAllText(Path.Combine(dir, stem + ".ndjson"), log.ToString());
 
+        WriteManifest(dir, stem, seed, split, winner, arm, opponent);
+    }
+
+    /// <summary>A won training match with exactly the given log lines (plus a distinguishing marker).</summary>
+    public static void Custom(string dir, string stem, int seed, params string[] lines)
+    {
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, stem + ".ndjson"),
+            string.Join('\n', lines.Append(JsonSerializer.Serialize(new { kind = "match.marker", frame = 0, data = new { stem } }))) + "\n");
+        WriteManifest(dir, stem, seed, "training", 0, Arm, "ai-rush");
+    }
+
+    private static void WriteManifest(string dir, string stem, int seed, string split, int? winner, string arm, string opponent)
+    {
         MatchManifest manifest = new(MatchManifest.CurrentSchema, new ArmSpec(arm, false, false), opponent, "twin-valley", split, seed, 1200, BenchmarkSettings.Standard,
             null, null, null, winner, "elimination", 600);
         File.WriteAllText(Path.Combine(dir, stem + ".match.json"), manifest.ToJson());
@@ -75,8 +90,13 @@ internal static class InduceFixtures
         return dir;
     }
 
-    private static string Proposal(long frame, string role, string source, string playbook, Dictionary<string, double> parameters, string? intentId = null) =>
-        JsonSerializer.Serialize(new { kind = "strategy.proposal", frame, data = new { role, intent = new { intentId, source, playbookId = playbook, playbookParameters = parameters } } });
+    /// <summary>The arbiter's record of adopting a proposal (what the inducer counts).</summary>
+    public static string Proposal(long frame, string role, string source, string playbook, Dictionary<string, double> parameters, string? intentId = null) =>
+        JsonSerializer.Serialize(new { kind = "strategy.intent_activated", frame, data = new { role, intentId, renewal = false, intent = new { intentId, source, playbookId = playbook, playbookParameters = parameters } } });
+
+    /// <summary>A validated proposal the arbiter refused (no activation follows).</summary>
+    public static string Refused(string intentId) =>
+        JsonSerializer.Serialize(new { kind = "strategy.validation", frame = 1, data = new { role = "Primary", intentId, accepted = true, arbitration = "Refused", arbitrationReason = "hysteresis" } });
 
     /// <summary>The scheduler's record of a proposal its validator rejected.</summary>
     public static string Rejected(string intentId) =>
@@ -86,8 +106,8 @@ internal static class InduceFixtures
     public static string Discarded(string intentId) =>
         JsonSerializer.Serialize(new { kind = "strategy.late_discarded", frame = 1, data = new { role = "Primary", intentId, reason = "age" } });
 
-    private static string Plan(long frame, string note) =>
-        JsonSerializer.Serialize(new { kind = "operations.plan", frame, data = new { notes = new[] { note } } });
+    public static string Plan(long frame, string note, string? intentId = null) =>
+        JsonSerializer.Serialize(new { kind = "operations.plan", frame, data = new { intentId, notes = new[] { note } } });
 
     public static PlaybookLibrary Library() => PlaybookLibrary.LoadDefault();
 }
@@ -289,6 +309,123 @@ public sealed class PlaybookInduceTests : IDisposable
         Assert.Contains("49 proposals in 4 won matches", Assert.Single(result.Playbooks).Description);
     }
 
+    private static string Attack(long frame, int army, string intentId) => InduceFixtures.Plan(frame, $"squads: attacking r8 with army value {army} (force ratio 2.00/1.20)", intentId);
+
+    private static string Stage(long frame, string intentId) => InduceFixtures.Plan(frame, "squads: staging at r2 (army 0/1500, conditions not met)", intentId);
+
+    private static Dictionary<string, double> P(double v) => new() { ["attackArmyValue"] = v };
+
+    [Fact]
+    public void Each_supporting_match_weighs_the_same_in_the_parameter_medians()
+    {
+        string dir = Path.Combine(root, "decisions");
+        // Two matches renewing 10 times at 2000 and two proposing once at 1000: per proposal the median is 2000, per match 1500.
+        for (int m = 0; m < 4; m++)
+        {
+            bool heavy = m < 2;
+            string[] lines = [.. Enumerable.Range(0, heavy ? 10 : 1).Select(i => InduceFixtures.Proposal(i * 10, "Primary", "Llm", "soviet-rhino-rush", P(heavy ? 2000 : 1000), $"w{m}-{i}")), Attack(5000, 1500, $"w{m}-{(heavy ? 9 : 0)}")];
+            InduceFixtures.Custom(dir, $"w{m}", 2 + 2 * m, lines);
+        }
+        Playbook induced = Assert.Single(Induce(dir).Playbooks);
+        Assert.Equal(1500, Assert.Single(induced.Parameters).Default);
+        Assert.Contains("4 matches (22 proposals), per-match medians: median 1500", Induce(dir).Report);
+    }
+
+    [Fact]
+    public void Proposals_the_arbiter_refused_do_not_count()
+    {
+        string dir = Path.Combine(root, "decisions");
+        for (int m = 0; m < 4; m++)
+        {
+            // Validated and accepted, but arbitration refused: no activation follows, so no support and no launch credit.
+            InduceFixtures.Custom(dir, $"a{m}", 2 + 2 * m,
+                InduceFixtures.Proposal(0, "Primary", "Llm", "soviet-rhino-rush", P(1000), $"a{m}-0"),
+                InduceFixtures.Proposal(10, "Primary", "Llm", "soviet-rhino-rush", P(5000), $"a{m}-1").Replace("strategy.intent_activated", "strategy.proposal"),
+                InduceFixtures.Refused($"a{m}-1"),
+                Attack(5000, 1500, $"a{m}-0"));
+        }
+        InductionResult result = Induce(dir);
+        Playbook induced = Assert.Single(result.Playbooks);
+        Assert.Equal(1000, Assert.Single(induced.Parameters).Default);
+        Assert.Contains("4 proposals in 4 won matches", induced.Description);
+    }
+
+    [Fact]
+    public void A_launch_is_credited_only_to_the_cluster_whose_playbook_was_active()
+    {
+        string dir = Path.Combine(root, "decisions");
+        for (int m = 0; m < 4; m++)
+        {
+            // rhino-rush is adopted first and launches at 100 s with army 1000; soviet-turtle replaces it and launches at 300 s with army 3000.
+            InduceFixtures.Custom(dir, $"b{m}", 2 + 2 * m,
+                InduceFixtures.Proposal(0, "Primary", "Llm", "soviet-rhino-rush", P(1000), $"b{m}-0"),
+                Attack(1500, 1000, $"b{m}-0"),
+                Stage(1700, $"b{m}-0"),
+                InduceFixtures.Proposal(2000, "Primary", "Llm", "soviet-turtle", [], $"b{m}-1"),
+                Stage(2100, $"b{m}-1"),
+                Attack(4500, 3000, $"b{m}-1"));
+        }
+        InductionResult result = Induce(dir);
+        Playbook rush = Assert.Single(result.Playbooks, static p => p.Id.StartsWith("induced-soviet-rhino-rush-", StringComparison.Ordinal));
+        Assert.Equal(1000, rush.AttackConditions.Single(static c => c.Metric == ConditionMetric.OwnArmyValue).Threshold);
+        Assert.Equal(100, rush.AttackConditions.Single(static c => c.Metric == ConditionMetric.GameSeconds).Threshold);
+        Playbook push = Assert.Single(result.Playbooks, static p => p.Id.StartsWith("induced-soviet-turtle-", StringComparison.Ordinal));
+        Assert.Equal(3000, push.AttackConditions.Single(static c => c.Metric == ConditionMetric.OwnArmyValue).Threshold);
+        Assert.Equal(300, push.AttackConditions.Single(static c => c.Metric == ConditionMetric.GameSeconds).Threshold);
+    }
+
+    [Fact]
+    public void An_attack_that_continues_across_an_intent_switch_is_not_a_launch_of_the_new_playbook()
+    {
+        string dir = Path.Combine(root, "decisions");
+        for (int m = 0; m < 4; m++)
+        {
+            // The attack starts under rhino-rush at 100 s and goes on (the note repeats each tick) while soviet-turtle is
+            // adopted: turtle launches nothing. Later the attack stops and turtle starts another one (a rising edge) at 400 s.
+            // The two-launch variant is m >= 2; matches 0-1 never launch again under turtle.
+            List<string> lines =
+            [
+                InduceFixtures.Proposal(0, "Primary", "Llm", "soviet-rhino-rush", P(1000), $"d{m}-0"),
+                Attack(1500, 1000, $"d{m}-0"),
+                InduceFixtures.Proposal(2000, "Primary", "Llm", "soviet-turtle", [], $"d{m}-1"),
+                Attack(2100, 1200, $"d{m}-1"),
+                Attack(2200, 1300, $"d{m}-1"),
+            ];
+            if (m >= 2)
+            {
+                lines.Add(Stage(3000, $"d{m}-1"));
+                lines.Add(Attack(6000, 3000, $"d{m}-1"));
+            }
+            InduceFixtures.Custom(dir, $"d{m}", 2 + 2 * m, [.. lines]);
+        }
+        InductionResult result = Induce(dir, minSupport: 2);
+        Playbook rush = Assert.Single(result.Playbooks, static p => p.Id.StartsWith("induced-soviet-rhino-rush-", StringComparison.Ordinal));
+        Assert.Equal(1000, rush.AttackConditions.Single(static c => c.Metric == ConditionMetric.OwnArmyValue).Threshold);
+        // Only the two matches with a separate later attack launch under turtle, at 400 s with army 3000; 1200 (mid-attack) is never credited.
+        Playbook turtle = Assert.Single(result.Playbooks, static p => p.Id.StartsWith("induced-soviet-turtle-", StringComparison.Ordinal));
+        Assert.Equal(3000, turtle.AttackConditions.Single(static c => c.Metric == ConditionMetric.OwnArmyValue).Threshold);
+        Assert.Equal(400, turtle.AttackConditions.Single(static c => c.Metric == ConditionMetric.GameSeconds).Threshold);
+        Assert.Contains("2/4 matches launched", result.Report);
+    }
+
+    [Fact]
+    public void A_launch_under_no_adopted_llm_playbook_is_credited_to_nobody_and_a_small_collection_prints_the_largest_support()
+    {
+        string dir = Path.Combine(root, "decisions");
+        for (int m = 0; m < 3; m++)
+        {
+            InduceFixtures.Custom(dir, $"c{m}", 2 + 2 * m,
+                InduceFixtures.Proposal(0, "Primary", "Llm", "soviet-rhino-rush", P(1000), $"c{m}-0"),
+                InduceFixtures.Proposal(1, "Primary", "Selector", "generic-defend", [], $"c{m}-s"),
+                Attack(5000, 1500, $"c{m}-s"));
+        }
+        InductionResult result = Induce(dir, minSupport: 5);
+        Assert.Empty(result.Playbooks);
+        Assert.Contains("3 supporting won matches", result.Note);
+        Assert.Contains("--min-support 3", result.Note);
+        Assert.Null(Induce(InduceFixtures.Standard(Path.Combine(root, "std"))).Note);
+    }
+
     [Fact]
     public void The_induced_attack_gate_is_in_force_in_the_build_phase()
     {
@@ -325,7 +462,7 @@ public sealed class PlaybookInduceTests : IDisposable
         Assert.Contains("arena induce", CliOptions.Usage);
 
         Assert.Equal("training", InduceOptions.Parse(["induce", "--from", dir, "--arm", "x", "--out", outFile]).Split);
-        Assert.Equal(30, InduceOptions.Parse(["induce", "--from", dir, "--arm", "x", "--out", outFile]).MinSupport);
+        Assert.Equal(5, InduceOptions.Parse(["induce", "--from", dir, "--arm", "x", "--out", outFile]).MinSupport);
         Assert.Equal(1, Program.Main(["induce", "--from", dir, "--arm", "x"]));
         Assert.Equal(1, Program.Main(["induce", "--from", dir, "--arm", "x", "--out", outFile, "--split", "validation"]));
     }

@@ -202,12 +202,16 @@ to play a faction its playbook does not list.
 `arena induce --from <dir> [--from <dir> ...] --arm <arm> [--split training|heldout|all] --out <playbooks.json>
 [--report <md>] [--min-support N] [--playbooks <file> ...]` compiles an arm's decision logs
 (`decisions/<match>.ndjson` and `.match.json`, found recursively under each `--from`) into playbooks. For each
-(faction, chosen base playbook) cluster with at least `--min-support` (default 30) won matches in which the arm proposed it (a match counts
-once however often it proposed the choice; proposals the validator rejected or the scheduler discarded late are
-ignored), it writes `induced-<base>-<faction>-<hash of inputs>`: the base's posture, budget,
-composition and parameter ranges, parameter defaults at the medians the model proposed (clamped to the base's
+(faction, chosen base playbook) cluster with at least `--min-support` (default 5) won matches in which the arm proposed it (a match counts
+once however often it proposed the choice; only proposals the arbiter adopted count, so ones the validator rejected,
+the scheduler discarded late or the arbiter refused, e.g. to keep the incumbent, are ignored; when no cluster reaches
+the threshold the largest cluster's support is printed), it writes `induced-<base>-<faction>-<hash of inputs>`: the base's posture, budget,
+composition and parameter ranges, parameter defaults at the median, over the supporting matches, of each match's median proposed value (so a match
+that renewed 40 times weighs the same as one that proposed twice; clamped to the base's
 range), and two phases, `build` and `attack`. `attack` is entered when `OwnArmyValue` reaches the median army
-value at the arm's first launch in those matches and `GameSeconds` reaches the 25th percentile of first-launch
+value at the arm's first launch in those matches at its rising edge (an attacking squad note repeats every plan tick, so a playbook adopted mid-attack launches nothing) while that playbook was the active one (a launch is credited only to the
+cluster whose playbook was active at the time; a match with no such launch still supports the cluster but adds no launch
+statistics) and `GameSeconds` reaches the 25th percentile of first-launch
 time; its attack conditions are the base's with the `OwnArmyValue` bound at that median (added when the base has
 none) and a `GameSeconds` floor at that time, set both on the `attack` phase and on the playbook itself, so the gate
 also holds in the `build` phase. The output is byte-identical for identical logs. `--split` defaults to `training` (a training map against a training opponent, as in the dataset export; held-out

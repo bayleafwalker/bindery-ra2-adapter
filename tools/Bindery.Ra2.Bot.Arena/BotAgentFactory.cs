@@ -175,6 +175,14 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
     /// <summary>Prefix of the deterministic pinned arm, <c>pinned:&lt;playbookId&gt;</c>: tier 3 of the LLM-to-playbook pipeline.</summary>
     public const string PinnedPrefix = "pinned:";
 
+    private static readonly HashSet<(string, Faction)> PinnedWarned = [];
+
+    /// <summary>True the first time this (playbook id, faction) is asked about in the process, so the pinned-arm faction warning prints once per pair, not once per match.</summary>
+    public static bool WarnedPinned(string playbookId, Faction faction)
+    {
+        lock (PinnedWarned) return PinnedWarned.Add((playbookId, faction));
+    }
+
     /// <summary>The playbook id of a <c>pinned:&lt;id&gt;</c> arm name, or null for any other name.</summary>
     public static string? PinnedPlaybookId(string name) =>
         name.StartsWith(PinnedPrefix, StringComparison.Ordinal) && name.Length > PinnedPrefix.Length ? name[PinnedPrefix.Length..] : null;
@@ -300,7 +308,7 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
                     // override of the opponent styles. A faction the playbook does not list gets no proposal, so the
                     // selector fallback plays that side.
                     if (!playbooks.TryGet(pinnedId, out Playbook pinnedPlaybook)) throw new ArgumentException($"Unknown playbook '{pinnedId}' in arm '{arm.Name}'.");
-                    if (!pinnedPlaybook.Factions.Contains(faction))
+                    if (!pinnedPlaybook.Factions.Contains(faction) && WarnedPinned(pinnedId, faction))
                     {
                         Console.Error.WriteLine($"warning: arm '{arm.Name}' plays {faction} but playbook '{pinnedId}' lists only {string.Join(", ", pinnedPlaybook.Factions)}; the selector fallback plays this side.");
                     }
