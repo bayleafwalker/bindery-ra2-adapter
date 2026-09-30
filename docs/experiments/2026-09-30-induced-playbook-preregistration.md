@@ -1,5 +1,5 @@
 # Induced playbooks on held-out cells (pre-registration, 2026-09-30)
-**Outcome (2026-09-30 ~21:00): rule branch 1. The candidate beat the selector on 5 cells and lost on 1 of 20 Soviet held-out cells (19 vs 15 wins). Pipeline works end to end; next build is a playbook promotion gate. The candidate equals its base on all 20 cells. See `docs/results/2026-09-30-induced-playbook-test/RESULTS.md`.**
+**Outcome (2026-09-30 ~21:00): rule branch 1. The candidate beat the selector on 5 cells and lost on 1 of 20 Soviet held-out cells (19 vs 15 wins). Pipeline works end to end; next build is a playbook promotion gate. The candidate has the same winner as its base in all 20 cells. Against PR #38's selector results the margin would be better 3 / worse 1, still branch 1 but at the threshold. See `docs/results/2026-09-30-induced-playbook-test/RESULTS.md`.**
 **Status: registered before `arena induce` was run on the collection.** Written while the training collection
 (`docs/results/2026-09-30-luna-training-collection/`) was still playing; no induced playbook existed when this was
 committed. Every value below is fixed now; nothing is tuned on held-out data.
@@ -18,7 +18,7 @@ playbook at defaults?
   --min-support 6 --out induced.json --report induce-report.md`, at the merge commit of PR #43 (5435efd; PR #42's inducer
   plus its re-review follow-ups: only adopted LLM intents count, per-match parameter medians, launches credited to
   the playbook active at launch). Amended 2026-09-30 ~20:10, before induce ran on the collection, when #43 was
-  opened; the original text named #42's merge commit (6093615). `--min-support 6` = half of the 12 matches per faction, fixed before seeing any cluster; the PR's
+  opened; the original text named "the merge commit of PR #42" (later 6093615). `--min-support 6` = half of the 12 matches per faction, fixed before seeing any cluster; the PR's
   default (30 won matches) cannot be reached by a 24-match collection. No other inducer option is set.
 - Candidates: every induced playbook for Soviet (`induced-<base>-soviet-<hash>`). If more than one, each is tested
   and the decision reads the one with the most supporting matches (ties: lexicographically first id), named in the
@@ -49,7 +49,7 @@ better = cells the candidate wins and the selector loses; worse = the reverse.
 
 Secondary, reported, decides nothing: candidate vs `pinned:<base>` (does compiling add over the base?), each arm's
 wins per opponent and per map, and the fortress-choke hard cells (ai-horde:hard, ai-armor:hard) where the selector
-lost and Luna won in PR #38. Allied induced playbooks, if any, are reported on seeds 1 and 3 of the same maps and
+lost (3 of 4 in PR #38; the selector won ai-armor:hard seed 4) and Luna won in PR #38. Allied induced playbooks, if any, are reported on seeds 1 and 3 of the same maps and
 opponents, also secondary.
 
 ## Known contamination, stated before the run
