@@ -23,7 +23,7 @@ public sealed class PinnedArmTests : IDisposable
         string dir = Path.Combine(root, Guid.NewGuid().ToString("N"));
         Assert.Equal(0, Program.Main(["run", "--arms", arm, "--maps", "training", "--opponents", "ai-rush", "--seed-list", seed, "--max-seconds", "120", "--out", dir, .. extra]));
         List<JsonElement> records = [];
-        foreach (string log in Directory.GetFiles(Path.Combine(dir, "decisions"), "*.ndjson"))
+        foreach (string log in Directory.GetFiles(Path.Combine(dir, "decisions"), "*.ndjson").OrderBy(static f => f, StringComparer.Ordinal))
         {
             records.AddRange(File.ReadAllLines(log).Where(static l => l.Length > 0).Select(static l => JsonDocument.Parse(l).RootElement.Clone()));
         }
