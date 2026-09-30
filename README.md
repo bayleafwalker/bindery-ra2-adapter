@@ -209,7 +209,7 @@ the threshold the largest cluster's support is printed), it writes `induced-<bas
 composition and parameter ranges, parameter defaults at the median, over the supporting matches, of each match's median proposed value (so a match
 that renewed 40 times weighs the same as one that proposed twice; clamped to the base's
 range), and two phases, `build` and `attack`. `attack` is entered when `OwnArmyValue` reaches the median army
-value at the arm's first launch in those matches while that playbook was the active one (a launch is credited only to the
+value at the arm's first launch in those matches at its rising edge (an attacking squad note repeats every plan tick, so a playbook adopted mid-attack launches nothing) while that playbook was the active one (a launch is credited only to the
 cluster whose playbook was active at the time; a match with no such launch still supports the cluster but adds no launch
 statistics) and `GameSeconds` reaches the 25th percentile of first-launch
 time; its attack conditions are the base's with the `OwnArmyValue` bound at that median (added when the base has

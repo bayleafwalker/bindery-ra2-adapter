@@ -87,7 +87,7 @@ public static partial class PlaybookInducer
 
     private sealed record Launch(double Seconds, double Army);
 
-    /// <summary><paramref name="Launches"/>: per playbook id, the match's first attack launch while an LLM-chosen intent of that playbook was active.</summary>
+    /// <summary><paramref name="Launches"/>: per playbook id, the match's first attack launch (rising edge) under an adopted LLM intent of that playbook.</summary>
     private sealed record MatchData(string File, string Sha, Faction Faction, bool Won, string Split, IReadOnlyList<Proposal> Proposals, IReadOnlyDictionary<string, Launch> Launches);
 
     private sealed class Cluster(Faction faction, string basePlaybook)
@@ -171,8 +171,8 @@ public static partial class PlaybookInducer
             report.AppendLine();
             report.AppendLine(CultureInfo.InvariantCulture, $"- cluster: {cluster.Faction}, base `{cluster.Base}`");
             report.AppendLine(CultureInfo.InvariantCulture, $"- supporting: {cluster.Won.Count} proposals in {supportMatches} won matches; the arm chose this base in {cluster.AllMatches} matches of the split, won {cluster.Wins} of them");
-            report.AppendLine(CultureInfo.InvariantCulture, $"- first launch time (s), {launchTimes.Length}/{supportMatches} matches launched: {Distribution(launchTimes)}");
-            report.AppendLine(CultureInfo.InvariantCulture, $"- first launch army value, {launchArmy.Length}/{supportMatches} matches launched: {Distribution(launchArmy)}");
+            report.AppendLine(CultureInfo.InvariantCulture, $"- first launch under this playbook, time (s), {launchTimes.Length}/{supportMatches} matches launched: {Distribution(launchTimes)}");
+            report.AppendLine(CultureInfo.InvariantCulture, $"- first launch under this playbook, army value, {launchArmy.Length}/{supportMatches} matches launched: {Distribution(launchArmy)}");
             report.AppendLine(CultureInfo.InvariantCulture, $"- attack phase enters at OwnArmyValue >= {Fmt(armyMedian)} and GameSeconds >= {Fmt(timeP25)}; the playbook's top-level attack conditions (in force in every phase) carry the same army and time bounds");
             report.Append(parameterReport);
             report.AppendLine("- source logs (SHA-256):");
@@ -336,24 +336,27 @@ public static partial class PlaybookInducer
 
     /// <summary>
     /// The Primary LLM intents the arbiter adopted (<c>strategy.intent_activated</c>, renewals included) and, per
-    /// playbook, the first attack launch (game seconds, army value) that happened while an adopted LLM intent of
-    /// that playbook was the active one. A proposal the validator rejected, the scheduler discarded or the arbiter
-    /// refused has no activation record and never counts.
+    /// playbook, the first attack launch (game seconds, army value) under that playbook. A launch is the rising
+    /// edge of attacking: an <c>operations.plan</c> with a <c>squads: attacking</c> note whose previous plan had
+    /// none (the note repeats on every plan tick of an ongoing attack, so a playbook adopted mid-attack launches
+    /// nothing). It is credited through the plan's own <c>intentId</c> to the playbook of that intent, provided the
+    /// intent was adopted as a Primary LLM one. A proposal the validator rejected, the scheduler discarded or the
+    /// arbiter refused has no activation record and never counts.
     /// </summary>
     private static (List<Proposal> Proposals, Dictionary<string, Launch> Launches) Read(byte[] bytes)
     {
         List<Proposal> proposals = [];
         HashSet<string> dropped = new(StringComparer.Ordinal);
         Dictionary<string, Launch> launches = new(StringComparer.Ordinal);
-        string? activeId = null, activePlaybook = null;   // the active intent, and its playbook when an adopted Primary LLM one
+        Dictionary<string, string> adopted = new(StringComparer.Ordinal);   // intentId -> playbook, adopted Primary LLM intents only
+        bool wasAttacking = false;
         foreach (string line in Encoding.UTF8.GetString(bytes).Split('\n'))
         {
             bool isActivation = line.Contains("\"strategy.intent_activated\"", StringComparison.Ordinal);
-            bool isEnd = line.Contains("\"strategy.intent_ended\"", StringComparison.Ordinal);
-            bool isPlan = line.Contains("\"operations.plan\"", StringComparison.Ordinal) && line.Contains("squads: attacking", StringComparison.Ordinal);
+            bool isPlan = line.Contains("\"operations.plan\"", StringComparison.Ordinal);
             bool isRejection = line.Contains("\"strategy.validation\"", StringComparison.Ordinal) && line.Contains("\"accepted\":false", StringComparison.Ordinal);
             bool isLate = line.Contains("\"strategy.late_discarded\"", StringComparison.Ordinal);
-            if (!isActivation && !isEnd && !isPlan && !isRejection && !isLate) continue;
+            if (!isActivation && !isPlan && !isRejection && !isLate) continue;
             using JsonDocument doc = JsonDocument.Parse(line);
             JsonElement root = doc.RootElement;
             JsonElement data = root.GetProperty("data");
@@ -362,14 +365,10 @@ public static partial class PlaybookInducer
                 // Rejected in validation or discarded late by the scheduler: never took effect, so no support.
                 if (data.TryGetProperty("intentId", out JsonElement dropId) && dropId.GetString() is { } droppedId) dropped.Add(droppedId);
             }
-            else if (isEnd)
-            {
-                if (data.TryGetProperty("intentId", out JsonElement endedId) && endedId.GetString() == activeId) (activeId, activePlaybook) = (null, null);
-            }
             else if (isActivation)
             {
-                activeId = data.TryGetProperty("intentId", out JsonElement activated) ? activated.GetString() : null;
-                activePlaybook = null;
+                // A Selector or Fallback activation (a renewal of the same playbook included, IntentArbiter.Renew) is not
+                // recorded here, so its plans are credited to nobody: the selector's parameters apply then, not the model's.
                 if (data.GetProperty("role").GetString() != "Primary" || !data.TryGetProperty("intent", out JsonElement intent) || intent.ValueKind != JsonValueKind.Object) continue;
                 if (intent.GetProperty("source").GetString() != "Llm") continue;
                 string? playbook = intent.GetProperty("playbookId").GetString();
@@ -382,18 +381,28 @@ public static partial class PlaybookInducer
                         if (property.Value.ValueKind == JsonValueKind.Number) parameters[property.Name] = property.Value.GetDouble();
                     }
                 }
-                proposals.Add(new Proposal(playbook, parameters, activeId));
-                activePlaybook = playbook;
+                string? intentId = data.TryGetProperty("intentId", out JsonElement activated) ? activated.GetString() : null;
+                proposals.Add(new Proposal(playbook, parameters, intentId));
+                if (intentId is not null) adopted[intentId] = playbook;
             }
-            else if (activePlaybook is not null && !launches.ContainsKey(activePlaybook) && data.TryGetProperty("notes", out JsonElement notes) && notes.ValueKind == JsonValueKind.Array)
+            else
             {
-                foreach (JsonElement note in notes.EnumerateArray())
+                Match? attacking = null;
+                if (data.TryGetProperty("notes", out JsonElement notes) && notes.ValueKind == JsonValueKind.Array)
                 {
-                    Match match = LaunchNote().Match(note.GetString() ?? string.Empty);
-                    if (!match.Success) continue;
-                    launches[activePlaybook] = new Launch(root.GetProperty("frame").GetInt64() / (double)GameTime.FramesPerSecond, double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture));
-                    break;
+                    foreach (JsonElement note in notes.EnumerateArray())
+                    {
+                        Match match = LaunchNote().Match(note.GetString() ?? string.Empty);
+                        if (!match.Success) continue;
+                        attacking = match;
+                        break;
+                    }
                 }
+                bool rising = attacking is not null && !wasAttacking;
+                wasAttacking = attacking is not null;
+                if (!rising || !data.TryGetProperty("intentId", out JsonElement planIntent) || planIntent.GetString() is not { } planIntentId) continue;
+                if (!adopted.TryGetValue(planIntentId, out string? launchPlaybook) || launches.ContainsKey(launchPlaybook)) continue;
+                launches[launchPlaybook] = new Launch(root.GetProperty("frame").GetInt64() / (double)GameTime.FramesPerSecond, double.Parse(attacking!.Groups[1].Value, CultureInfo.InvariantCulture));
             }
         }
         proposals.RemoveAll(p => p.IntentId is not null && dropped.Contains(p.IntentId));

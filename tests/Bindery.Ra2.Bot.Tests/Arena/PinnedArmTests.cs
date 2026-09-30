@@ -99,21 +99,22 @@ public sealed class PinnedArmTests : IDisposable
     {
         (IRulesDatabase rules, IPlaybookLibrary library, _) = Program.LoadRules(null);
         BotAgentFactory factory = new(rules, library, new ArenaRunContext(llmFake: false, llmLatencySeconds: null));
-        ArmSpec arm = new("pinned:soviet-rhino-rush", false, false);
+        ArmSpec arm = new("pinned:allied-grizzly-timing", false, false);
         TextWriter original = Console.Error;
         StringWriter captured = new();
         Console.SetError(captured);
+        // A (playbook, faction) pair no other test uses: the warning is issued once per process.
         try
         {
-            factory.Create(arm, MatchRunner.ArmPlayer, Faction.Soviet, Bindery.Ra2.Bot.Sim.SimMaps.TwinValley.Map, 2);
+            factory.Create(arm, MatchRunner.ArmPlayer, Faction.Allied, Bindery.Ra2.Bot.Sim.SimMaps.TwinValley.Map, 2);
             Assert.Equal(string.Empty, captured.ToString());
-            factory.Create(arm, MatchRunner.ArmPlayer, Faction.Allied, Bindery.Ra2.Bot.Sim.SimMaps.TwinValley.Map, 1);
+            factory.Create(arm, MatchRunner.ArmPlayer, Faction.Soviet, Bindery.Ra2.Bot.Sim.SimMaps.TwinValley.Map, 1);
         }
         finally
         {
             Console.SetError(original);
         }
-        Assert.Contains("plays Allied but playbook 'soviet-rhino-rush' lists only Soviet", captured.ToString());
+        Assert.Contains("plays Soviet but playbook 'allied-grizzly-timing' lists only Allied", captured.ToString());
     }
 
     [Fact]

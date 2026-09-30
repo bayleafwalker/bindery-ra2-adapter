@@ -42,12 +42,13 @@ internal static class InduceFixtures
         }
         // Distinct per match: the inducer drops byte-identical logs as one match.
         log.AppendLine(JsonSerializer.Serialize(new { kind = "match.marker", frame = 0, data = new { stem } }));
-        log.AppendLine(Plan(5, "squads: staging at r2 (army 0/1500, conditions not met, force ratio 99.00/1.20)"));
+        string? last = proposals > 0 ? $"{stem}-{proposals - 1}" : null;
+        log.AppendLine(Plan(5, "squads: staging at r2 (army 0/1500, conditions not met, force ratio 99.00/1.20)", last));
         if (launchSeconds is { } seconds)
         {
             long frame = (long)Math.Round(seconds * 15);
-            log.AppendLine(Plan(frame, string.Create(CultureInfo.InvariantCulture, $"squads: attacking r8 with army value {launchArmy} (force ratio 2.00/1.20, w 0.00, upper 2400, baseAge 84s)")));
-            log.AppendLine(Plan(frame + 100, "squads: attacking r8 with army value 99999"));
+            log.AppendLine(Plan(frame, string.Create(CultureInfo.InvariantCulture, $"squads: attacking r8 with army value {launchArmy} (force ratio 2.00/1.20, w 0.00, upper 2400, baseAge 84s)"), last));
+            log.AppendLine(Plan(frame + 100, "squads: attacking r8 with army value 99999", last));
         }
         if (extraLine is not null) log.AppendLine(extraLine);
         File.WriteAllText(Path.Combine(dir, stem + ".ndjson"), log.ToString());
@@ -105,8 +106,8 @@ internal static class InduceFixtures
     public static string Discarded(string intentId) =>
         JsonSerializer.Serialize(new { kind = "strategy.late_discarded", frame = 1, data = new { role = "Primary", intentId, reason = "age" } });
 
-    public static string Plan(long frame, string note) =>
-        JsonSerializer.Serialize(new { kind = "operations.plan", frame, data = new { notes = new[] { note } } });
+    public static string Plan(long frame, string note, string? intentId = null) =>
+        JsonSerializer.Serialize(new { kind = "operations.plan", frame, data = new { intentId, notes = new[] { note } } });
 
     public static PlaybookLibrary Library() => PlaybookLibrary.LoadDefault();
 }
@@ -308,7 +309,9 @@ public sealed class PlaybookInduceTests : IDisposable
         Assert.Contains("49 proposals in 4 won matches", Assert.Single(result.Playbooks).Description);
     }
 
-    private static string Attack(long frame, int army) => InduceFixtures.Plan(frame, $"squads: attacking r8 with army value {army} (force ratio 2.00/1.20)");
+    private static string Attack(long frame, int army, string intentId) => InduceFixtures.Plan(frame, $"squads: attacking r8 with army value {army} (force ratio 2.00/1.20)", intentId);
+
+    private static string Stage(long frame, string intentId) => InduceFixtures.Plan(frame, "squads: staging at r2 (army 0/1500, conditions not met)", intentId);
 
     private static Dictionary<string, double> P(double v) => new() { ["attackArmyValue"] = v };
 
@@ -320,7 +323,7 @@ public sealed class PlaybookInduceTests : IDisposable
         for (int m = 0; m < 4; m++)
         {
             bool heavy = m < 2;
-            string[] lines = [.. Enumerable.Range(0, heavy ? 10 : 1).Select(i => InduceFixtures.Proposal(i * 10, "Primary", "Llm", "soviet-rhino-rush", P(heavy ? 2000 : 1000), $"w{m}-{i}")), Attack(5000, 1500)];
+            string[] lines = [.. Enumerable.Range(0, heavy ? 10 : 1).Select(i => InduceFixtures.Proposal(i * 10, "Primary", "Llm", "soviet-rhino-rush", P(heavy ? 2000 : 1000), $"w{m}-{i}")), Attack(5000, 1500, $"w{m}-{(heavy ? 9 : 0)}")];
             InduceFixtures.Custom(dir, $"w{m}", 2 + 2 * m, lines);
         }
         Playbook induced = Assert.Single(Induce(dir).Playbooks);
@@ -339,7 +342,7 @@ public sealed class PlaybookInduceTests : IDisposable
                 InduceFixtures.Proposal(0, "Primary", "Llm", "soviet-rhino-rush", P(1000), $"a{m}-0"),
                 InduceFixtures.Proposal(10, "Primary", "Llm", "soviet-rhino-rush", P(5000), $"a{m}-1").Replace("strategy.intent_activated", "strategy.proposal"),
                 InduceFixtures.Refused($"a{m}-1"),
-                Attack(5000, 1500));
+                Attack(5000, 1500, $"a{m}-0"));
         }
         InductionResult result = Induce(dir);
         Playbook induced = Assert.Single(result.Playbooks);
@@ -356,9 +359,11 @@ public sealed class PlaybookInduceTests : IDisposable
             // rhino-rush is adopted first and launches at 100 s with army 1000; soviet-turtle replaces it and launches at 300 s with army 3000.
             InduceFixtures.Custom(dir, $"b{m}", 2 + 2 * m,
                 InduceFixtures.Proposal(0, "Primary", "Llm", "soviet-rhino-rush", P(1000), $"b{m}-0"),
-                Attack(1500, 1000),
+                Attack(1500, 1000, $"b{m}-0"),
+                Stage(1700, $"b{m}-0"),
                 InduceFixtures.Proposal(2000, "Primary", "Llm", "soviet-turtle", [], $"b{m}-1"),
-                Attack(4500, 3000));
+                Stage(2100, $"b{m}-1"),
+                Attack(4500, 3000, $"b{m}-1"));
         }
         InductionResult result = Induce(dir);
         Playbook rush = Assert.Single(result.Playbooks, static p => p.Id.StartsWith("induced-soviet-rhino-rush-", StringComparison.Ordinal));
@@ -370,6 +375,40 @@ public sealed class PlaybookInduceTests : IDisposable
     }
 
     [Fact]
+    public void An_attack_that_continues_across_an_intent_switch_is_not_a_launch_of_the_new_playbook()
+    {
+        string dir = Path.Combine(root, "decisions");
+        for (int m = 0; m < 4; m++)
+        {
+            // The attack starts under rhino-rush at 100 s and goes on (the note repeats each tick) while soviet-turtle is
+            // adopted: turtle launches nothing. Later the attack stops and turtle starts another one (a rising edge) at 400 s.
+            // The two-launch variant is m >= 2; matches 0-1 never launch again under turtle.
+            List<string> lines =
+            [
+                InduceFixtures.Proposal(0, "Primary", "Llm", "soviet-rhino-rush", P(1000), $"d{m}-0"),
+                Attack(1500, 1000, $"d{m}-0"),
+                InduceFixtures.Proposal(2000, "Primary", "Llm", "soviet-turtle", [], $"d{m}-1"),
+                Attack(2100, 1200, $"d{m}-1"),
+                Attack(2200, 1300, $"d{m}-1"),
+            ];
+            if (m >= 2)
+            {
+                lines.Add(Stage(3000, $"d{m}-1"));
+                lines.Add(Attack(6000, 3000, $"d{m}-1"));
+            }
+            InduceFixtures.Custom(dir, $"d{m}", 2 + 2 * m, [.. lines]);
+        }
+        InductionResult result = Induce(dir, minSupport: 2);
+        Playbook rush = Assert.Single(result.Playbooks, static p => p.Id.StartsWith("induced-soviet-rhino-rush-", StringComparison.Ordinal));
+        Assert.Equal(1000, rush.AttackConditions.Single(static c => c.Metric == ConditionMetric.OwnArmyValue).Threshold);
+        // Only the two matches with a separate later attack launch under turtle, at 400 s with army 3000; 1200 (mid-attack) is never credited.
+        Playbook turtle = Assert.Single(result.Playbooks, static p => p.Id.StartsWith("induced-soviet-turtle-", StringComparison.Ordinal));
+        Assert.Equal(3000, turtle.AttackConditions.Single(static c => c.Metric == ConditionMetric.OwnArmyValue).Threshold);
+        Assert.Equal(400, turtle.AttackConditions.Single(static c => c.Metric == ConditionMetric.GameSeconds).Threshold);
+        Assert.Contains("2/4 matches launched", result.Report);
+    }
+
+    [Fact]
     public void A_launch_under_no_adopted_llm_playbook_is_credited_to_nobody_and_a_small_collection_prints_the_largest_support()
     {
         string dir = Path.Combine(root, "decisions");
@@ -378,7 +417,7 @@ public sealed class PlaybookInduceTests : IDisposable
             InduceFixtures.Custom(dir, $"c{m}", 2 + 2 * m,
                 InduceFixtures.Proposal(0, "Primary", "Llm", "soviet-rhino-rush", P(1000), $"c{m}-0"),
                 InduceFixtures.Proposal(1, "Primary", "Selector", "generic-defend", [], $"c{m}-s"),
-                Attack(5000, 1500));
+                Attack(5000, 1500, $"c{m}-s"));
         }
         InductionResult result = Induce(dir, minSupport: 5);
         Assert.Empty(result.Playbooks);
