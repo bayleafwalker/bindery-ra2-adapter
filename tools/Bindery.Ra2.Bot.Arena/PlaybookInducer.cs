@@ -18,7 +18,7 @@ public sealed record InduceOptions(
     int MinSupport,
     IReadOnlyList<string> PlaybookFiles)
 {
-    public const int DefaultMinSupport = 30;
+    public const int DefaultMinSupport = 5;
 
     public const string Usage =
         "Usage: arena induce --from <dir> [--from <dir> ...] --arm <arm> [--split training|heldout|all] --out <playbooks.json> [--report <md>] [--min-support N] [--playbooks <playbooks.json> ...]\n" +
@@ -58,17 +58,20 @@ public sealed record InduceOptions(
 /// <summary>What <see cref="PlaybookInducer.Induce"/> produced.</summary>
 /// <param name="Json">The <see cref="PlaybookDocument"/> JSON, byte-identical for identical inputs.</param>
 /// <param name="Warnings">Printed by the CLI before it writes anything (held-out data, unreadable logs).</param>
-public sealed record InductionResult(IReadOnlyList<Playbook> Playbooks, string Json, string Report, IReadOnlyList<string> Warnings);
+/// <param name="Note">Printed by the CLI when no cluster reached <c>--min-support</c>: the largest cluster's support, so the user can see what value would induce something.</param>
+public sealed record InductionResult(IReadOnlyList<Playbook> Playbooks, string Json, string Report, IReadOnlyList<string> Warnings, string? Note = null);
 
 /// <summary>
 /// Tier 2 of the LLM-to-playbook pipeline: compiles an LLM arm's captured decisions into playbooks. For every
 /// (faction, chosen base playbook) cluster with enough proposals from won matches it emits one two-phase playbook:
-/// the base's posture, budget and composition, parameter defaults at the medians the model proposed, and an
+/// the base's posture, budget and composition, parameter defaults at the median over matches of each match's median
+/// proposed value (every supporting match weighs the same), and an
 /// <c>attack</c> phase entered when the army reaches the median first-launch army value, no earlier than the 25th
 /// percentile first-launch time. Reads only <c>decisions/&lt;match&gt;.ndjson</c> and <c>.match.json</c>; no model
 /// call, no clock, sorted inputs, so the same logs give the same bytes. Support is counted in matches (a match
-/// counts once however often it proposed a choice), and proposals the scheduler rejected in validation or discarded
-/// late are not counted. The data is conditioned on won matches: selection on outcome, not evidence of causation.
+/// counts once however often it proposed a choice); only proposals the arbiter adopted (a
+/// <c>strategy.intent_activated</c> record) count, so ones rejected in validation, discarded late or refused by
+/// arbitration are not. A launch is credited only to the cluster whose playbook was active when it happened. The data is conditioned on won matches: selection on outcome, not evidence of causation.
 /// </summary>
 public static partial class PlaybookInducer
 {
@@ -82,7 +85,10 @@ public static partial class PlaybookInducer
 
     private sealed record Proposal(string Playbook, IReadOnlyDictionary<string, double> Parameters, string? IntentId);
 
-    private sealed record MatchData(string File, string Sha, Faction Faction, bool Won, string Split, IReadOnlyList<Proposal> Proposals, double? LaunchSeconds, double? LaunchArmy);
+    private sealed record Launch(double Seconds, double Army);
+
+    /// <summary><paramref name="Launches"/>: per playbook id, the match's first attack launch while an LLM-chosen intent of that playbook was active.</summary>
+    private sealed record MatchData(string File, string Sha, Faction Faction, bool Won, string Split, IReadOnlyList<Proposal> Proposals, IReadOnlyDictionary<string, Launch> Launches);
 
     private sealed class Cluster(Faction faction, string basePlaybook)
     {
@@ -146,8 +152,9 @@ public static partial class PlaybookInducer
                 continue;
             }
             List<MatchData> supporting = [.. cluster.Won.Select(static w => w.Match).DistinctBy(static m => m.Sha).OrderBy(static m => m.Sha, StringComparer.Ordinal)];
-            double[] launchTimes = [.. supporting.Where(static m => m.LaunchSeconds is not null).Select(static m => m.LaunchSeconds!.Value).Order()];
-            double[] launchArmy = [.. supporting.Where(static m => m.LaunchArmy is not null).Select(static m => m.LaunchArmy!.Value).Order()];
+            List<Launch> launches = [.. supporting.Select(m => m.Launches.GetValueOrDefault(cluster.Base)).Where(static l => l is not null).Select(static l => l!)];
+            double[] launchTimes = [.. launches.Select(static l => l.Seconds).Order()];
+            double[] launchArmy = [.. launches.Select(static l => l.Army).Order()];
             if (launchArmy.Length == 0)
             {
                 skipped.AppendLine($"- {label}: {supportMatches} supporting won matches, but none of them launched an attack, so there is no attack phase to induce");
@@ -172,12 +179,19 @@ public static partial class PlaybookInducer
             foreach (MatchData m in supporting.OrderBy(static m => m.File, StringComparer.Ordinal)) report.AppendLine($"  - `{m.File}` {m.Sha}");
             report.AppendLine();
         }
+        string? note = null;
         if (induced.Count == 0) report.AppendLine("No cluster reached the threshold; no playbook induced.").AppendLine();
+        if (clusters.Values.Select(c => (Cluster: c, Support: c.Won.Select(static w => w.Match.Sha).Distinct(StringComparer.Ordinal).Count())).Where(static x => x.Support > 0).OrderByDescending(static x => x.Support).FirstOrDefault() is { Cluster: { } largest, Support: var largestSupport }
+            && largestSupport < minSupport)
+        {
+            note = $"no cluster reached --min-support {minSupport}; the largest, {largest.Faction} / {largest.Base}, has {largestSupport} supporting won matches (--min-support {largestSupport} would induce it).";
+            report.AppendLine($"Largest cluster: {largest.Faction} / {largest.Base}, {largestSupport} supporting won matches.").AppendLine();
+        }
         if (skipped.Length > 0) report.AppendLine("## Clusters not induced").AppendLine().Append(skipped);
 
         induced = [.. induced.OrderBy(static p => p.Id, StringComparer.Ordinal)];
         string json = JsonSerializer.Serialize(new PlaybookDocument(induced), Indented) + "\n";
-        return new InductionResult(induced, json, report.ToString(), warnings);
+        return new InductionResult(induced, json, report.ToString(), warnings, note);
     }
 
     /// <summary>Writes <paramref name="result"/>'s playbooks and (when a path is given) report, after printing its warnings.</summary>
@@ -187,6 +201,7 @@ public static partial class PlaybookInducer
         PlaybookLibrary library = Program.MergePlaybookFiles(PlaybookLibrary.LoadDefault(), options.PlaybookFiles);
         InductionResult result = Induce(options.From, options.Arm, options.Split, options.MinSupport, library);
         foreach (string warning in result.Warnings) Console.Error.WriteLine(warning);
+        if (result.Note is not null) Console.Error.WriteLine(result.Note);
         File.WriteAllText(options.OutPath, result.Json);
         if (options.ReportPath is not null) File.WriteAllText(options.ReportPath, result.Report);
         Console.WriteLine($"induced {result.Playbooks.Count} playbook(s): {string.Join(", ", result.Playbooks.Select(static p => p.Id))}");
@@ -199,7 +214,11 @@ public static partial class PlaybookInducer
         List<PlaybookParameter> parameters = [];
         foreach (PlaybookParameter parameter in basis.Parameters)
         {
-            double[] proposed = [.. cluster.Won.Select(w => w.Proposal.Parameters.TryGetValue(parameter.Name, out double v) ? (double?)v : null).Where(static v => v is not null).Select(static v => v!.Value).Order()];
+            // Each supporting match weighs the same: its median proposed value first, then the median over matches.
+            double[] proposed = [.. cluster.Won.GroupBy(static w => w.Match.Sha, StringComparer.Ordinal).OrderBy(static g => g.Key, StringComparer.Ordinal)
+                .Select(g => g.Select(w => w.Proposal.Parameters.TryGetValue(parameter.Name, out double v) ? (double?)v : null).Where(static v => v is not null).Select(static v => v!.Value).Order().ToArray())
+                .Where(static values => values.Length > 0).Select(static values => Quantile(values, 0.5)).Order()];
+            int proposals = cluster.Won.Count(w => w.Proposal.Parameters.ContainsKey(parameter.Name));
             if (proposed.Length == 0)
             {
                 parameters.Add(parameter);
@@ -209,7 +228,7 @@ public static partial class PlaybookInducer
             double median = Quantile(proposed, 0.5);
             double clamped = Round(Math.Clamp(median, parameter.Min, parameter.Max), 4);
             parameters.Add(parameter with { Default = clamped });
-            report.AppendLine(CultureInfo.InvariantCulture, $"- parameter `{parameter.Name}` [{Fmt(parameter.Min)}, {Fmt(parameter.Max)}], {proposed.Length} proposals: {Distribution(proposed)}; default {Fmt(clamped)}{(clamped != Round(median, 4) ? " (median clamped to the base's range)" : string.Empty)}");
+            report.AppendLine(CultureInfo.InvariantCulture, $"- parameter `{parameter.Name}` [{Fmt(parameter.Min)}, {Fmt(parameter.Max)}], {proposed.Length} matches ({proposals} proposals), per-match medians: {Distribution(proposed)}; default {Fmt(clamped)}{(clamped != Round(median, 4) ? " (median clamped to the base's range)" : string.Empty)}");
         }
         HashSet<string> declared = [.. basis.Parameters.Select(static p => p.Name)];
         string[] extra = [.. cluster.Won.SelectMany(static w => w.Proposal.Parameters.Keys).Where(n => !declared.Contains(n)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
@@ -294,8 +313,8 @@ public static partial class PlaybookInducer
                 continue;
             }
             Faction faction = manifest.Record?.Players.TryGetValue("arm", out PlayerMatchMetrics? metrics) == true ? metrics.Faction : MatchRunner.ArmFaction(manifest.Seed);
-            (List<Proposal> proposals, double? seconds, double? army) = Read(bytes);
-            bySha[sha] = new MatchData(Path.GetFileName(log), sha, faction, manifest.Winner == 0, manifest.Split, proposals, seconds, army);
+            (List<Proposal> proposals, Dictionary<string, Launch> launches) = Read(bytes);
+            bySha[sha] = new MatchData(Path.GetFileName(log), sha, faction, manifest.Winner == 0, manifest.Split, proposals, launches);
         }
         return [.. bySha.Values.OrderBy(static m => m.Sha, StringComparer.Ordinal)];
     }
@@ -315,19 +334,26 @@ public static partial class PlaybookInducer
         };
     }
 
-    /// <summary>The Primary LLM proposals and the first attack launch (game seconds, army value) of one decision log.</summary>
-    private static (List<Proposal> Proposals, double? LaunchSeconds, double? LaunchArmy) Read(byte[] bytes)
+    /// <summary>
+    /// The Primary LLM intents the arbiter adopted (<c>strategy.intent_activated</c>, renewals included) and, per
+    /// playbook, the first attack launch (game seconds, army value) that happened while an adopted LLM intent of
+    /// that playbook was the active one. A proposal the validator rejected, the scheduler discarded or the arbiter
+    /// refused has no activation record and never counts.
+    /// </summary>
+    private static (List<Proposal> Proposals, Dictionary<string, Launch> Launches) Read(byte[] bytes)
     {
         List<Proposal> proposals = [];
         HashSet<string> dropped = new(StringComparer.Ordinal);
-        double? seconds = null, army = null;
+        Dictionary<string, Launch> launches = new(StringComparer.Ordinal);
+        string? activeId = null, activePlaybook = null;   // the active intent, and its playbook when an adopted Primary LLM one
         foreach (string line in Encoding.UTF8.GetString(bytes).Split('\n'))
         {
-            bool isProposal = line.Contains("\"strategy.proposal\"", StringComparison.Ordinal);
-            bool isPlan = seconds is null && line.Contains("\"operations.plan\"", StringComparison.Ordinal) && line.Contains("squads: attacking", StringComparison.Ordinal);
+            bool isActivation = line.Contains("\"strategy.intent_activated\"", StringComparison.Ordinal);
+            bool isEnd = line.Contains("\"strategy.intent_ended\"", StringComparison.Ordinal);
+            bool isPlan = line.Contains("\"operations.plan\"", StringComparison.Ordinal) && line.Contains("squads: attacking", StringComparison.Ordinal);
             bool isRejection = line.Contains("\"strategy.validation\"", StringComparison.Ordinal) && line.Contains("\"accepted\":false", StringComparison.Ordinal);
             bool isLate = line.Contains("\"strategy.late_discarded\"", StringComparison.Ordinal);
-            if (!isProposal && !isPlan && !isRejection && !isLate) continue;
+            if (!isActivation && !isEnd && !isPlan && !isRejection && !isLate) continue;
             using JsonDocument doc = JsonDocument.Parse(line);
             JsonElement root = doc.RootElement;
             JsonElement data = root.GetProperty("data");
@@ -336,8 +362,14 @@ public static partial class PlaybookInducer
                 // Rejected in validation or discarded late by the scheduler: never took effect, so no support.
                 if (data.TryGetProperty("intentId", out JsonElement dropId) && dropId.GetString() is { } droppedId) dropped.Add(droppedId);
             }
-            else if (isProposal)
+            else if (isEnd)
             {
+                if (data.TryGetProperty("intentId", out JsonElement endedId) && endedId.GetString() == activeId) (activeId, activePlaybook) = (null, null);
+            }
+            else if (isActivation)
+            {
+                activeId = data.TryGetProperty("intentId", out JsonElement activated) ? activated.GetString() : null;
+                activePlaybook = null;
                 if (data.GetProperty("role").GetString() != "Primary" || !data.TryGetProperty("intent", out JsonElement intent) || intent.ValueKind != JsonValueKind.Object) continue;
                 if (intent.GetProperty("source").GetString() != "Llm") continue;
                 string? playbook = intent.GetProperty("playbookId").GetString();
@@ -350,22 +382,22 @@ public static partial class PlaybookInducer
                         if (property.Value.ValueKind == JsonValueKind.Number) parameters[property.Name] = property.Value.GetDouble();
                     }
                 }
-                proposals.Add(new Proposal(playbook, parameters, intent.TryGetProperty("intentId", out JsonElement id) ? id.GetString() : null));
+                proposals.Add(new Proposal(playbook, parameters, activeId));
+                activePlaybook = playbook;
             }
-            else if (data.TryGetProperty("notes", out JsonElement notes) && notes.ValueKind == JsonValueKind.Array)
+            else if (activePlaybook is not null && !launches.ContainsKey(activePlaybook) && data.TryGetProperty("notes", out JsonElement notes) && notes.ValueKind == JsonValueKind.Array)
             {
                 foreach (JsonElement note in notes.EnumerateArray())
                 {
                     Match match = LaunchNote().Match(note.GetString() ?? string.Empty);
                     if (!match.Success) continue;
-                    seconds = root.GetProperty("frame").GetInt64() / (double)GameTime.FramesPerSecond;
-                    army = double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+                    launches[activePlaybook] = new Launch(root.GetProperty("frame").GetInt64() / (double)GameTime.FramesPerSecond, double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture));
                     break;
                 }
             }
         }
         proposals.RemoveAll(p => p.IntentId is not null && dropped.Contains(p.IntentId));
-        return (proposals, seconds, army);
+        return (proposals, launches);
     }
 
     private static string ShortHash(string arm, string split, int minSupport, Cluster cluster, IReadOnlyList<MatchData> supporting)

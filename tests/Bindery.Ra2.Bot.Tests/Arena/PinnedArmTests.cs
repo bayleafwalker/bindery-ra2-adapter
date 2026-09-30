@@ -34,6 +34,14 @@ public sealed class PinnedArmTests : IDisposable
         [.. records.Where(r => r.GetProperty("kind").GetString() == "strategy.proposal" && r.GetProperty("data").GetProperty("role").GetString() == role)];
 
     [Fact]
+    public void The_faction_warning_is_issued_once_per_playbook_and_faction()
+    {
+        Assert.True(BotAgentFactory.WarnedPinned("test-playbook-once", Faction.Soviet));
+        Assert.False(BotAgentFactory.WarnedPinned("test-playbook-once", Faction.Soviet));
+        Assert.True(BotAgentFactory.WarnedPinned("test-playbook-once", Faction.Allied));
+    }
+
+    [Fact]
     public void The_arm_name_parses_and_the_usage_and_factory_know_it()
     {
         Assert.True(BotAgentFactory.IsArm("pinned:soviet-rhino-rush"));
