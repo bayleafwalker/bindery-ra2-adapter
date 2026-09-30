@@ -1,4 +1,5 @@
 # Induced playbooks on held-out cells (pre-registration, 2026-09-30)
+**Outcome (2026-09-30 ~21:00): rule branch 1. The candidate beat the selector on 5 cells and lost on 1 of 20 Soviet held-out cells (19 vs 15 wins). Pipeline works end to end; next build is a playbook promotion gate. The candidate equals its base on all 20 cells. See `docs/results/2026-09-30-induced-playbook-test/RESULTS.md`.**
 **Status: registered before `arena induce` was run on the collection.** Written while the training collection
 (`docs/results/2026-09-30-luna-training-collection/`) was still playing; no induced playbook existed when this was
 committed. Every value below is fixed now; nothing is tuned on held-out data.

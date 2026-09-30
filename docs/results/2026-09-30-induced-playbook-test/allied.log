@@ -1,0 +1,5 @@
+pinned:induced-allied-boom-allied-553cbefc: 20 matches, 10 wins; leakage probe 0/672 differing frames, 0 fog-violation frames.
+pinned:allied-boom: 20 matches, 11 wins; leakage probe 0/672 differing frames, 0 fog-violation frames.
+selector: 20 matches, 10 wins; leakage probe 0/672 differing frames, 0 fog-violation frames.
+Wrote 60 match results, 6 leakage probes and report.md to docs/results/2026-09-30-induced-playbook-test/allied in 19s.
+EXIT=0
