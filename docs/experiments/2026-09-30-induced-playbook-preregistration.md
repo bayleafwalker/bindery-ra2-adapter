@@ -14,8 +14,10 @@ playbook at defaults?
   (Allied, east); gpt-6-luna via OpenCode Go; build fba7da8; `--extended-metrics`). If the collection ends with
   fewer matches (a crash, a resumed tail), the inducer reads what is there; the match count is reported.
 - Induction: `arena induce --from docs/results/2026-09-30-luna-training-collection/run --arm llm-t1 --split training
-  --min-support 6 --out induced.json --report induce-report.md`, at the merge commit of PR #42 (inducer with the
-  review fixes). `--min-support 6` = half of the 12 matches per faction, fixed before seeing any cluster; the PR's
+  --min-support 6 --out induced.json --report induce-report.md`, at the merge commit of PR #43 (PR #42's inducer
+  plus its re-review follow-ups: only adopted LLM intents count, per-match parameter medians, launches credited to
+  the playbook active at launch). Amended 2026-09-30 ~20:10, before induce ran on the collection, when #43 was
+  opened; the original text named #42's merge commit (6093615). `--min-support 6` = half of the 12 matches per faction, fixed before seeing any cluster; the PR's
   default (30 won matches) cannot be reached by a 24-match collection. No other inducer option is set.
 - Candidates: every induced playbook for Soviet (`induced-<base>-soviet-<hash>`). If more than one, each is tested
   and the decision reads the one with the most supporting matches (ties: lexicographically first id), named in the
