@@ -68,6 +68,7 @@ public static class Program
                 }
                 return result.Equal ? 0 : 2;
             }
+            if (args.Length > 0 && args[0] == "induce") return PlaybookInducer.Run(InduceOptions.Parse(args));
             if (args.Length > 0 && args[0] == "playbooks")
             {
                 if (args.Length is not (2 or 4) || args[1] != "export" || (args.Length == 4 && args[2] != "--out")) throw new ArgumentException("Usage: arena playbooks export [--out <playbooks.json>]");
@@ -120,7 +121,11 @@ public static class Program
         BotAgentFactory factory = new(rules, playbooks, context);
         foreach (ArmSpec arm in options.ArmSpecs())
         {
-            if (!BotAgentFactory.IsArm(arm.Name)) throw new ArgumentException($"Unknown arm '{arm.Name}'. Arms: {string.Join(", ", BotAgentFactory.Arms.Concat(BotAgentFactory.TierArms.Keys).Concat(BotAgentFactory.ShadowTierArms.Keys))} (any with a -oracle suffix).");
+            if (!BotAgentFactory.IsArm(arm.Name)) throw new ArgumentException($"Unknown arm '{arm.Name}'. Arms: {string.Join(", ", BotAgentFactory.Arms.Concat(BotAgentFactory.TierArms.Keys).Concat(BotAgentFactory.ShadowTierArms.Keys))}, {BotAgentFactory.PinnedPrefix}<playbookId> (any with a -oracle suffix).");
+            if (BotAgentFactory.PinnedPlaybookId(arm.Name) is { } pinned && !playbooks.TryGet(pinned, out _))
+            {
+                throw new ArgumentException($"Unknown playbook '{pinned}' in arm '{arm.Name}'. Known: {string.Join(", ", playbooks.All.Select(static p => p.Id))}.");
+            }
         }
         foreach (string opponent in options.Opponents)
         {
