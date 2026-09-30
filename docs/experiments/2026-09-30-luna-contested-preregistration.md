@@ -36,7 +36,7 @@ The threshold is 5. Stated risk: with no true difference and D of about 5-10 dis
 SD of about sqrt(D), roughly 2.2-3.2, so a +/-5 threshold calls a false difference about 10-25% of the time. That is
 accepted for a decision about where to spend, not for a claim of superiority. The selector arm is deterministic on
 these seeded cells and known in advance (10/30 in the calibration, seeds 1 and 3), so "better" is capped at 20.
-Amended 2026-09-30 ~22:05 during the pilot, before any result was read: definitions only, and the rule is unchanged.
+Amended 2026-09-30 21:43 during the pilot, before any result was read: definitions only, and the rule is unchanged.
 1. better - worse >= 5: **model choice adds value where it can be measured.** Next build: induce a choice POLICY
    (enemy composition and game state -> playbook) from these decisions, not a single playbook. A stronger model is
    worth a registered run on these cells.
