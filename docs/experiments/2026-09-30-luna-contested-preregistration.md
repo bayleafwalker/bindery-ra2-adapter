@@ -16,19 +16,27 @@ gave the selector 20/60 as Allied against live-* (inside the 30-70% band) and 10
 the Allied live-* region can rank arms. No held-out map or opponent is used.
 
 ## Arms and run
-Build: origin/main c50b769 plus this document (docs only). Model via OpenCode Go and the local forwarder
+Build: origin/main c50b769 plus docs, run from a5d56b1 (this document and the forwarder copy). Model via OpenCode Go and the local forwarder
 (`ocgo_proxy.py`, copied beside the results).
 ```
 arena run --arms llm-t1,selector --maps training --benchmark contested \
   --opponents live-balanced,live-rush,live-tech,live-turtle,live-harass --seed-list 1,3 \
   --llm-endpoint http://127.0.0.1:8032/v1 --llm-model gpt-6-luna --extended-metrics --interleave --resume --out run
 ```
-Pilot first: the live-balanced slice (3 Luna matches), resumed into the same `run/`. Continue only if the LLM failure
-rate is under 10% and the projected list-price cost of the 30 Luna matches is at most $2.5.
+Pilot first: the live-balanced slice (6 Luna matches: 3 maps x seeds 1, 3), resumed into the same `run/`. Continue
+only if the LLM failure rate (failed requests / requests, the report's "LLM delivery" column) is under 10% and the
+projected list-price cost of the 30 Luna matches is at most $2.5. If the pilot aborts, no test is made and the
+abort is reported. The $2.5 cap applies to the whole Luna run. Every played cell counts in the rule, including
+cells with failed or late proposals (the selector fallback plays through those gaps).
 
 ## Decision rule (Luna vs selector, 30 paired cells; better = Luna wins and the selector loses)
-A live model changes winner on roughly 17% of cells between repeat runs (worker-fast measurement), about 5 of 30, so
-the threshold is 5.
+A live model changes winner on roughly 17% of cells between repeat runs: 5 of 30 in the worker-fast measurement
+(`docs/experiments/2026-09-29-tier-heldout-preregistration.md`), a proxy for Luna's noise, which has not been measured.
+The threshold is 5. Stated risk: with no true difference and D of about 5-10 discordant cells, better - worse has an
+SD of about sqrt(D), roughly 2.2-3.2, so a +/-5 threshold calls a false difference about 10-25% of the time. That is
+accepted for a decision about where to spend, not for a claim of superiority. The selector arm is deterministic on
+these seeded cells and known in advance (10/30 in the calibration, seeds 1 and 3), so "better" is capped at 20.
+Amended 2026-09-30 ~22:05 during the pilot, before any result was read: definitions only, and the rule is unchanged.
 1. better - worse >= 5: **model choice adds value where it can be measured.** Next build: induce a choice POLICY
    (enemy composition and game state -> playbook) from these decisions, not a single playbook. A stronger model is
    worth a registered run on these cells.

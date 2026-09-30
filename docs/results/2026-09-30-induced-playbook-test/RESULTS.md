@@ -3,7 +3,7 @@
 written, but that rule ran on the `standard` benchmark, and this run's own report flags it as saturated: the selector
 scored 0.750, outside the 30-70% band, so "win-rate comparisons carry little information". The pre-registration did not
 name a benchmark, so the default ran, and the flag was missed when the rule was applied. A free follow-up diagnostic
-(Correction addendum below) shows the pinned playbook is exploitable where the selector is not. The next step is a
+(Correction addendum below) shows the pinned playbook is far more exploitable than the selector (live-* under contested: 15/60 vs 55/60). The next step is a
 test on a benchmark that can rank arms (`docs/experiments/2026-09-30-luna-contested-preregistration.md`), not a
 promotion gate for this playbook.
 
@@ -89,8 +89,9 @@ opponents are partly in-sample for the selector (its default playbook was chosen
 - The late mass attack beats scripted AIs, the held-out ones included, but a fixed playbook is exploited by
   bot-style opponents: 1/6 vs balanced and tech; 1/12 vs live-balanced and live-harass; 0/12 vs live-tech. The selector
   changes playbook against them.
-- Under contested, induction is worse than its base (53 vs 61 of 108, mostly timeouts: 33 vs 24). The induced 490 s
-  gate delays the attack.
+- Under contested, induction is worse than its base: 53 vs 61 of 108, and paired it is better 0 times and worse 8 times.
+  Timeout losses are 33 vs 24. The likely cause is the induced 490 s gate delaying the attack; attack timings were not
+  measured in this diagnostic.
 - Calibration (`diagnostic/calibration/`, selector only, contested, training maps, seeds 1-8): as Soviet the selector
   wins 103/108 (saturated); as Allied against live-* it wins 20/60 (33%, inside the band). That is the region the
   follow-up test uses.
