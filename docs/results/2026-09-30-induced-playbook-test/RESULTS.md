@@ -1,4 +1,12 @@
 # Induced playbooks on held-out cells: results (2026-09-30)
+**Correction (2026-09-30, after merge): the candidate is NOT promoted.** The branch-1 call stands under the rule as
+written, but that rule ran on the `standard` benchmark, and this run's own report flags it as saturated: the selector
+scored 0.750, outside the 30-70% band, so "win-rate comparisons carry little information". The pre-registration did not
+name a benchmark, so the default ran, and the flag was missed when the rule was applied. A free follow-up diagnostic
+(Correction addendum below) shows the pinned playbook is far more exploitable than the selector (live-* under contested: 15/60 vs 55/60). The next step is a
+test on a benchmark that can rank arms (`docs/experiments/2026-09-30-luna-contested-preregistration.md`), not a
+promotion gate for this playbook.
+
 
 Pre-registration: `docs/experiments/2026-09-30-induced-playbook-preregistration.md` (7e6bdd4, 19:44; amended twice to name
 the inducer build, PR #43's merge 5435efd, before induce ran: 5549227 and d7dcada, cherry-picked here as 1f290c1 and 0a46c87). Candidate named before any held-out match: `CANDIDATE.md`
@@ -66,3 +74,31 @@ Decision logs are archived as `decisions.tar.xz` (+ `.sha256`) beside each `resu
 extract `../2026-09-30-luna-training-collection/run/decisions.tar.xz` into that `run/` directory first, then run the
 command in the pre-registration. The original commits carried the raw logs; this branch archives them to keep ~114 MB
 out of main.
+
+## Correction addendum: free diagnostic after the merge (training maps only; decides nothing)
+Build c50b769, all arms Soviet (seeds 2, 4, and 6, 8 under contested), no model; files in `diagnostic/`. Training
+opponents are partly in-sample for the selector (its default playbook was chosen against these styles), which favours it.
+
+| Opponents | Candidate | `pinned:generic-expand` | Selector |
+|---|---|---|---|
+| scripted ai-*:easy, standard (24) | 22 | 22 | 24 |
+| frozen bot styles (rush, turtle, tech, harass, balanced), standard (30) | 17 | 18 | 30 |
+| live-* bot styles, `--benchmark contested` (60) | 15 | 21 | 55 |
+| scripted ai-* at hard, contested (48) | 38 | 40 | 48 |
+
+- The late mass attack beats scripted AIs, the held-out ones included, but a fixed playbook is exploited by
+  bot-style opponents: 1/6 vs balanced and tech; 1/12 vs live-balanced and live-harass; 0/12 vs live-tech. The selector
+  changes playbook against them.
+- Under contested, induction is worse than its base: 53 vs 61 of 108, and paired it is better 0 times and worse 8 times.
+  Timeout losses are 33 vs 24. The likely cause is the induced 490 s gate delaying the attack; attack timings were not
+  measured in this diagnostic.
+- Calibration (`diagnostic/calibration/`, selector only, contested, training maps, seeds 1-8): as Soviet the selector
+  wins 103/108 (saturated); as Allied against live-* it wins 20/60 (33%, inside the band). That is the region the
+  follow-up test uses.
+
+What went wrong in the process, for the record:
+- The benchmark was not pre-registered.
+- The saturation flag was ignored.
+- The rule compared against the selector only on scripted-AI cells, so it could not detect exploitability.
+- The collection had no losses (24/24), so the inducer had nothing to contrast.
+- The test re-measured a known fact: Luna's edge was already known to be choosing generic-expand.
