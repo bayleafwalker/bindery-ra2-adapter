@@ -300,6 +300,10 @@ public sealed class BotAgentFactory(IRulesDatabase rules, IPlaybookLibrary playb
                     // override of the opponent styles. A faction the playbook does not list gets no proposal, so the
                     // selector fallback plays that side.
                     if (!playbooks.TryGet(pinnedId, out Playbook pinnedPlaybook)) throw new ArgumentException($"Unknown playbook '{pinnedId}' in arm '{arm.Name}'.");
+                    if (!pinnedPlaybook.Factions.Contains(faction))
+                    {
+                        Console.Error.WriteLine($"warning: arm '{arm.Name}' plays {faction} but playbook '{pinnedId}' lists only {string.Join(", ", pinnedPlaybook.Factions)}; the selector fallback plays this side.");
+                    }
                     primary = new PinnedPlaybookStrategist(pinnedPlaybook.Factions.ToDictionary(static f => f, _ => pinnedId), $"pinned-{pinnedId}", double.PositiveInfinity);
                     labels.Add($"pinned:{pinnedId}");
                     break;

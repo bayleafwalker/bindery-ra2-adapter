@@ -87,9 +87,31 @@ public sealed class PinnedArmTests : IDisposable
     }
 
     [Fact]
+    public void A_faction_the_playbook_does_not_list_warns_on_stderr()
+    {
+        (IRulesDatabase rules, IPlaybookLibrary library, _) = Program.LoadRules(null);
+        BotAgentFactory factory = new(rules, library, new ArenaRunContext(llmFake: false, llmLatencySeconds: null));
+        ArmSpec arm = new("pinned:soviet-rhino-rush", false, false);
+        TextWriter original = Console.Error;
+        StringWriter captured = new();
+        Console.SetError(captured);
+        try
+        {
+            factory.Create(arm, MatchRunner.ArmPlayer, Faction.Soviet, Bindery.Ra2.Bot.Sim.SimMaps.TwinValley.Map, 2);
+            Assert.Equal(string.Empty, captured.ToString());
+            factory.Create(arm, MatchRunner.ArmPlayer, Faction.Allied, Bindery.Ra2.Bot.Sim.SimMaps.TwinValley.Map, 1);
+        }
+        finally
+        {
+            Console.SetError(original);
+        }
+        Assert.Contains("plays Allied but playbook 'soviet-rhino-rush' lists only Soviet", captured.ToString());
+    }
+
+    [Fact]
     public void An_induced_playbook_can_be_pinned_through_the_playbooks_flag()
     {
-        InductionResult induced = PlaybookInducer.Induce([InduceFixtures.Standard(root)], InduceFixtures.Arm, "training", 30, PlaybookLibrary.LoadDefault());
+        InductionResult induced = PlaybookInducer.Induce([InduceFixtures.Standard(root)], InduceFixtures.Arm, "training", 4, PlaybookLibrary.LoadDefault());
         string id = Assert.Single(induced.Playbooks).Id;
         string file = Path.Combine(root, "induced.json");
         File.WriteAllText(file, induced.Json);

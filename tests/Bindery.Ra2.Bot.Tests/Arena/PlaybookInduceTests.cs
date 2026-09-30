@@ -3,8 +3,10 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Bindery.Ra2.Bot.Arena;
+using Bindery.Ra2.Bot.Arbitration;
 using Bindery.Ra2.Bot.Playbooks;
 using Bindery.Ra2.Bot.Rules;
+using Bindery.Ra2.Bot.Tests.Arbitration;
 using Xunit;
 
 namespace Bindery.Ra2.Bot.Tests.Arena;
@@ -27,13 +29,13 @@ internal static class InduceFixtures
     /// one launch note at that game time. Even seeds are Soviet, odd Allied (no match record in the manifest).
     /// </summary>
     public static void Match(string dir, string stem, int seed, string split, int? winner, string playbook, int proposals, string parameter, double value,
-        double? launchSeconds, int launchArmy = 0, string arm = Arm, string? extraLine = null)
+        double? launchSeconds, int launchArmy = 0, string arm = Arm, string? extraLine = null, string opponent = "ai-rush")
     {
         Directory.CreateDirectory(dir);
         StringBuilder log = new();
         for (int i = 0; i < proposals; i++)
         {
-            log.AppendLine(Proposal(i * 900, "Primary", "Llm", playbook, new Dictionary<string, double> { [parameter] = value }));
+            log.AppendLine(Proposal(i * 900, "Primary", "Llm", playbook, new Dictionary<string, double> { [parameter] = value }, $"{stem}-{i}"));
         }
         // Noise the inducer must ignore: a fallback proposal and a selector-sourced primary one.
         log.AppendLine(Proposal(1, "Fallback", "Selector", "generic-defend", []));
@@ -50,7 +52,7 @@ internal static class InduceFixtures
         if (extraLine is not null) log.AppendLine(extraLine);
         File.WriteAllText(Path.Combine(dir, stem + ".ndjson"), log.ToString());
 
-        MatchManifest manifest = new(MatchManifest.CurrentSchema, new ArmSpec(arm, false, false), "ai-rush", "twin-valley", split, seed, 1200, BenchmarkSettings.Standard,
+        MatchManifest manifest = new(MatchManifest.CurrentSchema, new ArmSpec(arm, false, false), opponent, "twin-valley", split, seed, 1200, BenchmarkSettings.Standard,
             null, null, null, winner, "elimination", 600);
         File.WriteAllText(Path.Combine(dir, stem + ".match.json"), manifest.ToJson());
     }
@@ -73,8 +75,16 @@ internal static class InduceFixtures
         return dir;
     }
 
-    private static string Proposal(long frame, string role, string source, string playbook, Dictionary<string, double> parameters) =>
-        JsonSerializer.Serialize(new { kind = "strategy.proposal", frame, data = new { role, intent = new { source, playbookId = playbook, playbookParameters = parameters } } });
+    private static string Proposal(long frame, string role, string source, string playbook, Dictionary<string, double> parameters, string? intentId = null) =>
+        JsonSerializer.Serialize(new { kind = "strategy.proposal", frame, data = new { role, intent = new { intentId, source, playbookId = playbook, playbookParameters = parameters } } });
+
+    /// <summary>The scheduler's record of a proposal its validator rejected.</summary>
+    public static string Rejected(string intentId) =>
+        JsonSerializer.Serialize(new { kind = "strategy.validation", frame = 1, data = new { role = "Primary", intentId, accepted = false } });
+
+    /// <summary>The scheduler's record of a proposal discarded as late.</summary>
+    public static string Discarded(string intentId) =>
+        JsonSerializer.Serialize(new { kind = "strategy.late_discarded", frame = 1, data = new { role = "Primary", intentId, reason = "age" } });
 
     private static string Plan(long frame, string note) =>
         JsonSerializer.Serialize(new { kind = "operations.plan", frame, data = new { notes = new[] { note } } });
@@ -93,7 +103,7 @@ public sealed class PlaybookInduceTests : IDisposable
         if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
     }
 
-    private InductionResult Induce(string dir, string split = "training", int minSupport = 30) =>
+    private InductionResult Induce(string dir, string split = "training", int minSupport = 4) =>
         PlaybookInducer.Induce([dir], InduceFixtures.Arm, split, minSupport, InduceFixtures.Library());
 
     [Fact]
@@ -102,21 +112,21 @@ public sealed class PlaybookInduceTests : IDisposable
         string dir = InduceFixtures.Standard(root);
         InductionResult result = Induce(dir);
 
-        // 36 Soviet proposals in won matches; the Allied cluster has 5, the lost match and the other arm do not count.
+        // 6 Soviet won matches (36 proposals); the Allied cluster has 1, the lost match and the other arm do not count.
         Playbook induced = Assert.Single(result.Playbooks);
         Assert.StartsWith("induced-soviet-rhino-rush-soviet-", induced.Id);
         Assert.Equal([Faction.Soviet], induced.Factions);
         Assert.Contains("36 proposals in 6 won matches", induced.Description);
         Assert.Contains("allied-grizzly-timing", result.Report);
-        Assert.Contains("5 supporting proposals in 1 won matches, below 30", result.Report);
+        Assert.Contains("1 supporting won matches (5 proposals), below 4", result.Report);
 
         // A lower threshold admits the Allied cluster as its own playbook, named for its faction.
-        InductionResult both = Induce(dir, minSupport: 5);
+        InductionResult both = Induce(dir, minSupport: 1);
         Assert.Equal(2, both.Playbooks.Count);
         Assert.Contains(both.Playbooks, static p => p.Id.StartsWith("induced-allied-grizzly-timing-allied-", StringComparison.Ordinal) && p.Factions.SequenceEqual([Faction.Allied]));
 
         // Above the threshold nothing is induced, and the report says so.
-        InductionResult none = Induce(dir, minSupport: 37);
+        InductionResult none = Induce(dir, minSupport: 7);
         Assert.Empty(none.Playbooks);
         Assert.Contains("No cluster reached the threshold", none.Report);
     }
@@ -167,8 +177,10 @@ public sealed class PlaybookInduceTests : IDisposable
             [new Condition(ConditionMetric.OwnArmyValue, Comparison.Ge, 1500), new Condition(ConditionMetric.GameSeconds, Comparison.Ge, 325)],
             induced.Phases[1].EnterWhen);
 
-        // The base's attack conditions with the OwnArmyValue bound at the median (the base's was 1000).
-        Assert.Equal([new Condition(ConditionMetric.OwnArmyValue, Comparison.Ge, 1500)], induced.Phases[1].AttackConditions);
+        // The base's attack conditions with the OwnArmyValue bound at the median (the base's was 1000), plus the launch-time floor.
+        Condition[] gate = [new Condition(ConditionMetric.OwnArmyValue, Comparison.Ge, 1500), new Condition(ConditionMetric.GameSeconds, Comparison.Ge, 325)];
+        Assert.Equal(gate, induced.Phases[1].AttackConditions);
+        Assert.Equal(gate, induced.AttackConditions);
     }
 
     [Fact]
@@ -180,7 +192,7 @@ public sealed class PlaybookInduceTests : IDisposable
 
         Playbook induced = Assert.Single(Induce(dir).Playbooks);
         Assert.DoesNotContain(basis.AttackConditions, static c => c.Metric == ConditionMetric.OwnArmyValue);
-        Assert.Equal([.. basis.AttackConditions, new Condition(ConditionMetric.OwnArmyValue, Comparison.Ge, 3000)], induced.Phases![1].AttackConditions);
+        Assert.Equal([.. basis.AttackConditions, new Condition(ConditionMetric.OwnArmyValue, Comparison.Ge, 3000), new Condition(ConditionMetric.GameSeconds, Comparison.Ge, 407.5)], induced.Phases![1].AttackConditions);
     }
 
     [Fact]
@@ -191,7 +203,7 @@ public sealed class PlaybookInduceTests : IDisposable
 
         InductionResult result = Induce(dir);
         Assert.Empty(result.Playbooks);
-        Assert.Contains("none of its 4 won matches launched an attack", result.Report);
+        Assert.Contains("4 supporting won matches, but none of them launched an attack", result.Report);
     }
 
     [Fact]
@@ -207,8 +219,8 @@ public sealed class PlaybookInduceTests : IDisposable
 
         // Another directory with the same logs, and both directories in the other order: the same bytes (duplicates dropped).
         Assert.Equal(first.Json, Induce(b).Json);
-        Assert.Equal(first.Json, PlaybookInducer.Induce([b, a], InduceFixtures.Arm, "training", 30, InduceFixtures.Library()).Json);
-        Assert.Equal(first.Json, PlaybookInducer.Induce([a, b], InduceFixtures.Arm, "training", 30, InduceFixtures.Library()).Json);
+        Assert.Equal(first.Json, PlaybookInducer.Induce([b, a], InduceFixtures.Arm, "training", 4, InduceFixtures.Library()).Json);
+        Assert.Equal(first.Json, PlaybookInducer.Induce([a, b], InduceFixtures.Arm, "training", 4, InduceFixtures.Library()).Json);
     }
 
     [Fact]
@@ -225,21 +237,76 @@ public sealed class PlaybookInduceTests : IDisposable
     {
         string dir = Path.Combine(root, "decisions");
         for (int i = 0; i < 6; i++) InduceFixtures.Match(dir, $"t-{i}", 2 + 2 * i, "training", 0, "soviet-rhino-rush", 6, "attackArmyValue", 1000, 300, 1500);
-        for (int i = 0; i < 6; i++) InduceFixtures.Match(dir, $"h-{i}", 30 + 2 * i, "heldout", 0, "soviet-rhino-rush", 4, "attackArmyValue", 1000, 300, 1500);
+        for (int i = 0; i < 3; i++) InduceFixtures.Match(dir, $"h-{i}", 30 + 2 * i, "heldout", 0, "soviet-rhino-rush", 4, "attackArmyValue", 1000, 300, 1500);
 
         InductionResult training = Induce(dir);
         Assert.Contains("36 proposals in 6 won matches", Assert.Single(training.Playbooks).Description);
         Assert.Empty(training.Warnings);
 
-        // 24 held-out proposals are under the threshold.
+        // Three held-out matches are under the threshold.
         InductionResult heldout = Induce(dir, "heldout");
         Assert.Empty(heldout.Playbooks);
         Assert.Contains("held-out", Assert.Single(heldout.Warnings));
         Assert.Contains("must not be tested on the data", heldout.Warnings[0]);
 
         InductionResult all = Induce(dir, "all");
-        Assert.Contains("60 proposals in 12 won matches", Assert.Single(all.Playbooks).Description);
+        Assert.Contains("48 proposals in 9 won matches", Assert.Single(all.Playbooks).Description);
         Assert.Single(all.Warnings);
+    }
+
+    [Fact]
+    public void Held_out_opponents_are_excluded_from_training_induction_and_belong_to_the_heldout_split()
+    {
+        string dir = Path.Combine(root, "decisions");
+        for (int i = 0; i < 4; i++) InduceFixtures.Match(dir, $"t-{i}", 2 + 2 * i, "training", 0, "soviet-rhino-rush", 6, "attackArmyValue", 1000, 300, 1500);
+        // Training map, held-out opponent (any difficulty), won by the LLM: must not leak into training.
+        for (int i = 0; i < 4; i++) InduceFixtures.Match(dir, $"horde-{i}", 30 + 2 * i, "training", 0, "soviet-rhino-rush", 6, "attackArmyValue", 5000, 300, 1500, opponent: "ai-horde:hard");
+        for (int i = 0; i < 4; i++) InduceFixtures.Match(dir, $"armor-{i}", 40 + 2 * i, "training", 0, "soviet-rhino-rush", 6, "attackArmyValue", 5000, 300, 1500, opponent: "ai-armor");
+
+        InductionResult training = Induce(dir);
+        Assert.Contains("24 proposals in 4 won matches", Assert.Single(training.Playbooks).Description);
+        Assert.Equal(1000, Assert.Single(Assert.Single(training.Playbooks).Parameters).Default);
+
+        // Held-out opponents on training maps count as held-out data.
+        InductionResult heldout = Induce(dir, "heldout");
+        Assert.Contains("48 proposals in 8 won matches", Assert.Single(heldout.Playbooks).Description);
+        Assert.Single(heldout.Warnings);
+    }
+
+    [Fact]
+    public void Support_counts_matches_once_and_ignores_rejected_and_late_discarded_proposals()
+    {
+        string dir = Path.Combine(root, "decisions");
+        // One match with 40 proposals is one supporter, not 40.
+        InduceFixtures.Match(dir, "one", 2, "training", 0, "soviet-rhino-rush", 40, "attackArmyValue", 1000, 300, 1500);
+        Assert.Empty(Induce(dir, minSupport: 2).Playbooks);
+        Assert.Contains("1 supporting won matches (40 proposals), below 2", Induce(dir, minSupport: 2).Report);
+
+        // Three more matches: 10 proposals each, of which 0-4 are rejected and 5-6 late-discarded (3 count per match).
+        string extra = string.Join('\n', Enumerable.Range(0, 5).Select(i => InduceFixtures.Rejected($"{{0}}-{i}")).Concat(Enumerable.Range(5, 2).Select(i => InduceFixtures.Discarded($"{{0}}-{i}"))));
+        for (int i = 0; i < 3; i++) InduceFixtures.Match(dir, $"r-{i}", 4 + 2 * i, "training", 0, "soviet-rhino-rush", 10, "attackArmyValue", 1000, 300, 1500, extraLine: extra.Replace("{0}", $"r-{i}"));
+        InductionResult result = Induce(dir, minSupport: 4);
+        Assert.Contains("49 proposals in 4 won matches", Assert.Single(result.Playbooks).Description);
+    }
+
+    [Fact]
+    public void The_induced_attack_gate_is_in_force_in_the_build_phase()
+    {
+        Playbook induced = Assert.Single(Induce(InduceFixtures.Standard(root)).Playbooks);
+        Condition army = new(ConditionMetric.OwnArmyValue, Comparison.Ge, 1500), time = new(ConditionMetric.GameSeconds, Comparison.Ge, 325);
+        Assert.Contains(army, induced.AttackConditions);
+        Assert.Contains(time, induced.AttackConditions);
+
+        // The build phase overrides nothing, so the intent's own (playbook top-level) attack conditions are what apply.
+        StrategicIntent intent = PlaybookIntents.FromPlaybook(induced, Fx.Features(10, faction: Faction.Soviet), "i", IntentSource.Scripted);
+        PhaseTracker tracker = new();
+        tracker.Reset(intent, new PlaybookLibrary([induced]));
+        Assert.Equal("build", tracker.Name);
+        Assert.Contains(army, tracker.Effective(intent).AttackConditions);
+        Assert.Contains(time, tracker.Effective(intent).AttackConditions);
+        Assert.False(ConditionEvaluator.AllOf(tracker.Effective(intent).AttackConditions, Fx.Features(200, faction: Faction.Soviet, ownArmy: 5000)));
+        Assert.False(ConditionEvaluator.AllOf(tracker.Effective(intent).AttackConditions, Fx.Features(400, faction: Faction.Soviet, ownArmy: 1000)));
+        Assert.True(ConditionEvaluator.AllOf(tracker.Effective(intent).AttackConditions, Fx.Features(400, faction: Faction.Soviet, ownArmy: 1600)));
     }
 
     [Fact]
@@ -247,12 +314,13 @@ public sealed class PlaybookInduceTests : IDisposable
     {
         string dir = InduceFixtures.Standard(root);
         string outFile = Path.Combine(root, "out.json"), report = Path.Combine(root, "report.md");
-        Assert.Equal(0, Program.Main(["induce", "--from", dir, "--arm", InduceFixtures.Arm, "--out", outFile, "--report", report]));
+        Assert.Equal(0, Program.Main(["induce", "--from", dir, "--arm", InduceFixtures.Arm, "--min-support", "4", "--out", outFile, "--report", report]));
         Assert.Equal(Induce(dir).Json, File.ReadAllText(outFile));
         string text = File.ReadAllText(report);
         Assert.Contains("## `induced-soviet-rhino-rush-soviet-", text);
         Assert.Contains("median 1150", text);
         Assert.Contains("SHA-256", text);
+        Assert.Contains("Selection on outcome", text);
         Assert.Contains("--split", CliOptions.Usage);
         Assert.Contains("arena induce", CliOptions.Usage);
 

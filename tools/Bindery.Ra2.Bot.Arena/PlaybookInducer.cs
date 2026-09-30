@@ -66,7 +66,9 @@ public sealed record InductionResult(IReadOnlyList<Playbook> Playbooks, string J
 /// the base's posture, budget and composition, parameter defaults at the medians the model proposed, and an
 /// <c>attack</c> phase entered when the army reaches the median first-launch army value, no earlier than the 25th
 /// percentile first-launch time. Reads only <c>decisions/&lt;match&gt;.ndjson</c> and <c>.match.json</c>; no model
-/// call, no clock, sorted inputs, so the same logs give the same bytes.
+/// call, no clock, sorted inputs, so the same logs give the same bytes. Support is counted in matches (a match
+/// counts once however often it proposed a choice), and proposals the scheduler rejected in validation or discarded
+/// late are not counted. The data is conditioned on won matches: selection on outcome, not evidence of causation.
 /// </summary>
 public static partial class PlaybookInducer
 {
@@ -78,7 +80,7 @@ public static partial class PlaybookInducer
 
     private static readonly JsonSerializerOptions Indented = new(BotJson.Options) { WriteIndented = true };
 
-    private sealed record Proposal(string Playbook, IReadOnlyDictionary<string, double> Parameters);
+    private sealed record Proposal(string Playbook, IReadOnlyDictionary<string, double> Parameters, string? IntentId);
 
     private sealed record MatchData(string File, string Sha, Faction Faction, bool Won, string Split, IReadOnlyList<Proposal> Proposals, double? LaunchSeconds, double? LaunchArmy);
 
@@ -121,8 +123,9 @@ public static partial class PlaybookInducer
         StringBuilder report = new();
         report.AppendLine("# Playbook induction");
         report.AppendLine();
+        report.AppendLine("> Selection on outcome: only proposals from matches the arm won are used, so this is conditioned on winning and shows what the model did when it won, not what made it win.").AppendLine();
         foreach (string w in warnings) report.AppendLine($"> {w}").AppendLine();
-        report.AppendLine(CultureInfo.InvariantCulture, $"- arm `{arm}`, split `{split}`, minimum supporting proposals {minSupport}");
+        report.AppendLine(CultureInfo.InvariantCulture, $"- arm `{arm}`, split `{split}`, minimum supporting won matches {minSupport}");
         report.AppendLine(CultureInfo.InvariantCulture, $"- match manifests read {manifestCount}; of the arm {armCount}; in the split {matches.Count + duplicates} ({duplicates} duplicate log(s) dropped); won {won}");
         report.AppendLine();
 
@@ -132,9 +135,9 @@ public static partial class PlaybookInducer
         {
             string label = $"{cluster.Faction} / {cluster.Base}";
             int supportMatches = cluster.Won.Select(static w => w.Match.Sha).Distinct(StringComparer.Ordinal).Count();
-            if (cluster.Won.Count < minSupport)
+            if (supportMatches < minSupport)
             {
-                if (cluster.Won.Count > 0) skipped.AppendLine(CultureInfo.InvariantCulture, $"- {label}: {cluster.Won.Count} supporting proposals in {supportMatches} won matches, below {minSupport}");
+                if (supportMatches > 0) skipped.AppendLine(CultureInfo.InvariantCulture, $"- {label}: {supportMatches} supporting won matches ({cluster.Won.Count} proposals), below {minSupport}");
                 continue;
             }
             if (!library.TryGet(cluster.Base, out Playbook basis))
@@ -147,7 +150,7 @@ public static partial class PlaybookInducer
             double[] launchArmy = [.. supporting.Where(static m => m.LaunchArmy is not null).Select(static m => m.LaunchArmy!.Value).Order()];
             if (launchArmy.Length == 0)
             {
-                skipped.AppendLine($"- {label}: {cluster.Won.Count} supporting proposals, but none of its {supportMatches} won matches launched an attack, so there is no attack phase to induce");
+                skipped.AppendLine($"- {label}: {supportMatches} supporting won matches, but none of them launched an attack, so there is no attack phase to induce");
                 continue;
             }
 
@@ -163,7 +166,7 @@ public static partial class PlaybookInducer
             report.AppendLine(CultureInfo.InvariantCulture, $"- supporting: {cluster.Won.Count} proposals in {supportMatches} won matches; the arm chose this base in {cluster.AllMatches} matches of the split, won {cluster.Wins} of them");
             report.AppendLine(CultureInfo.InvariantCulture, $"- first launch time (s), {launchTimes.Length}/{supportMatches} matches launched: {Distribution(launchTimes)}");
             report.AppendLine(CultureInfo.InvariantCulture, $"- first launch army value, {launchArmy.Length}/{supportMatches} matches launched: {Distribution(launchArmy)}");
-            report.AppendLine(CultureInfo.InvariantCulture, $"- attack phase enters at OwnArmyValue >= {Fmt(armyMedian)} and GameSeconds >= {Fmt(timeP25)}");
+            report.AppendLine(CultureInfo.InvariantCulture, $"- attack phase enters at OwnArmyValue >= {Fmt(armyMedian)} and GameSeconds >= {Fmt(timeP25)}; the playbook's top-level attack conditions (in force in every phase) carry the same army and time bounds");
             report.Append(parameterReport);
             report.AppendLine("- source logs (SHA-256):");
             foreach (MatchData m in supporting.OrderBy(static m => m.File, StringComparer.Ordinal)) report.AppendLine($"  - `{m.File}` {m.Sha}");
@@ -225,14 +228,19 @@ public static partial class PlaybookInducer
             }
         }
         if (!bounded) attack.Add(new Condition(ConditionMetric.OwnArmyValue, Comparison.Ge, armyMedian));
+        // The first-quartile launch time is a floor on attacking too. Emitted at the top level, so it holds in the
+        // build phase (which overrides nothing) as well as after the attack phase is entered.
+        attack.RemoveAll(static c => c.Metric == ConditionMetric.GameSeconds && c.Op is Comparison.Ge or Comparison.Gt);
+        attack.Add(new Condition(ConditionMetric.GameSeconds, Comparison.Ge, timeP25));
 
         Playbook playbook = basis with
         {
             Id = id,
             Description = string.Create(CultureInfo.InvariantCulture,
-                $"Induced from {basis.Id}: {cluster.Won.Count} proposals in {matches} won matches of {arm} ({split}); attacks at army value {Fmt(armyMedian)} from {Fmt(timeP25)} s."),
+                $"Induced from {basis.Id}: {cluster.Won.Count} proposals in {matches} won matches of {arm} ({split}); attacks (in every phase) at army value {Fmt(armyMedian)} from {Fmt(timeP25)} s."),
             Factions = [cluster.Faction],
             Parameters = parameters,
+            AttackConditions = attack,
             Phases =
             [
                 new PlaybookPhase(BuildPhase, []),
@@ -271,7 +279,7 @@ public static partial class PlaybookInducer
             }
             if (!string.Equals(manifest.Arm.ToString(), arm, StringComparison.Ordinal)) continue;
             armCount++;
-            if (split != "all" && !string.Equals(manifest.Split, split, StringComparison.Ordinal)) continue;
+            if (!InSplit(manifest, split)) continue;
             string log = path[..^".match.json".Length] + ".ndjson";
             if (!File.Exists(log))
             {
@@ -292,20 +300,43 @@ public static partial class PlaybookInducer
         return [.. bySha.Values.OrderBy(static m => m.Sha, StringComparer.Ordinal)];
     }
 
+    /// <summary>
+    /// The split as the dataset export and the report define it: training is a training map against a training
+    /// opponent; heldout is a held-out map or a held-out opponent (either leaves the training set).
+    /// </summary>
+    private static bool InSplit(MatchManifest manifest, string split)
+    {
+        bool heldOutOpponent = OpponentSets.IsHeldOut(manifest.Opponent);
+        return split switch
+        {
+            "all" => true,
+            "training" => string.Equals(manifest.Split, "training", StringComparison.Ordinal) && !heldOutOpponent,
+            _ => !string.Equals(manifest.Split, "training", StringComparison.Ordinal) || heldOutOpponent,
+        };
+    }
+
     /// <summary>The Primary LLM proposals and the first attack launch (game seconds, army value) of one decision log.</summary>
     private static (List<Proposal> Proposals, double? LaunchSeconds, double? LaunchArmy) Read(byte[] bytes)
     {
         List<Proposal> proposals = [];
+        HashSet<string> dropped = new(StringComparer.Ordinal);
         double? seconds = null, army = null;
         foreach (string line in Encoding.UTF8.GetString(bytes).Split('\n'))
         {
             bool isProposal = line.Contains("\"strategy.proposal\"", StringComparison.Ordinal);
             bool isPlan = seconds is null && line.Contains("\"operations.plan\"", StringComparison.Ordinal) && line.Contains("squads: attacking", StringComparison.Ordinal);
-            if (!isProposal && !isPlan) continue;
+            bool isRejection = line.Contains("\"strategy.validation\"", StringComparison.Ordinal) && line.Contains("\"accepted\":false", StringComparison.Ordinal);
+            bool isLate = line.Contains("\"strategy.late_discarded\"", StringComparison.Ordinal);
+            if (!isProposal && !isPlan && !isRejection && !isLate) continue;
             using JsonDocument doc = JsonDocument.Parse(line);
             JsonElement root = doc.RootElement;
             JsonElement data = root.GetProperty("data");
-            if (isProposal)
+            if (isRejection || isLate)
+            {
+                // Rejected in validation or discarded late by the scheduler: never took effect, so no support.
+                if (data.TryGetProperty("intentId", out JsonElement dropId) && dropId.GetString() is { } droppedId) dropped.Add(droppedId);
+            }
+            else if (isProposal)
             {
                 if (data.GetProperty("role").GetString() != "Primary" || !data.TryGetProperty("intent", out JsonElement intent) || intent.ValueKind != JsonValueKind.Object) continue;
                 if (intent.GetProperty("source").GetString() != "Llm") continue;
@@ -319,7 +350,7 @@ public static partial class PlaybookInducer
                         if (property.Value.ValueKind == JsonValueKind.Number) parameters[property.Name] = property.Value.GetDouble();
                     }
                 }
-                proposals.Add(new Proposal(playbook, parameters));
+                proposals.Add(new Proposal(playbook, parameters, intent.TryGetProperty("intentId", out JsonElement id) ? id.GetString() : null));
             }
             else if (data.TryGetProperty("notes", out JsonElement notes) && notes.ValueKind == JsonValueKind.Array)
             {
@@ -333,6 +364,7 @@ public static partial class PlaybookInducer
                 }
             }
         }
+        proposals.RemoveAll(p => p.IntentId is not null && dropped.Contains(p.IntentId));
         return (proposals, seconds, army);
     }
 
