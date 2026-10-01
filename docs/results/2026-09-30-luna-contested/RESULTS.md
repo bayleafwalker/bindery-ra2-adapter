@@ -21,10 +21,18 @@ live-rush, live-tech, live-turtle, live-harass x seeds 1 and 3, with the arm as 
 All three readings named in `OUTAGE.md` give branch 3:
 - 30 cells, 8 rerun (primary): better 1, worse 4
 - literal, outage cells counted as played: better 2, worse 4
-- the 22 unaffected cells alone: better 1, worse 4
+- the 22 unaffected cells alone: better 1, worse 4 (these include no live-harass cell)
 
-Luna also plays worse by the secondary metrics: trade efficiency 0.33 vs the selector's 0.51 (value destroyed / value
-lost), and first attack at 397 s in 12 of 30 games vs 255 s in 16 of 30.
+The rerun could not have helped Luna. On the 8 outage cells the selector won 2 and lost 6, so the rerun could only
+move the result towards branch 2 (worse - better up to 6), never to branch 1. In the literal reading, the extra
+"better" cell (island-bridges live-harass s1) was a fallback-only game that the selector arm lost: the same policy
+changed winner on 1 of 8 cells, a small in-run noise observation. `OUTAGE.md`'s "0-3 failed proposals" is the
+`proposalsFailed` field (50 in total), not failed model calls (2).
+
+Luna also trends worse on the secondary metrics: trade efficiency 0.33 vs the selector's 0.51 (value destroyed /
+value lost), and first attack at 397 s in 12 of 30 games vs 255 s in 16 of 30. Neither is significant after Holm
+correction in `run/report.md` (p 0.74, and p 1.0 on 9 pairs). The only Holm-significant paired metric is final asset
+margin (p 0.032), also against Luna.
 
 ## Secondary (reported, decides nothing)
 - **Luna does not adapt to the opponent.** Its time share in `allied-boom` is 0.59-0.85 against every live style:
@@ -34,10 +42,10 @@ lost), and first attack at 397 s in 12 of 30 games vs 255 s in 16 of 30.
 - **Other models cannot play at the arena's 25 s reply deadline**, on the 6 pre-registered cells (live-balanced,
   live-harass x 3 maps x seed 1):
   - `deepseek-v4-pro`: forwarder median 61 s. All 20 first-match proposals timed out, so the arena skipped the arm.
-  - `deepseek-v4-flash`: median 23 s, p90 52 s. 95 of 155 calls failed, exactly the 95 calls over 25 s. It won 1/6
+  - `deepseek-v4-flash`: median 23 s, p90 52 s over the 223 forwarder calls (the arena counted 155). 95 of 155 calls failed, exactly the 95 calls over 25 s. It won 1/6
     and is labelled "not a model result".
   - The probe (`ocgo_model_probe.py`, 6 s and 15 s) used a short prompt and understated latency on the arena prompt
-    (~8,000 input tokens) by 4-10x.
+    (~8,000 input tokens): about 1.5x for flash and 10x for pro at the median, 3.4x for flash at the p90.
   - kimi-k3, qwen and mimo were already slower than these in the probe. grok-4.7, glm-5.3 and minimax-m3 fail on
     protocol or JSON.
 - **Cost:** Luna 8.87M input and 0.97M output tokens over the pilot, the run and the rerun, about $1.4 at list
@@ -45,9 +53,12 @@ lost), and first attack at 397 s in 12 of 30 games vs 255 s in 16 of 30.
 
 ## Consequence
 Branch 3, together with the secondary results, means no model on the flat plan both meets the latency deadline and
-beats the selector. Luna meets the deadline and does not beat the selector; the others do not meet it. Spending on a
-paid stronger model (Claude Opus, about $2.69/match) is not supported by this evidence either: the failure seen is
-non-adaptive choice, not weak reasoning, and nothing here shows a stronger model would choose differently. The
+beats the selector. Luna meets the deadline and does not beat the selector; the others do not meet it. A judgment beyond the
+rule, consistent with the pre-registration's preamble: spending on a paid stronger model (Claude Opus, ~$2.69/match
+in PR #38's estimate) is not supported. Luna's choices barely vary by opponent (live-rush is the exception, with
+ifv-mix at 0.24), but this data cannot separate non-adaptive choice from weak reasoning. Both arms lose all 12 cells
+against live-balanced and live-harass, so those losses are not down to the choice. Only flat-plan models were
+piloted. The
 selector stays the tier-3 default. The useful next build is on the selector's own weak cells: as Allied it wins 0/12
 against live-balanced and live-harass, and so does Luna.
 
