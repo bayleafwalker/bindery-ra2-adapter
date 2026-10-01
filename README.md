@@ -25,6 +25,17 @@ the wire strings `ready`, `started`, `exited`, `failed`, and
 `capture_degraded`. Relay placement and transport credentials remain
 coordinator-issued; the adapter does not select or mint them.
 
+Semantic telemetry can be streamed into a client's capture
+(`LiveRunHooks.CaptureTelemetry`, or `captureTelemetryFrom` in the channel
+tool's settings). `CaptureBatchShipper` takes each observation without
+waiting on the network, and a background loop sends contiguous batches within
+the offer's limits. A failed batch is resent unchanged under the same
+idempotency key, so the control plane answers a retry from what it already
+holds. An ingest outage therefore never holds up the game. The stream is
+closed before its client departs, because departure abandons an open
+capture. Anything not acknowledged by then is reported in the close as gaps
+and `local_drops`, and the run's evidence records the shipper's summary.
+
 Reports return typed session/enrollment state, and known session or enrollment
 IDs can be read through the public v1 endpoints. These reads expose observed
 control-plane phases; they are not synthetic match evidence.

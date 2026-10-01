@@ -58,9 +58,29 @@ public sealed record LiveArtifactEvidence(
 /// Called once every client has exited, before the evidence is written. The
 /// files it returns are uploaded into their clients' captures.
 /// </param>
+/// <param name="CaptureTelemetry">
+/// Semantic telemetry to stream into one client's capture while the match
+/// runs. Also a bystander: an ingest outage or a refused batch is recorded in
+/// the evidence and never holds up the clients.
+/// </param>
 public sealed record LiveRunHooks(
     Func<LiveLifecycleNotice, CancellationToken, Task>? OnLifecycle = null,
-    Func<CancellationToken, Task<IReadOnlyList<LiveArtifact>>>? CollectArtifacts = null);
+    Func<CancellationToken, Task<IReadOnlyList<LiveArtifact>>>? CollectArtifacts = null,
+    LiveTelemetryCapture? CaptureTelemetry = null);
+
+/// <summary>Which enrolled client's capture a telemetry source belongs to.</summary>
+public enum LiveCaptureProducer
+{
+    First,
+    Second,
+    Observer,
+}
+
+/// <summary>
+/// A telemetry source and the client whose game it instruments. The source's
+/// observations go into that client's capture, under that client's lease.
+/// </summary>
+public sealed record LiveTelemetryCapture(LiveCaptureProducer Producer, IRa2TelemetrySource Source, CaptureShipperOptions? Options = null);
 
 public sealed record LiveAcceptanceRequest(
     SessionCreationRequest Session,
@@ -141,7 +161,9 @@ public sealed record LiveAcceptanceEvidence(
     // Null when no observer ran. True when it failed or did not depart cleanly;
     // a degraded observer is a worse witness, not a failed match.
     bool? ObserverDegraded = null,
-    IReadOnlyList<LiveArtifactEvidence>? Artifacts = null);
+    IReadOnlyList<LiveArtifactEvidence>? Artifacts = null,
+    // Null when no telemetry was streamed into a capture.
+    CaptureShipperSummary? CapturedTelemetry = null);
 
 /// <summary>
 /// Runs the real Windows process boundary after a two-client control-plane
@@ -271,6 +293,8 @@ public sealed class LiveAcceptanceRunner
         await using EnrollmentLeaseKeeper? observerLease = observer is null
             ? null
             : EnrollmentLeaseKeeper.Start(controlPlane, observer.Configuration, time, cancellationToken);
+        List<string> captureIssues = [];
+        await using TelemetryShipment? shipment = StartTelemetryShipment(hooks?.CaptureTelemetry, match, observer, captureIssues, cancellationToken);
 
         // One tunnel port per participant. The spawner reaches every peer as
         // 0.0.0.0 on its allocated port, so without these there is nothing to
@@ -330,16 +354,19 @@ public sealed class LiveAcceptanceRunner
         string secondIni = await WriteSpawnIniAsync(request.EvidenceDirectory, "client-b", secondPlan, cancellationToken).ConfigureAwait(false);
         List<Task<LiveClientRun>> clientRuns =
         [
-            RunClientAsync(firstHost, match.First, firstLease, request.FirstLaunch, firstIni, request.GoldenApplianceId, onLifecycle, cancellationToken),
-            RunClientAsync(secondHost, match.Second, secondLease, request.SecondLaunch, secondIni, request.GoldenApplianceId, onLifecycle, cancellationToken),
+            RunClientAsync(firstHost, match.First, firstLease, request.FirstLaunch, firstIni, request.GoldenApplianceId, onLifecycle, shipment?.ShipsFor(match.First), cancellationToken),
+            RunClientAsync(secondHost, match.Second, secondLease, request.SecondLaunch, secondIni, request.GoldenApplianceId, onLifecycle, shipment?.ShipsFor(match.Second), cancellationToken),
         ];
         if (observer is not null)
         {
             SpawnMatchPlan observerPlan = new(scenario, gameId, seed, false, observerParticipant!, [firstParticipant, secondParticipant], globalOrder, aiPlayers, relay.RelayHost!, relay.RelayPort!.Value, request.GameOptions);
             string observerIni = await WriteSpawnIniAsync(request.EvidenceDirectory, "observer", observerPlan, cancellationToken).ConfigureAwait(false);
-            clientRuns.Add(RunClientAsync(observerHost!, observer, observerLease!, observerRequest!.Launch, observerIni, request.GoldenApplianceId, onLifecycle, cancellationToken));
+            clientRuns.Add(RunClientAsync(observerHost!, observer, observerLease!, observerRequest!.Launch, observerIni, request.GoldenApplianceId, onLifecycle, shipment?.ShipsFor(observer), cancellationToken));
         }
         LiveClientRun[] runs = await Task.WhenAll(clientRuns).ConfigureAwait(false);
+        // Normally closed before its client departed; this covers a client
+        // that never reported a terminal state.
+        CaptureShipperSummary? capturedTelemetry = shipment is null ? null : await shipment.CloseAsync("match over", cancellationToken).ConfigureAwait(false);
         PreparedLiveClient[] prepared = observer is null ? [match.First, match.Second] : [match.First, match.Second, observer];
         IReadOnlyList<LiveArtifactEvidence>? artifacts = hooks?.CollectArtifacts is null
             ? null
@@ -371,6 +398,14 @@ public sealed class LiveAcceptanceRunner
             "oracle reads must be traced and attached to the qualification packet",
             "human acceptance is required before global qualification"
         ];
+        limitations.AddRange(captureIssues);
+        if (capturedTelemetry is { } shipped)
+        {
+            if (shipped.Dropped > 0)
+                limitations.Add($"telemetry capture {shipped.CaptureId} dropped {shipped.Dropped} of {shipped.Offered} observations; the close names them as gaps{(shipped.LastError is null ? string.Empty : $" (last error: {shipped.LastError})")}");
+            if (!shipped.Closed)
+                limitations.Add($"telemetry capture {shipped.CaptureId} was not closed ({shipped.CloseError ?? "no close attempted"}); the control plane will abandon it");
+        }
         if (observerDegraded == true)
             limitations.Add($"observer degraded: {runs[2].Evidence.Failure ?? $"final enrollment phase {finalObserver!.Phase.ToString().ToLowerInvariant()}"}; lifecycle completeness is judged on the players");
 
@@ -396,9 +431,40 @@ public sealed class LiveAcceptanceRunner
             request.FirstLaunch.MapId,
             seed,
             observerDegraded,
-            artifacts);
+            artifacts,
+            capturedTelemetry);
         await LiveAcceptanceEvidenceWriter.WriteAsync(request.EvidenceDirectory, evidence, cancellationToken).ConfigureAwait(false);
         return evidence;
+    }
+
+    private TelemetryShipment? StartTelemetryShipment(
+        LiveTelemetryCapture? capture,
+        PreparedLiveMatch match,
+        PreparedLiveClient? observer,
+        List<string> issues,
+        CancellationToken cancellationToken)
+    {
+        if (capture is null) return null;
+        PreparedLiveClient? producer = capture.Producer switch
+        {
+            LiveCaptureProducer.First => match.First,
+            LiveCaptureProducer.Second => match.Second,
+            LiveCaptureProducer.Observer => observer,
+            _ => null,
+        };
+        if (producer is null)
+        {
+            issues.Add($"telemetry capture was asked of the {capture.Producer.ToString().ToLowerInvariant()} client, which did not enroll; nothing was streamed");
+            return null;
+        }
+        CaptureStreamOffer? offer = producer.Enrollment.CaptureOffers?.FirstOrDefault();
+        if (offer is null)
+        {
+            issues.Add($"telemetry capture: client {producer.Enrollment.ClientId} was offered no capture stream; nothing was streamed");
+            return null;
+        }
+        CaptureBatchShipper shipper = CaptureBatchShipper.Start(controlPlane, producer.Enrollment.ClientLeaseToken, offer, capture.Options, time, cancellationToken);
+        return TelemetryShipment.Start(producer.Enrollment.ClientId, capture.Source, shipper, issues, cancellationToken);
     }
 
     private async Task<LiveClientRun> RunClientAsync(
@@ -409,6 +475,7 @@ public sealed class LiveAcceptanceRunner
         string spawnIniPath,
         string goldenApplianceId,
         Func<LiveLifecycleNotice, CancellationToken, Task>? onLifecycle,
+        TelemetryShipment? shipment,
         CancellationToken cancellationToken)
     {
         ConcurrentQueue<LifecycleKind> reports = new();
@@ -441,10 +508,18 @@ public sealed class LiveAcceptanceRunner
                 async report =>
                 {
                     reports.Enqueue(report.Kind);
-                    // The terminal report ends the enrollment: stop its
-                    // heartbeat first, so none can land after departure.
+                    // The terminal report ends the enrollment, and departure
+                    // abandons any capture still open: close the telemetry
+                    // stream while the lease is live, then stop the heartbeat
+                    // so none can land after departure. The close is bounded
+                    // by its flush timeout, so an ingest outage delays the
+                    // report by at most that, and never fails it.
                     if (report.Kind is LifecycleKind.Exited or LifecycleKind.Failed)
+                    {
+                        if (shipment is not null)
+                            await shipment.CloseAsync($"client {report.Kind.ToString().ToLowerInvariant()}", cancellationToken).ConfigureAwait(false);
                         await lease.StopAsync().ConfigureAwait(false);
+                    }
                     // One retry: losing the final lifecycle report to a stale
                     // pooled connection would fail an otherwise good run.
                     try
@@ -459,7 +534,11 @@ public sealed class LiveAcceptanceRunner
                     await NotifyAsync(onLifecycle, new LiveLifecycleNotice(client.Definition.ClientInstanceId, client.Definition.ClientClass, report.Kind), cancellationToken).ConfigureAwait(false);
                 },
                 cancellationToken).ConfigureAwait(false);
-            // The client has exited; anything reported from here on is best effort.
+            // The client has exited; anything reported from here on is best
+            // effort. A client that exited without a terminal report still
+            // gets its capture closed while its lease is live.
+            if (shipment is not null)
+                await shipment.CloseAsync("client exited", cancellationToken).ConfigureAwait(false);
             await lease.StopAsync().ConfigureAwait(false);
             string gameHash = await host.Sha256Async(launch.GameExecutable, cancellationToken).ConfigureAwait(false);
 
@@ -692,5 +771,72 @@ public static class LiveAcceptanceEvidenceWriter
         string path = Path.Combine(directory, "live-acceptance-evidence.json");
         await File.WriteAllTextAsync(path, JsonSerializer.Serialize(evidence, json), cancellationToken).ConfigureAwait(false);
         return path;
+    }
+}
+
+/// <summary>
+/// One telemetry source feeding one capture. The feed reads the source and
+/// hands each observation to the shipper, which never waits; closing stops the
+/// feed and closes the stream once, however many callers ask.
+/// </summary>
+internal sealed class TelemetryShipment : IAsyncDisposable
+{
+    private readonly string clientId;
+    private readonly CaptureBatchShipper shipper;
+    private readonly CancellationTokenSource feedStop;
+    private readonly List<string> issues;
+    private Task feed = Task.CompletedTask;
+
+    private TelemetryShipment(string clientId, CaptureBatchShipper shipper, List<string> issues, CancellationToken cancellationToken)
+    {
+        this.clientId = clientId;
+        this.shipper = shipper;
+        this.issues = issues;
+        feedStop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+    }
+
+    public static TelemetryShipment Start(string clientId, IRa2TelemetrySource source, CaptureBatchShipper shipper, List<string> issues, CancellationToken cancellationToken)
+    {
+        TelemetryShipment shipment = new(clientId, shipper, issues, cancellationToken);
+        shipment.feed = Task.Run(() => shipment.FeedAsync(source), CancellationToken.None);
+        return shipment;
+    }
+
+    /// <summary>This shipment if it streams for <paramref name="client"/>, otherwise null.</summary>
+    public TelemetryShipment? ShipsFor(PreparedLiveClient client) =>
+        string.Equals(client.Enrollment.ClientId, clientId, StringComparison.Ordinal) ? this : null;
+
+    public async Task<CaptureShipperSummary> CloseAsync(string endReason, CancellationToken cancellationToken)
+    {
+        await feedStop.CancelAsync().ConfigureAwait(false);
+        try { await feed.ConfigureAwait(false); }
+        catch (OperationCanceledException) { }
+        return await shipper.CloseAsync(endReason, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await feedStop.CancelAsync().ConfigureAwait(false);
+        try { await feed.ConfigureAwait(false); }
+        catch (OperationCanceledException) { }
+        await shipper.DisposeAsync().ConfigureAwait(false);
+        feedStop.Dispose();
+    }
+
+    private async Task FeedAsync(IRa2TelemetrySource source)
+    {
+        try
+        {
+            await foreach (RawObservation observation in source.ReadAsync(feedStop.Token).ConfigureAwait(false))
+                shipper.TryEnqueue(observation);
+        }
+        catch (OperationCanceledException) when (feedStop.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception) when (exception is IOException or InvalidOperationException or HttpRequestException or System.Text.Json.JsonException)
+        {
+            // The source failing ends the stream early; it does not end the match.
+            lock (issues) issues.Add($"telemetry source for capture {shipper.CaptureId} failed: {exception.GetType().Name}: {exception.Message}");
+        }
     }
 }
