@@ -94,6 +94,44 @@ public sealed class ChannelExtensionTests
     }
 
     [Fact]
+    public async Task LauncherStreamsTelemetryIntoACaptureOnlyWhenTold()
+    {
+        foreach (LiveCaptureProducer? producer in new LiveCaptureProducer?[] { null, LiveCaptureProducer.Second })
+        {
+            LiveTelemetryCapture? handed = null;
+            int streamed = -1;
+            LiveAcceptanceMatchLauncher launcher = new(
+                async (request, hooks, ct) =>
+                {
+                    handed = hooks.CaptureTelemetry;
+                    if (handed is not null) streamed = await CountAsync(handed.Source);
+                    return Evidence(complete: true);
+                },
+                _ => Request(),
+                new LiveChannelMatchOptions(
+                    Telemetry: _ => new FakeTelemetry(
+                    [
+                        Observation(Ra2TelemetryEventTypes.MatchStarted, "{}"),
+                        Observation(Ra2TelemetryEventTypes.MatchEnded, "{}"),
+                    ]),
+                    CaptureTelemetryFrom: producer));
+
+            await launcher.RunMatchAsync(Context(), _ => Task.CompletedTask, CancellationToken.None);
+
+            if (producer is null)
+            {
+                Assert.Null(handed);
+            }
+            else
+            {
+                // Its own branch of the stream, whole, for the named client.
+                Assert.Equal(producer, handed?.Producer);
+                Assert.Equal(2, streamed);
+            }
+        }
+    }
+
+    [Fact]
     public void LauncherRejectsACaptureClientOutsideTheMatch()
     {
         ChannelMatchContext context = Context() with { Capture = new CaptureSource("observer-1", ClientClass.Observer) };

@@ -148,7 +148,7 @@ public sealed class BinderyAdapterClient(HttpClient httpClient)
             dto.PublicEnrollment.ClientId,
             dto.ClientLeaseToken,
             dto.TransportCredential,
-            dto.CaptureStreamOffers?.Select(static offer => new CaptureStreamOffer(offer.CaptureId, ParseClientClass(offer.ProducerClass), offer.CaptureMethod, offer.MaxObjectBytes)).ToArray() ?? []);
+            dto.CaptureStreamOffers?.Select(static offer => new CaptureStreamOffer(offer.CaptureId, ParseClientClass(offer.ProducerClass), offer.CaptureMethod, offer.MaxObjectBytes, offer.MaxBatchBytes, offer.MaxBatchEvents)).ToArray() ?? []);
     }
 
     /// <summary>
@@ -181,6 +181,62 @@ public sealed class BinderyAdapterClient(HttpClient httpClient)
         CaptureObjectManifestDto dto = await response.Content.ReadFromJsonAsync<CaptureObjectManifestDto>(json, cancellationToken).ConfigureAwait(false) ?? throw new InvalidOperationException("object manifest was empty");
         EnsureIdentifier(capture.CaptureId, dto.CaptureId, "capture");
         return new CaptureObjectManifest(dto.ContentHash, dto.MediaType, dto.Bytes, dto.CaptureId, dto.ProducerClientId);
+    }
+
+    /// <summary>
+    /// Sends one batch of semantic observations into a capture this client was
+    /// offered. The control plane answers an identical retry of the same
+    /// sequence range from what it already holds, so a batch whose response
+    /// was lost is resent unchanged under the same key, never re-formed.
+    /// </summary>
+    public async Task<CaptureReceipt> IngestCaptureBatchAsync(
+        string clientLeaseToken,
+        CaptureStreamOffer capture,
+        CaptureBatch batch,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(clientLeaseToken);
+        ArgumentNullException.ThrowIfNull(capture);
+        ArgumentNullException.ThrowIfNull(batch);
+        RequireUuid(capture.CaptureId, "capture id");
+        using HttpRequestMessage request = new(HttpMethod.Post, $"/v1/captures/{capture.CaptureId}/batches")
+        {
+            Content = new ByteArrayContent(batch.Body.ToArray()),
+        };
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", clientLeaseToken);
+        request.Headers.Add("Idempotency-Key", batch.IdempotencyKey);
+        using HttpResponseMessage response = await httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+        CaptureReceiptDto dto = await response.Content.ReadFromJsonAsync<CaptureReceiptDto>(json, cancellationToken).ConfigureAwait(false) ?? throw new InvalidOperationException("capture receipt was empty");
+        EnsureIdentifier(capture.CaptureId, dto.CaptureId, "capture");
+        return new CaptureReceipt(dto.AcknowledgedThrough, [.. (dto.MissingRanges ?? []).Select(static range => new SequenceRange(range[0], range[1]))], dto.Duplicate);
+    }
+
+    /// <summary>
+    /// Ends a capture stream with the producer's own account of it. A null
+    /// final sequence says the producer observed nothing; gaps and local drops
+    /// are what it knows it failed to deliver.
+    /// </summary>
+    public async Task CloseCaptureAsync(
+        string clientLeaseToken,
+        CaptureStreamOffer capture,
+        CaptureCloseRequest close,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(clientLeaseToken);
+        ArgumentNullException.ThrowIfNull(capture);
+        ArgumentNullException.ThrowIfNull(close);
+        RequireUuid(capture.CaptureId, "capture id");
+        ArgumentException.ThrowIfNullOrWhiteSpace(close.EndReason);
+        CaptureCloseDto body = new(close.FinalSequence, [.. close.ObservedGaps.Select(static gap => new[] { gap.First, gap.Last })], close.LocalDrops, close.EndReason);
+        using HttpRequestMessage request = new(HttpMethod.Post, $"/v1/captures/{capture.CaptureId}:close")
+        {
+            Content = JsonContent.Create(body, options: json),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", clientLeaseToken);
+        using HttpResponseMessage response = await httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
     }
 
     private static ControllerDto ToControllerDto(ControllerDeclaration controller, ClientClass clientClass)
@@ -296,8 +352,27 @@ public sealed record EnrollmentCredentials(
     string TransportCredential,
     IReadOnlyList<CaptureStreamOffer>? CaptureOffers = null);
 
-/// <summary>A capture stream the control plane minted for this client at enrollment.</summary>
-public sealed record CaptureStreamOffer(string CaptureId, ClientClass ProducerClass, string CaptureMethod, long MaxObjectBytes);
+/// <summary>
+/// A capture stream the control plane minted for this client at enrollment,
+/// with the limits it negotiated. A zero batch limit means the offer did not
+/// state one.
+/// </summary>
+public sealed record CaptureStreamOffer(string CaptureId, ClientClass ProducerClass, string CaptureMethod, long MaxObjectBytes, long MaxBatchBytes = 0, int MaxBatchEvents = 0);
+
+/// <summary>An inclusive range of capture sequences.</summary>
+public readonly record struct SequenceRange(ulong First, ulong Last);
+
+/// <summary>
+/// A batch exactly as it goes on the wire. The body is serialized once, so a
+/// retry sends the same bytes the first attempt did.
+/// </summary>
+public sealed record CaptureBatch(string IdempotencyKey, ulong FirstSequence, ulong LastSequence, int EventCount, ReadOnlyMemory<byte> Body);
+
+/// <summary>What the control plane holds after a batch: contiguous from zero through <c>AcknowledgedThrough</c>, which is -1 while sequence zero is missing.</summary>
+public sealed record CaptureReceipt(long AcknowledgedThrough, IReadOnlyList<SequenceRange> MissingRanges, bool Duplicate);
+
+/// <summary>A producer's account of how its capture stream ended.</summary>
+public sealed record CaptureCloseRequest(ulong? FinalSequence, IReadOnlyList<SequenceRange> ObservedGaps, ulong LocalDrops, string EndReason);
 
 /// <summary>What the control plane recorded for one uploaded object.</summary>
 public sealed record CaptureObjectManifest(string ContentHash, string MediaType, long Bytes, string CaptureId, string ProducerClientId);
@@ -373,7 +448,20 @@ internal sealed record CaptureStreamOfferDto(
     [property: JsonPropertyName("capture_id")] string CaptureId,
     [property: JsonPropertyName("producer_class")] string ProducerClass,
     [property: JsonPropertyName("capture_method")] string CaptureMethod,
-    [property: JsonPropertyName("max_object_bytes")] long MaxObjectBytes);
+    [property: JsonPropertyName("max_object_bytes")] long MaxObjectBytes,
+    [property: JsonPropertyName("max_batch_bytes")] long MaxBatchBytes = 0,
+    [property: JsonPropertyName("max_batch_events")] int MaxBatchEvents = 0);
+internal sealed record CaptureReceiptDto(
+    [property: JsonPropertyName("capture_id")] string CaptureId,
+    [property: JsonPropertyName("acknowledged_through")] long AcknowledgedThrough,
+    [property: JsonPropertyName("missing_ranges")] IReadOnlyList<ulong[]>? MissingRanges,
+    [property: JsonPropertyName("duplicate")] bool Duplicate = false);
+// final_sequence is written even when null: null is the claim "observed nothing".
+internal sealed record CaptureCloseDto(
+    [property: JsonPropertyName("final_sequence")] ulong? FinalSequence,
+    [property: JsonPropertyName("observed_gaps")] IReadOnlyList<ulong[]> ObservedGaps,
+    [property: JsonPropertyName("local_drops")] ulong LocalDrops,
+    [property: JsonPropertyName("end_reason")] string EndReason);
 internal sealed record CaptureObjectManifestDto(
     [property: JsonPropertyName("content_hash")] string ContentHash,
     [property: JsonPropertyName("media_type")] string MediaType,
