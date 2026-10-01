@@ -1,0 +1,3 @@
+llm-t1: skipped: llm-t1: 0 of 20 model proposals succeeded in the first match (No reply within 25 s.)
+Wrote 0 match results, 0 leakage probes and report.md to docs/results/2026-09-30-luna-contested/secondary-deepseek-v4-pro in 526s.
+EXIT=0

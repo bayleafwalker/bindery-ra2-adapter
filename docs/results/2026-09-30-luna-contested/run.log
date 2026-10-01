@@ -1,0 +1,5 @@
+llm-t1: 30 matches, 8 wins; leakage probe 0/663 differing frames, 0 fog-violation frames.
+selector: 30 matches, 10 wins; leakage probe 0/662 differing frames, 0 fog-violation frames.
+Warning: llm-t1 (training maps): not a model result. 352 of 999 model calls failed (35.2 %, above --max-llm-failure-rate 0.2); the selector fallback played the gaps.
+Wrote 60 match results, 4 leakage probes and report.md to docs/results/2026-09-30-luna-contested/run in 5635s.
+EXIT=0

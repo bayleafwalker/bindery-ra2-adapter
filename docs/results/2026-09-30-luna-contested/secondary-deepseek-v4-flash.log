@@ -1,0 +1,4 @@
+llm-t1: 6 matches, 1 wins; leakage probe 0/663 differing frames, 0 fog-violation frames.
+Warning: llm-t1 (training maps): not a model result. 95 of 155 model calls failed (61.3 %, above --max-llm-failure-rate 0.2); the selector fallback played the gaps.
+Wrote 6 match results, 2 leakage probes and report.md to docs/results/2026-09-30-luna-contested/secondary-deepseek-v4-flash in 4612s.
+EXIT=0
