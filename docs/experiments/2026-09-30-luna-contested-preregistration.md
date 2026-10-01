@@ -1,4 +1,5 @@
 # Does a model's live playbook choice beat the selector where the benchmark can rank arms? (pre-registration, 2026-09-30)
+**Outcome (2026-10-01): rule branch 3, parity. Luna 7/30, selector 10/30; better 1, worse 4. Neither deepseek model could play within the 25 s deadline. See `docs/results/2026-09-30-luna-contested/RESULTS.md`.**
 **Status: registered before any match of this test.** Motivated by the correction to the induced-playbook test
 (`docs/results/2026-09-30-induced-playbook-test/RESULTS.md`): every Luna result so far (24/24 training, 20/20
 held-out) ran on the `standard` benchmark, where the selector scores 75-100% and win-rate comparisons carry little

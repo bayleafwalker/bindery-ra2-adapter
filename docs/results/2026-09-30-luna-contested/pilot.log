@@ -1,0 +1,4 @@
+llm-t1: 6 matches, 0 wins; leakage probe 246/246 differing frames, 0 fog-violation frames.
+selector: 6 matches, 0 wins; leakage probe 0/662 differing frames, 0 fog-violation frames.
+Wrote 12 match results, 4 leakage probes and report.md to docs/results/2026-09-30-luna-contested/run in 1545s.
+EXIT=0

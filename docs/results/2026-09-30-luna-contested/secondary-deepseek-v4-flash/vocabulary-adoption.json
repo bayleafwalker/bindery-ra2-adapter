@@ -1,0 +1,10 @@
+{
+  "schema": "bindery.vocabulary-adoption/v1",
+  "adoptedTier": "Parameters",
+  "rule": "Parameters (select and parameterise validated playbooks, build step 5) is the base tier. A wider tier is adopted only if the tier below it is adopted and, on held-out maps, the paired comparison of the wider tier against it (same opponent, map and seed) was played with a live model and shows more pairs won than lost on match score, an exact two-sided sign-test p below 0.05, and a 95% bootstrap interval of the mean score difference entirely above 0.",
+  "evidence": [],
+  "reasons": [
+    "stays at Parameters: no held-out comparison of ObjectivesAndRegions against Parameters"
+  ],
+  "date": "2026-10-01"
+}
