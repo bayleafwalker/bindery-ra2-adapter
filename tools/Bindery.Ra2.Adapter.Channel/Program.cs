@@ -101,11 +101,14 @@ try
         // client's own service; the launcher disposes the seat, and with it
         // the connection, when the match ends.
         AgentSeat: settings.AgentSeat is null ? null : launch => settings.AgentSeat.CreateSeat(launch).Seat,
-        Overlay: settings.Obs?.OverlayTextInput is { Length: > 0 } ? obs : null));
+        Overlay: settings.Obs?.OverlayTextInput is { Length: > 0 } ? obs : null,
+        CaptureTelemetryFrom: settings.CaptureProducer));
     if (settings.LiveTelemetry is { } liveTelemetry)
         Console.WriteLine($"telemetry: live ra2yrcpp at {liveTelemetry.Endpoint}");
     else if (string.IsNullOrWhiteSpace(settings.TelemetryRecording))
         Console.WriteLine("telemetry: none attached; match records will carry no winner");
+    if (settings.CaptureProducer is { } producer)
+        Console.WriteLine($"telemetry capture: streamed into the {producer.ToString().ToLowerInvariant()} client's capture");
     if (settings.AgentSeat is { } agent)
         Console.WriteLine($"agent seat: house={agent.House} client={agent.ClientInstanceId} routine={agent.Routine}");
 
@@ -191,9 +194,26 @@ internal sealed class ChannelToolSettings
     /// </summary>
     public Ra2yrcppAgentSeatSettings? AgentSeat { get; init; }
 
+    /// <summary>
+    /// Also stream the telemetry into a client's capture on the control plane:
+    /// <c>first</c>, <c>second</c> or <c>observer</c>, naming the client whose
+    /// game the telemetry instruments. Omit to keep telemetry on this side only.
+    /// </summary>
+    public string CaptureTelemetryFrom { get; init; } = string.Empty;
+
+    public LiveCaptureProducer? CaptureProducer =>
+        string.IsNullOrWhiteSpace(CaptureTelemetryFrom) ? null : Enum.Parse<LiveCaptureProducer>(CaptureTelemetryFrom, ignoreCase: true);
+
     public void Validate()
     {
         Ra2yrcppChannelSettings.Validate(LiveTelemetry, TelemetryRecording, AgentSeat);
+        if (!string.IsNullOrWhiteSpace(CaptureTelemetryFrom))
+        {
+            if (!Enum.TryParse(CaptureTelemetryFrom, ignoreCase: true, out LiveCaptureProducer _) || int.TryParse(CaptureTelemetryFrom, out _))
+                throw new InvalidOperationException("captureTelemetryFrom must be first, second or observer");
+            if (LiveTelemetry is null && string.IsNullOrWhiteSpace(TelemetryRecording))
+                throw new InvalidOperationException("captureTelemetryFrom needs telemetry to stream");
+        }
         if (AgentSeat is null) return;
         LiveClientLaunch? launch = string.Equals(AgentSeat.ClientInstanceId, Live.FirstClientInstanceId, StringComparison.Ordinal) ? Live.FirstLaunch
             : string.Equals(AgentSeat.ClientInstanceId, Live.SecondClientInstanceId, StringComparison.Ordinal) ? Live.SecondLaunch

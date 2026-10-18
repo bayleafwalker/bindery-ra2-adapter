@@ -13,6 +13,11 @@ public delegate Task<LiveAcceptanceEvidence> LiveMatchRun(
 /// private match path.
 /// </summary>
 /// <param name="Telemetry">The ra2yrcpp source for this match, if one is attached.</param>
+/// <param name="CaptureTelemetryFrom">
+/// Which client's game <paramref name="Telemetry"/> instruments. When set, the
+/// telemetry is also streamed into that client's capture on the control
+/// plane; when null it is used only on this side, as before.
+/// </param>
 /// <param name="AgentSeat">
 /// The controller for <see cref="ChannelMatchContext.AgentSeat"/>. Required
 /// when the channel assigns an agent seat, and needs <paramref name="Telemetry"/>.
@@ -24,7 +29,8 @@ public sealed record LiveChannelMatchOptions(
     Func<AgentSeatLaunch, AgentSeat?>? AgentSeat = null,
     TimeSpan? TelemetryDrain = null,
     IOverlaySink? Overlay = null,
-    TimeSpan? OverlayInterval = null)
+    TimeSpan? OverlayInterval = null,
+    LiveCaptureProducer? CaptureTelemetryFrom = null)
 {
     /// <summary>Minimum observation time between overlay updates; headline events always update.</summary>
     public TimeSpan EffectiveOverlayInterval => OverlayInterval ?? TimeSpan.FromSeconds(1);
@@ -97,10 +103,14 @@ public sealed class LiveAcceptanceMatchLauncher : IChannelMatchLauncher
         Task tracking = Task.CompletedTask;
         Task overlaying = Task.CompletedTask;
         Task<AgentSeatSummary?> seatRun = Task.FromResult<AgentSeatSummary?>(null);
+        LiveTelemetryCapture? captureTelemetry = null;
         if (telemetry is not null)
         {
             TelemetryFanOut fanOut = new(telemetry);
             IRa2TelemetrySource trackerBranch = fanOut.Branch();
+            // The runner owns the capture stream: it holds the producer's
+            // lease and closes the stream before that client departs.
+            if (options.CaptureTelemetryFrom is { } producer) captureTelemetry = new LiveTelemetryCapture(producer, fanOut.Branch());
             IRa2TelemetrySource? seatBranch = seat is null ? null : fanOut.Branch();
             tracking = TrackAsync(trackerBranch, tracker);
             if (options.Overlay is { } overlay) overlaying = OverlayAsync(fanOut.Branch(), new MatchOverlay(context), overlay, options.EffectiveOverlayInterval, telemetryIssues, cancellationToken);
@@ -149,7 +159,8 @@ public sealed class LiveAcceptanceMatchLauncher : IChannelMatchLauncher
                     return finished is null
                         ? []
                         : [new LiveArtifact(assignment.ClientInstanceId, CaptureMediaTypes.DecisionTrace, finished.TracePath)];
-                });
+                },
+            CaptureTelemetry: captureTelemetry);
 
         LiveAcceptanceEvidence evidence;
         try

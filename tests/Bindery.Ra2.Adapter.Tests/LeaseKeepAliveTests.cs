@@ -17,6 +17,7 @@ public sealed class LeaseKeepAliveTests
     private const string SessionId = "00000000-0000-4000-8000-000000000001";
     private const string ClientA = "00000000-0000-4000-8000-00000000000a";
     private const string ClientB = "00000000-0000-4000-8000-00000000000b";
+    private const string CaptureA = "00000000-0000-4000-8000-0000000000ca";
     private static readonly TimeSpan Lease = TimeSpan.FromMinutes(2);
 
     [Fact]
@@ -105,6 +106,50 @@ public sealed class LeaseKeepAliveTests
         Assert.Equal(EnrollmentLeaseKeeper.MinimumInterval, EnrollmentLeaseKeeper.NextInterval(TimeSpan.FromSeconds(-30)));
     }
 
+    [Fact]
+    public async Task Telemetry_is_streamed_into_the_producers_capture_and_closed_before_it_departs()
+    {
+        using LiveFixture fixture = new(matchLength: TimeSpan.FromMinutes(3), telemetry: 20);
+
+        LiveAcceptanceEvidence evidence = await fixture.RunAsync();
+
+        Assert.True(evidence.Qualification.ControlPlaneLifecycleComplete, string.Join(" | ", evidence.Limitations));
+        CaptureShipperSummary shipped = Assert.IsType<CaptureShipperSummary>(evidence.CapturedTelemetry);
+        Assert.Equal(CaptureA, shipped.CaptureId);
+        Assert.Equal(20, shipped.Offered);
+        Assert.Equal(19, shipped.AcknowledgedThrough);
+        Assert.Equal(0, shipped.Dropped);
+        Assert.True(shipped.Closed, shipped.CloseError);
+        // The close lands while the producer's lease is live: before its
+        // departure, which would otherwise abandon the capture.
+        IReadOnlyList<string> log = fixture.ControlPlane.Log(ClientA);
+        int closed = log.ToList().IndexOf("capture:close");
+        int exited = log.ToList().IndexOf("report:exited");
+        Assert.True(closed >= 0 && closed < exited, string.Join(",", log));
+        Assert.DoesNotContain("capture", string.Join(",", fixture.ControlPlane.Log(ClientB)));
+        Assert.Empty(fixture.ControlPlane.Rejections);
+    }
+
+    [Fact]
+    public async Task An_ingest_outage_leaves_the_match_whole_and_the_drops_explicit()
+    {
+        using LiveFixture fixture = new(matchLength: TimeSpan.FromMinutes(3), telemetry: 20);
+        fixture.ControlPlane.FailBatches();
+
+        LiveAcceptanceEvidence evidence = await fixture.RunAsync();
+
+        // The match is unaffected: both clients ran, reported and departed.
+        Assert.True(evidence.Qualification.ControlPlaneLifecycleComplete, string.Join(" | ", evidence.Limitations));
+        Assert.Equal(["departed", "departed"], evidence.FinalEnrollmentPhases);
+        CaptureShipperSummary shipped = Assert.IsType<CaptureShipperSummary>(evidence.CapturedTelemetry);
+        Assert.Equal(20, shipped.Dropped);
+        Assert.Equal(-1, shipped.AcknowledgedThrough);
+        Assert.True(shipped.Retries > 0);
+        Assert.True(shipped.Closed, shipped.CloseError);
+        Assert.Contains(evidence.Limitations, static limitation => limitation.Contains("dropped 20 of 20", StringComparison.Ordinal));
+        Assert.Equal("0-19", fixture.ControlPlane.ClosedGaps);
+    }
+
     /// <summary>A runner wired to a fake control plane, a manual clock and two scripted hosts.</summary>
     private sealed class LiveFixture : IDisposable
     {
@@ -113,10 +158,12 @@ public sealed class LeaseKeepAliveTests
         private readonly TunnelStub tunnel = new();
         private readonly string directory = Directory.CreateTempSubdirectory("lease-keepalive-").FullName;
         private readonly TaskCompletionSource matchOver = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly int telemetry;
 
-        public LiveFixture(TimeSpan matchLength)
+        public LiveFixture(TimeSpan matchLength, int telemetry = 0)
         {
             this.matchLength = matchLength;
+            this.telemetry = telemetry;
             ControlPlane = new FakeControlPlane(Clock);
             http = new HttpClient(ControlPlane) { BaseAddress = new Uri("https://control-plane.test") };
         }
@@ -125,11 +172,11 @@ public sealed class LeaseKeepAliveTests
 
         public FakeControlPlane ControlPlane { get; }
 
-        public Task<LiveAcceptanceEvidence> RunAsync()
+        public async Task<LiveAcceptanceEvidence> RunAsync()
         {
             BinderyAdapterClient client = new(http);
             LiveAcceptanceRunner runner = new(
-                new FixedDriver(),
+                new FixedDriver(telemetry > 0),
                 client,
                 new ScriptedHost("host-a", async () =>
                 {
@@ -150,7 +197,20 @@ public sealed class LeaseKeepAliveTests
                 new ScriptedHost("host-b", () => matchOver.Task),
                 null,
                 Clock);
-            return runner.RunAsync(Request());
+            if (telemetry == 0) return await runner.RunAsync(Request());
+
+            // A closing stream waits on the clock for its flush, and the match
+            // stops driving the clock once it is over; keep time moving until
+            // the run has finished.
+            LiveRunHooks hooks = new(CaptureTelemetry: new LiveTelemetryCapture(LiveCaptureProducer.First, new ListedTelemetry(telemetry, Clock)));
+            Task<LiveAcceptanceEvidence> run = runner.RunAsync(Request(), hooks);
+            await matchOver.Task;
+            while (!run.IsCompleted)
+            {
+                await Task.Delay(2);
+                Clock.Advance(TimeSpan.FromMilliseconds(500));
+            }
+            return await run;
         }
 
         private LiveAcceptanceRequest Request() => new(
@@ -207,19 +267,40 @@ public sealed class LeaseKeepAliveTests
             null),
         placement);
 
-    private sealed class FixedDriver : ILiveMatchDriver
+    private sealed class FixedDriver(bool offerCapture = false) : ILiveMatchDriver
     {
         private static readonly RelayPlacement placement = new("eu-north", "cncnet-private", "allocation", "127.0.0.1:50000", "relay-placement/v1");
 
-        public Task<PreparedLiveMatch> PrepareLiveAsync(SessionCreationRequest sessionRequest, MatchClientDefinition first, MatchClientDefinition second, string sessionIdempotencyKey, string firstEnrollmentIdempotencyKey, string secondEnrollmentIdempotencyKey, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new PreparedLiveMatch(
+        public Task<PreparedLiveMatch> PrepareLiveAsync(SessionCreationRequest sessionRequest, MatchClientDefinition first, MatchClientDefinition second, string sessionIdempotencyKey, string firstEnrollmentIdempotencyKey, string secondEnrollmentIdempotencyKey, CancellationToken cancellationToken = default)
+        {
+            PreparedLiveClient firstClient = Prepared(first, ClientA, placement);
+            if (offerCapture)
+                firstClient = firstClient with { Enrollment = firstClient.Enrollment with { CaptureOffers = [new CaptureStreamOffer(CaptureA, ClientClass.Player, "ra2yrcpp", 1 << 20, 4 << 20, 8)] } };
+            return Task.FromResult(new PreparedLiveMatch(
                 new SessionCredentials(SessionId, "join", placement),
-                Prepared(first, ClientA, placement),
+                firstClient,
                 Prepared(second, ClientB, placement),
                 new NoOwner()));
+        }
 
         public Task<PreparedLiveClient> EnrollObserverAsync(SessionCredentials session, MatchClientDefinition observer, string enrollmentIdempotencyKey, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
+    }
+
+    /// <summary>A telemetry source that yields a fixed number of observations, then stays open until stopped.</summary>
+    private sealed class ListedTelemetry(int count, TimeProvider clock) : IRa2TelemetrySource
+    {
+        public Ra2TelemetryCapture Capture { get; } = new("listed", Ra2YrcppEndpoint.Parse("127.0.0.1:14521"), true, count, null);
+
+        public async IAsyncEnumerable<RawObservation> ReadAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            for (int index = 0; index < count; index++)
+            {
+                using JsonDocument payload = JsonDocument.Parse($$"""{"index":{{index}}}""");
+                yield return new RawObservation($"listed-{index}", "listed", (ulong)index + 1, Ra2TelemetryEventTypes.UnitCreated, Ra2LabProfile.AdapterId, Ra2LabProfile.AdapterVersion, clock.GetUtcNow(), payload.RootElement.Clone(), "sha256:" + new string('a', 64));
+            }
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+        }
     }
 
     private sealed class NoOwner : IAsyncDisposable
@@ -272,6 +353,15 @@ public sealed class LeaseKeepAliveTests
         private readonly Dictionary<string, string> phases = new() { [ClientA] = "active", [ClientB] = "active" };
         private readonly Dictionary<string, List<string>> logs = new() { [ClientA] = [], [ClientB] = [] };
         private readonly HashSet<string> failing = [];
+        private bool failBatches;
+        private long acknowledged = -1;
+
+        public string? ClosedGaps { get; private set; }
+
+        public void FailBatches()
+        {
+            lock (gate) failBatches = true;
+        }
 
         public List<string> Rejections { get; } = [];
 
@@ -321,6 +411,23 @@ public sealed class LeaseKeepAliveTests
                     if (phases[id] != "active") return Reject(id, "report:" + kind);
                     if (kind == "exited") phases[id] = "departed";
                     return Json(new { public_session = Session(), public_enrollment = Enrollment(id) });
+                }
+                if (request.Method == HttpMethod.Post && path == $"/v1/captures/{CaptureA}/batches")
+                {
+                    if (phases[ClientA] != "active") return Reject(ClientA, "capture:batch");
+                    logs[ClientA].Add("capture:batch");
+                    if (failBatches) return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+                    acknowledged = Math.Max(acknowledged, JsonDocument.Parse(body).RootElement.GetProperty("last_sequence").GetInt64());
+                    return Json(new { capture_id = CaptureA, acknowledged_through = acknowledged, missing_ranges = Array.Empty<long[]>() });
+                }
+                if (request.Method == HttpMethod.Post && path == $"/v1/captures/{CaptureA}:close")
+                {
+                    // Departure abandons an open capture, so a close after it is refused.
+                    if (phases[ClientA] != "active") return Reject(ClientA, "capture:close");
+                    logs[ClientA].Add("capture:close");
+                    JsonElement gaps = JsonDocument.Parse(body).RootElement.GetProperty("observed_gaps");
+                    ClosedGaps = string.Join(",", gaps.EnumerateArray().Select(static gap => $"{gap[0].GetUInt64()}-{gap[1].GetUInt64()}"));
+                    return Json(new { capture_id = CaptureA, status = "closed" });
                 }
                 if (request.Method == HttpMethod.Get && path == $"/v1/sessions/{SessionId}") return Json(Session());
                 if (request.Method == HttpMethod.Get && path.StartsWith("/v1/enrollments/", StringComparison.Ordinal))
